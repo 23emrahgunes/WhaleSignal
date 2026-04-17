@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+node_modules/
+reports/*.json
+reports/*.csv
+reports/watchlists/*.json
+reports/watchlists/*.csv
+data/history/*.json
+!reports/.gitkeep
+!data/history/.gitkeep
+!reports/watchlists/

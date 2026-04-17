@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import os
 
 class WalletRanker:
     def __init__(self, scored_wallets, enriched_wallets):
@@ -9,17 +10,25 @@ class WalletRanker:
     def get_global_top(self, limit=100):
         return self.scored_df.sort_values("final_score", ascending=False).head(limit)
 
-    def get_category_rankings(self, category):
-        # Join with enriched data to get categories
-        # For simplicity in v1, we assume the enriched data has a primary category
-        # Or we can filter based on 'category_strength_score'
-        # In a real scenario, we'd look at enriched_df["categories"]
-        return self.scored_df[self.scored_df["tier"].isin(["A", "B"])].head(20)
+    def get_category_rankings(self, category, limit=50):
+        # Filter enriched data for category, then join with scored data
+        # We need a way to link address to primary category in enriched data
+        enriched_map = {w["address"]: w for w in self.enriched_df.to_dict("records")}
 
-    def get_rising_wallets(self):
-        # Higher recency vs consistency
-        return self.scored_df[self.scored_df["sub_scores"].apply(lambda x: x["recency"] > x["consistency"])]
+        def is_cat_expert(addr):
+            w = enriched_map.get(addr)
+            if not w: return False
+            cats = w.get("categories", {})
+            return cats.get(category, 0) > 5 # Expert if 5+ trades in category
 
-    def get_dropped_wallets(self):
-        # High stale penalty or low recency
-        return self.scored_df[self.scored_df["penalties"].apply(lambda x: x["stale"] > 0)]
+        category_experts = self.scored_df[self.scored_df["address"].apply(is_cat_expert)]
+        return category_experts.sort_values("final_score", ascending=False).head(limit)
+
+    def generate_watchlists(self, transitions):
+        """Generate Core, Emerging, and Probation watchlists."""
+        watchlists = {
+            "core": self.scored_df[self.scored_df["tier"] == "A"].sort_values("final_score", ascending=False).head(50),
+            "emerging": pd.DataFrame(transitions["rising_wallets"]).head(50),
+            "probation": pd.DataFrame(transitions["dropped_wallets"] + transitions["downgraded_wallets"]).head(50)
+        }
+        return watchlists
