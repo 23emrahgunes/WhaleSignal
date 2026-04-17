@@ -39,3 +39,20 @@ def test_wallet_quality_scorer():
     score = scorer.score_wallet(wallet)
     assert score["final_score"] > 0
     assert "tier" in score
+
+def test_stale_penalty_thresholds():
+    import time
+    scorer = WalletQualityScorer()
+    stale_weight = scorer.penalties["stale"]
+
+    # Active
+    w_active = {"last_active_ts": time.time()}
+    assert scorer._calc_stale_penalty(w_active) == 0
+
+    # 15 days (between 14 and 30)
+    w_15d = {"last_active_ts": time.time() - (15 * 86400)}
+    assert scorer._calc_stale_penalty(w_15d) == stale_weight
+
+    # 31 days (over 30)
+    w_31d = {"last_active_ts": time.time() - (31 * 86400)}
+    assert scorer._calc_stale_penalty(w_31d) == stale_weight * 2

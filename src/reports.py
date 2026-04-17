@@ -31,6 +31,7 @@ class ReportGenerator:
         for cat, df in category_rankings.items():
             if not df.empty:
                 self.export_json(df, f"watchlists/category_{cat.lower()}_watchlist.json")
+                self.export_csv(df, f"watchlists/category_{cat.lower()}_watchlist.csv")
 
     def generate_all_reports(self, ranker, transitions):
         # 1. Standard Reports

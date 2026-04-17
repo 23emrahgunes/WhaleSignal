@@ -1,4 +1,0 @@
-address,final_score,tier,sub_scores,penalties
-addr_core,0.95,A,"{'recency': 1.0, 'consistency': 1.0}","{'stale': 0, 'concentration': 0, 'noise': 0}"
-addr_upgraded,0.8,A,"{'recency': 1.0, 'consistency': 0.8}","{'stale': 0, 'concentration': 0, 'noise': 0}"
-addr_rising,0.7,A,"{'recency': 1.0, 'consistency': 0.5}","{'stale': 0, 'concentration': 0, 'noise': 0}"

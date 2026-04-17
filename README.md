@@ -2,13 +2,13 @@
 
 This repository provides a comprehensive engine to discover, enrich, and rank "stable" wallets and whales on Polymarket. It is an intelligence engine designed for stability tracking and watchlist generation.
 
-## Milestone 2 Capabilities
+## Milestone 2: Continuous Intelligence
 
 Milestone 2 transforms the engine from a static reporter into a continuous tracking system:
-- **Persistent History**: Daily snapshots of wallet scores and tiers.
-- **Trend Analysis**: Calculation of score stability and volatility over 7/30/90 days.
-- **Transition Tracking**: Automatic detection of Rising, Dropped, Stale, Upgraded, and Downgraded wallets.
-- **Specialized Watchlists**: Automated production of Core, Emerging, Probation, and Category-specific (Crypto, Sports, Politics) watchlists for trader bots.
+- **Persistent History**: Daily snapshots of wallet scores and tiers stored in `data/history/`.
+- **Trend Analysis**: Calculation of score stability and volatility over time.
+- **Transition Tracking**: Automatic detection of `Rising`, `Dropped`, `Stale`, `Upgraded`, and `Downgraded` wallets.
+- **Bot-Ready Watchlists**: Automated production of `Core`, `Emerging`, `Probation`, and Category-specific watchlists in JSON and CSV formats.
 
 ## Project Structure
 
@@ -16,58 +16,60 @@ Milestone 2 transforms the engine from a static reporter into a continuous track
   - `persistence.py`: Manages historical snapshots.
   - `wallet_transitions.py`: Analyzes changes between snapshots.
   - `wallet_ranker.py`: Categorizes expertise and generates watchlists.
-- `scripts/`: Execution scripts.
+- `scripts/`: Execution scripts for the daily pipeline.
 - `data/history/`: Persistent storage for daily snapshots.
-- `reports/watchlists/`: Target for bot-consumable JSON/CSV files.
+- `reports/watchlists/`: Bot-consumable JSON/CSV files.
 
-## Setup
+## Installation
 
-1. Install dependencies:
+1. Clone the repository and install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-## Usage (Daily Pipeline)
+2. (Optional) Configure environment variables in `.env`.
 
-Run the following scripts in sequence to update the intelligence engine:
+## Daily Pipeline Workflow
 
-1. **Market & Wallet Discovery**:
+Run the following scripts in sequence to update the intelligence engine and publish new watchlists:
+
+1. **Market & Wallet Discovery** (Fast Scan):
    ```bash
    export PYTHONPATH=$PYTHONPATH:.
    python3 scripts/run_fast_scan.py
    ```
 
-2. **Deep Enrichment**:
+2. **Wallet Enrichment**:
    ```bash
    python3 scripts/run_enrichment.py
    ```
 
-3. **Scoring with History**:
+3. **Daily Rescore** (Calculates scores and persists to history):
    ```bash
    python3 scripts/run_daily_rescore.py
    ```
 
-4. **Transition Analysis**:
+4. **Transition Analysis** (Detects Rising/Dropped/Tier changes):
    ```bash
    python3 scripts/run_transitions.py
    ```
 
-5. **Publish Watchlists**:
+5. **Publish Watchlists** (Generates bot-ready JSON/CSV outputs):
    ```bash
    python3 scripts/publish_watchlists.py
    ```
 
 ## Watchlist Definitions
 
-- **Core Watchlist**: Long-term stable A-tier wallets. Highest conviction.
-- **Emerging Watchlist**: Wallets with rapidly rising scores or recent upgrades to A/B tier.
-- **Probation Watchlist**: High-quality wallets showing signs of decay or downgrades.
-- **Category Watchlists**: Top-ranked wallets filtered by their specific domain expertise (e.g., Politics experts).
+- **Core Watchlist**: Long-term stable A-tier wallets. Highest conviction for following.
+- **Emerging Watchlist**: Wallets with rapidly rising scores or recent upgrades.
+- **Probation Watchlist**: Previously high-quality wallets showing signs of decay, downgrades, or staleness.
+- **Category Watchlists**: Top wallets filtered by domain expertise (Crypto, Sports, Politics, Other).
 
-## Technical Scoring (v2)
+## Scoring & Penalties
 
-The engine applies weighted sub-scores and history-based modifiers:
-- **Stability Bonus**: Extra points for wallets with a steady score trend.
-- **Volatility Penalty**: Deductions for wallets with erratic performance.
-- **Concentration Penalty**: Applied to wallets over-reliant on single markets.
-- **Followability**: Real-time metric assessing liquidity and entry detectability.
+The engine applies a weighted formula (0.22 Consistency, 0.20 Realized Quality, etc.) and history-based modifiers:
+- **Stability Bonus**: Extra points for steady score trends.
+- **Volatility Penalty**: Deductions for erratic score changes.
+- **Stale Penalty**: Applied to inactive wallets (>14 days normal, >30 days double penalty).
+- **Concentration Penalty**: Deductions for wallets over-reliant on single markets.

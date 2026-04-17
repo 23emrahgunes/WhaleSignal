@@ -157,8 +157,8 @@ class WalletQualityScorer:
         last_active = w.get("last_active_ts", 0)
         if last_active == 0: return self.penalties["stale"]
         age_days = (time.time() - last_active) / 86400
-        if age_days > 14: return self.penalties["stale"]
         if age_days > 30: return self.penalties["stale"] * 2
+        if age_days > 14: return self.penalties["stale"]
         return 0
 
     def _calc_noise_penalty(self, w):
