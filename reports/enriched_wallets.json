@@ -1,0 +1,5367 @@
+[
+  {
+    "address": "0x8db225675379e15da6d962036e405c3c9e47f8a2",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 11,
+    "current_value": 154.825,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391910,
+    "liquidity_exposure": [],
+    "realized_pnl": -149.2849
+  },
+  {
+    "address": "0xbf8ee32e4b629992399e5af45a9d479e4d650126",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 4,
+    "current_value": 27.331899999999997,
+    "trades_7d": 40,
+    "trades_30d": 190,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 32,
+      "POLITICS": 65,
+      "OTHER": 29,
+      "CRYPTO": 6
+    },
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [
+      {
+        "liquidity": 602289.7661,
+        "volume": 4568384.729514962
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 683381.05978,
+        "volume": 10367435.50259785
+      },
+      {
+        "liquidity": 683381.05978,
+        "volume": 10367435.50259785
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1397555.23595,
+        "volume": 11765367.63464287
+      },
+      {
+        "liquidity": 1397555.23595,
+        "volume": 11765367.63464287
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 683381.05978,
+        "volume": 10367435.50259785
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      }
+    ],
+    "realized_pnl": -0.32
+  },
+  {
+    "address": "0xcc883662eb678f31e12b57d8004765f20d0406dc",
+    "total_trades": 130,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 14,
+    "trades_30d": 44,
+    "trades_90d": 49,
+    "categories": {
+      "SPORTS": 11,
+      "POLITICS": 19,
+      "CRYPTO": 1,
+      "OTHER": 2
+    },
+    "last_active_ts": 1776391916,
+    "liquidity_exposure": [
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 475599.43125,
+        "volume": 18571485.855502453
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 988442.26239,
+        "volume": 17060768.85148277
+      },
+      {
+        "liquidity": 988442.26239,
+        "volume": 17060768.85148277
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 988442.26239,
+        "volume": 17060768.85148277
+      },
+      {
+        "liquidity": 988442.26239,
+        "volume": 17060768.85148277
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 399567.80666,
+        "volume": 23889385.98382556
+      },
+      {
+        "liquidity": 166167.85696,
+        "volume": 2999683.915054991
+      },
+      {
+        "liquidity": 426974.1372,
+        "volume": 13354654.42741398
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 426974.1372,
+        "volume": 13354654.42741398
+      },
+      {
+        "liquidity": 426974.1372,
+        "volume": 13354654.42741398
+      },
+      {
+        "liquidity": 60003.33437,
+        "volume": 13602642.476633048
+      },
+      {
+        "liquidity": 60003.33437,
+        "volume": 13602642.476633048
+      }
+    ],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0xe56dae38b25c0561d556dce061902c2bff87361a",
+    "total_trades": 37,
+    "total_activity": 40,
+    "open_positions_count": 1,
+    "current_value": 81.473,
+    "trades_7d": 19,
+    "trades_30d": 37,
+    "trades_90d": 37,
+    "categories": {},
+    "last_active_ts": 1776391920,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xa96615a858dc4a9bd82ec71fb07478e2b1f1747c",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 3,
+    "current_value": 111.23,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391932,
+    "liquidity_exposure": [],
+    "realized_pnl": -87.5565
+  },
+  {
+    "address": "0xa38e2f5fb8d62ccd27c29f7ee50418f8091e7fbb",
+    "total_trades": 190,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 137.9437,
+    "trades_7d": 78,
+    "trades_30d": 190,
+    "trades_90d": 190,
+    "categories": {},
+    "last_active_ts": 1776391928,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x965c9dd0a64a70a4d85985d5ea49fbac3e8aec2b",
+    "total_trades": 51,
+    "total_activity": 99,
+    "open_positions_count": 22,
+    "current_value": 14.3319,
+    "trades_7d": 27,
+    "trades_30d": 51,
+    "trades_90d": 51,
+    "categories": {
+      "OTHER": 1
+    },
+    "last_active_ts": 1776391908,
+    "liquidity_exposure": [
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      }
+    ],
+    "realized_pnl": -1.2707
+  },
+  {
+    "address": "0x903731581464802d9b94916b0271784142d40386",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 35,
+    "current_value": 47.8378,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391960,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xec841ba14a2bb0e68e6a8959c4ab7a854e00983f",
+    "total_trades": 172,
+    "total_activity": 200,
+    "open_positions_count": 8,
+    "current_value": 109.9445,
+    "trades_7d": 39,
+    "trades_30d": 154,
+    "trades_90d": 172,
+    "categories": {
+      "POLITICS": 22,
+      "OTHER": 30,
+      "SPORTS": 4
+    },
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [
+      {
+        "liquidity": 1204091.0274,
+        "volume": 38396335.22463279
+      },
+      {
+        "liquidity": 1204091.0274,
+        "volume": 38396335.22463279
+      },
+      {
+        "liquidity": 1629143.01135,
+        "volume": 25271001.770809878
+      },
+      {
+        "liquidity": 1629143.01135,
+        "volume": 25271001.770809878
+      },
+      {
+        "liquidity": 2207636.91756,
+        "volume": 40011769.89850251
+      },
+      {
+        "liquidity": 2207636.91756,
+        "volume": 40011769.89850251
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 403502.10034,
+        "volume": 17635905.630152665
+      },
+      {
+        "liquidity": 403502.10034,
+        "volume": 17635905.630152665
+      },
+      {
+        "liquidity": 1172450.181,
+        "volume": 5221166.829916982
+      },
+      {
+        "liquidity": 1172450.181,
+        "volume": 5221166.829916982
+      },
+      {
+        "liquidity": 950430.03643,
+        "volume": 27450428.78402659
+      },
+      {
+        "liquidity": 950430.03643,
+        "volume": 27450428.78402659
+      },
+      {
+        "liquidity": 4960922.04458,
+        "volume": 3974028.727771005
+      },
+      {
+        "liquidity": 4960922.04458,
+        "volume": 3974028.727771005
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 2117451.81344,
+        "volume": 28412032.742748767
+      },
+      {
+        "liquidity": 2117451.81344,
+        "volume": 28412032.742748767
+      },
+      {
+        "liquidity": 403502.10034,
+        "volume": 17635905.630152665
+      },
+      {
+        "liquidity": 403502.10034,
+        "volume": 17635905.630152665
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 1347474.624,
+        "volume": 22456955.94235464
+      },
+      {
+        "liquidity": 1347474.624,
+        "volume": 22456955.94235464
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 3035704.43969,
+        "volume": 10297223.583976047
+      },
+      {
+        "liquidity": 3035704.43969,
+        "volume": 10297223.583976047
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x597638d105dfc299dd34f40655c4922982d8ae05",
+    "total_trades": 128,
+    "total_activity": 200,
+    "open_positions_count": 13,
+    "current_value": 15.2478,
+    "trades_7d": 128,
+    "trades_30d": 128,
+    "trades_90d": 128,
+    "categories": {},
+    "last_active_ts": 1776391974,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xc89d5c0f4d12aa83475b2b7804995578c46d9dc0",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 29.150599999999997,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392038,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.26239999999999997
+  },
+  {
+    "address": "0x64f8ead26be73d6676a90b939251fb8a64f2d21a",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 8,
+    "current_value": 87.2401,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391856,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x771226281832edf0dc0ae9f9fe59d6b85a903631",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 106.9696,
+    "trades_7d": 99,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 38,
+      "OTHER": 32,
+      "CRYPTO": 2
+    },
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 374692.51628,
+        "volume": 6670506.859723902
+      },
+      {
+        "liquidity": 374692.51628,
+        "volume": 6670506.859723902
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 1489894.23996,
+        "volume": 11825907.31835921
+      },
+      {
+        "liquidity": 1489894.23996,
+        "volume": 11825907.31835921
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 1538375.8068,
+        "volume": 12088765.56758006
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 110644.36633,
+        "volume": 1091197.491704996
+      },
+      {
+        "liquidity": 110644.36633,
+        "volume": 1091197.491704996
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 2041003.15504,
+        "volume": 11190734.629906826
+      },
+      {
+        "liquidity": 2041003.15504,
+        "volume": 11190734.629906826
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 3260207.36809,
+        "volume": 14831127.042871974
+      },
+      {
+        "liquidity": 3260207.36809,
+        "volume": 14831127.042871974
+      },
+      {
+        "liquidity": 1489894.23996,
+        "volume": 11825907.31835921
+      },
+      {
+        "liquidity": 1489894.23996,
+        "volume": 11825907.31835921
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 120089.19184,
+        "volume": 1475619.8955329962
+      },
+      {
+        "liquidity": 120089.19184,
+        "volume": 1475619.8955329962
+      },
+      {
+        "liquidity": 120089.19184,
+        "volume": 1475619.8955329962
+      },
+      {
+        "liquidity": 1397555.23595,
+        "volume": 11765367.63464287
+      },
+      {
+        "liquidity": 1397555.23595,
+        "volume": 11765367.63464287
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 2128431.54035,
+        "volume": 11170276.192801964
+      },
+      {
+        "liquidity": 2128431.54035,
+        "volume": 11170276.192801964
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 166585.1265,
+        "volume": 6753503.625144926
+      },
+      {
+        "liquidity": 166585.1265,
+        "volume": 6753503.625144926
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 1576934.35411,
+        "volume": 13662201.04968716
+      },
+      {
+        "liquidity": 1576934.35411,
+        "volume": 13662201.04968716
+      }
+    ],
+    "realized_pnl": -0.2868
+  },
+  {
+    "address": "0x6bb5f2b0fbe2430328ee7b21369f9c0aa7bca518",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 8452.8589,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392014,
+    "liquidity_exposure": [],
+    "realized_pnl": -1510.0668
+  },
+  {
+    "address": "0x881e72710f634afab58732621e001044224470f8",
+    "total_trades": 87,
+    "total_activity": 200,
+    "open_positions_count": 25,
+    "current_value": 2951.3867999999998,
+    "trades_7d": 13,
+    "trades_30d": 30,
+    "trades_90d": 42,
+    "categories": {
+      "POLITICS": 1
+    },
+    "last_active_ts": 1776391958,
+    "liquidity_exposure": [
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x8129c3ed844a83a17e9aaf656cfa9c93b4215f30",
+    "total_trades": 189,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 36.515,
+    "trades_7d": 27,
+    "trades_30d": 118,
+    "trades_90d": 189,
+    "categories": {},
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [],
+    "realized_pnl": -73.343
+  },
+  {
+    "address": "0x65d9cd920783a6b759e05a3f4af5b0e197dd97d4",
+    "total_trades": 61,
+    "total_activity": 101,
+    "open_positions_count": 1,
+    "current_value": 0.0,
+    "trades_7d": 61,
+    "trades_30d": 61,
+    "trades_90d": 61,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xddb0629096a8a03f490b6572c06f2ee76465f95a",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 34,
+    "current_value": 3555.5045999999998,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391966,
+    "liquidity_exposure": [],
+    "realized_pnl": -78.09760000000001
+  },
+  {
+    "address": "0x5ba9f48ca7147ef91a592f45d5f869720b044fa1",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 17,
+    "current_value": 1327.6808,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 6.4902000000000015
+  },
+  {
+    "address": "0x6ce9001ed66308c47c1256115b2e97921d49e3e2",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 37,
+    "current_value": 2407.0596,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391920,
+    "liquidity_exposure": [],
+    "realized_pnl": 121.4123
+  },
+  {
+    "address": "0xfb0f17657c9c24293b918adb86362a4d8fc90b02",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 6,
+    "current_value": 553.938,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391902,
+    "liquidity_exposure": [],
+    "realized_pnl": -19.649700000000003
+  },
+  {
+    "address": "0x55d7388e15df9f90b79e9e491c38a14b5f05226f",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 21,
+    "current_value": 85.2352,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {
+      "POLITICS": 4
+    },
+    "last_active_ts": 1776391986,
+    "liquidity_exposure": [
+      {
+        "liquidity": 653941.26468,
+        "volume": 14628576.999556975
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 475599.43125,
+        "volume": 18571485.855502453
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xe8f4cc51026d804cc9f8d3b271c51e7f9b104960",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 5,
+    "current_value": 0.0,
+    "trades_7d": 28,
+    "trades_30d": 143,
+    "trades_90d": 200,
+    "categories": {
+      "OTHER": 48,
+      "POLITICS": 12,
+      "SPORTS": 2
+    },
+    "last_active_ts": 1776391920,
+    "liquidity_exposure": [
+      {
+        "liquidity": 4969539.90318,
+        "volume": 4304533.792996963
+      },
+      {
+        "liquidity": 4969539.90318,
+        "volume": 4304533.792996963
+      },
+      {
+        "liquidity": 985733.06789,
+        "volume": 38576981.53465266
+      },
+      {
+        "liquidity": 985733.06789,
+        "volume": 38576981.53465266
+      },
+      {
+        "liquidity": 1582823.51937,
+        "volume": 12991279.498835448
+      },
+      {
+        "liquidity": 1582823.51937,
+        "volume": 12991279.498835448
+      },
+      {
+        "liquidity": 1017045.42815,
+        "volume": 13658202.8213271
+      },
+      {
+        "liquidity": 1017045.42815,
+        "volume": 13658202.8213271
+      },
+      {
+        "liquidity": 1125907.22826,
+        "volume": 12531817.21201042
+      },
+      {
+        "liquidity": 1125907.22826,
+        "volume": 12531817.21201042
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 2041003.15504,
+        "volume": 11190734.629906826
+      },
+      {
+        "liquidity": 2041003.15504,
+        "volume": 11190734.629906826
+      },
+      {
+        "liquidity": 573301.29511,
+        "volume": 15211584.981522148
+      },
+      {
+        "liquidity": 573301.29511,
+        "volume": 15211584.981522148
+      },
+      {
+        "liquidity": 1006164.03343,
+        "volume": 33183134.39931704
+      },
+      {
+        "liquidity": 1006164.03343,
+        "volume": 33183134.39931704
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3035704.43969,
+        "volume": 10297223.583976047
+      },
+      {
+        "liquidity": 3035704.43969,
+        "volume": 10297223.583976047
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x17bcc82efe6adf80c93f83ff813161d0786c9013",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 62,
+    "current_value": 24.9987,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392000,
+    "liquidity_exposure": [],
+    "realized_pnl": -9.2604
+  },
+  {
+    "address": "0x9629804e001a60ebe8a289a334ccf2e5553aee15",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 70,
+    "current_value": 66.4831,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391952,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xe2eecf6cbe4b116bc3cb37317462a6e7318fe511",
+    "total_trades": 77,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 4,
+    "trades_30d": 4,
+    "trades_90d": 4,
+    "categories": {
+      "POLITICS": 12,
+      "SPORTS": 3
+    },
+    "last_active_ts": 1776391910,
+    "liquidity_exposure": [
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 800069.24582,
+        "volume": 10535433.589193976
+      },
+      {
+        "liquidity": 800069.24582,
+        "volume": 10535433.589193976
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 520905.60043,
+        "volume": 7169059.862661903
+      },
+      {
+        "liquidity": 520905.60043,
+        "volume": 7169059.862661903
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 922346.93666,
+        "volume": 21016018.279960908
+      },
+      {
+        "liquidity": 922346.93666,
+        "volume": 21016018.279960908
+      }
+    ],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0x16c6649aa7c5cfe3fd29a26b3c4642330e94c9b8",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 18,
+    "current_value": 332.8032,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392018,
+    "liquidity_exposure": [],
+    "realized_pnl": -11.3491
+  },
+  {
+    "address": "0x513623b497b7d2814220ec2aefb0ecb0a18f2f3d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 0.0,
+    "trades_7d": 31,
+    "trades_30d": 155,
+    "trades_90d": 200,
+    "categories": {
+      "POLITICS": 20,
+      "SPORTS": 6,
+      "OTHER": 40
+    },
+    "last_active_ts": 1776391916,
+    "liquidity_exposure": [
+      {
+        "liquidity": 568582.34502,
+        "volume": 30113574.45401611
+      },
+      {
+        "liquidity": 568582.34502,
+        "volume": 30113574.45401611
+      },
+      {
+        "liquidity": 689249.15213,
+        "volume": 3638668.96101237
+      },
+      {
+        "liquidity": 689249.15213,
+        "volume": 3638668.96101237
+      },
+      {
+        "liquidity": 653941.26468,
+        "volume": 14628576.999556975
+      },
+      {
+        "liquidity": 653941.26468,
+        "volume": 14628576.999556975
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 660150.22311,
+        "volume": 14246692.703841722
+      },
+      {
+        "liquidity": 660150.22311,
+        "volume": 14246692.703841722
+      },
+      {
+        "liquidity": 1262798.22447,
+        "volume": 14237522.1076908
+      },
+      {
+        "liquidity": 1262798.22447,
+        "volume": 14237522.1076908
+      },
+      {
+        "liquidity": 870642.8235,
+        "volume": 34568194.3641588
+      },
+      {
+        "liquidity": 870642.8235,
+        "volume": 34568194.3641588
+      },
+      {
+        "liquidity": 568582.34502,
+        "volume": 30113574.45401611
+      },
+      {
+        "liquidity": 568582.34502,
+        "volume": 30113574.45401611
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 982561.44378,
+        "volume": 15158216.23304576
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x843a3162b7b416462ac15cf085a2402e5ae62017",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 1.4547,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391914,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x1530f488f7163100f5ef523a89d33f3be3957809",
+    "total_trades": 34,
+    "total_activity": 71,
+    "open_positions_count": 11,
+    "current_value": 11.7817,
+    "trades_7d": 8,
+    "trades_30d": 19,
+    "trades_90d": 26,
+    "categories": {},
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [],
+    "realized_pnl": 10.4505
+  },
+  {
+    "address": "0x79b2a0999b22f3c72a17274b4c5efe92370fbb2d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 86,
+    "current_value": 37.7996,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": -8.3194
+  },
+  {
+    "address": "0xdfeaa8600c8a0263adb97e2b9a0b4a740ce9d295",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 3,
+    "current_value": 3.1889000000000003,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391926,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xec3183167606b2c19bb913ba22ef7fa7b4ce66ab",
+    "total_trades": 23,
+    "total_activity": 43,
+    "open_positions_count": 1,
+    "current_value": 4.4635,
+    "trades_7d": 23,
+    "trades_30d": 23,
+    "trades_90d": 23,
+    "categories": {},
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x1ba47bad36b90fc114bfe3034e9220dae4506de0",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 729.2295,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391920,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x575ae553f1b414ea991a8b9664fd0d754f041ca2",
+    "total_trades": 31,
+    "total_activity": 40,
+    "open_positions_count": 3,
+    "current_value": 168.0773,
+    "trades_7d": 30,
+    "trades_30d": 30,
+    "trades_90d": 31,
+    "categories": {},
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [],
+    "realized_pnl": -73.0999
+  },
+  {
+    "address": "0xe2fb8332f2efd0dc430b2bb2e38c5af3a13c423d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 15.2136,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391908,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x77256355ed827e5600a22bbc6a0f7410cc395a7c",
+    "total_trades": 13,
+    "total_activity": 13,
+    "open_positions_count": 13,
+    "current_value": 1012.6245,
+    "trades_7d": 13,
+    "trades_30d": 13,
+    "trades_90d": 13,
+    "categories": {},
+    "last_active_ts": 1776392064,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x33a2b72d06a3fe0712d9ffc760a3a32d15b49be1",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 2.4587,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x9819e3e2e1992cb0d6cc1742df4f4d81af314951",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 1539.8809,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391962,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x8718e0fff870ffda56047cf4e66bd219f574a072",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 5,
+    "current_value": 48.8803,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x01224a786cd703cc9d01f70f2083b4abf411621d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 8,
+    "current_value": 97.9506,
+    "trades_7d": 30,
+    "trades_30d": 141,
+    "trades_90d": 200,
+    "categories": {
+      "POLITICS": 16,
+      "OTHER": 47,
+      "SPORTS": 2
+    },
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [
+      {
+        "liquidity": 415228.58085,
+        "volume": 10971369.517994003
+      },
+      {
+        "liquidity": 415228.58085,
+        "volume": 10971369.517994003
+      },
+      {
+        "liquidity": 2893624.04902,
+        "volume": 13570466.207452323
+      },
+      {
+        "liquidity": 2893624.04902,
+        "volume": 13570466.207452323
+      },
+      {
+        "liquidity": 1158974.38268,
+        "volume": 9637112.943471896
+      },
+      {
+        "liquidity": 1158974.38268,
+        "volume": 9637112.943471896
+      },
+      {
+        "liquidity": 1158974.38268,
+        "volume": 9637112.943471896
+      },
+      {
+        "liquidity": 1158974.38268,
+        "volume": 9637112.943471896
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 1147658.00437,
+        "volume": 44095784.2194572
+      },
+      {
+        "liquidity": 1147658.00437,
+        "volume": 44095784.2194572
+      },
+      {
+        "liquidity": 2688359.95354,
+        "volume": 5142932.779198003
+      },
+      {
+        "liquidity": 2688359.95354,
+        "volume": 5142932.779198003
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 1485591.09928,
+        "volume": 38814782.64575414
+      },
+      {
+        "liquidity": 520905.60043,
+        "volume": 7169059.862661903
+      },
+      {
+        "liquidity": 520905.60043,
+        "volume": 7169059.862661903
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4905040.97801,
+        "volume": 4525643.110099984
+      },
+      {
+        "liquidity": 4905040.97801,
+        "volume": 4525643.110099984
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 451325.57252,
+        "volume": 16318110.936084786
+      },
+      {
+        "liquidity": 451325.57252,
+        "volume": 16318110.936084786
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xb6d2d81518cda8f9025697f942b2533ad4efd67b",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 1872.1169,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392010,
+    "liquidity_exposure": [],
+    "realized_pnl": -3.494
+  },
+  {
+    "address": "0xd4253cf046d1e7080c2bab443737710d55a9c0e4",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 72,
+    "current_value": 1430.0126,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391942,
+    "liquidity_exposure": [],
+    "realized_pnl": 3272.7173
+  },
+  {
+    "address": "0x540012a4dde55e2a100ac5ecf45fe7ca85fe33d3",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 8.1636,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x3cd8ed6654c3b31ada47aaa246a66a5393569f23",
+    "total_trades": 164,
+    "total_activity": 200,
+    "open_positions_count": 93,
+    "current_value": 9.4268,
+    "trades_7d": 164,
+    "trades_30d": 164,
+    "trades_90d": 164,
+    "categories": {},
+    "last_active_ts": 1776391926,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x1409bf83e510290fb039901bd05bf0ac04c8b36c",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 26,
+    "current_value": 0.0,
+    "trades_7d": 84,
+    "trades_30d": 182,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [],
+    "realized_pnl": 21.6429
+  },
+  {
+    "address": "0x4e1694d7ebaa4d7ed61a9467292eb97287cb1bf1",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 137.9437,
+    "trades_7d": 75,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x0130afd6f3efddf1c3e16e01217b172dd9befb49",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 8534.0727,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391982,
+    "liquidity_exposure": [],
+    "realized_pnl": 26974.8135
+  },
+  {
+    "address": "0xff77e4e9eecb887b687ddd0bfee053c6df131be5",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 24,
+    "current_value": 181.6901,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391936,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x10251c6856809ee1f4412ebf176b22160b288f88",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 390.6802,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391956,
+    "liquidity_exposure": [],
+    "realized_pnl": -0.546
+  },
+  {
+    "address": "0x6c3e502d9ac3674c48fbdf0266d6a1c4c9a98b7c",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 75,
+    "current_value": 680.2899,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391966,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x44192257fbc94a7958b693ee12d399bbea524ec0",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 7.6132,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392022,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x342701882826032c489a66f4043b9323237e0e1b",
+    "total_trades": 64,
+    "total_activity": 83,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 14,
+    "trades_30d": 52,
+    "trades_90d": 64,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0xd6000a815572e5cbbe2c743bb6b716aa3763b66e",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 8089.3663,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 58,
+      "POLITICS": 20,
+      "CRYPTO": 1,
+      "OTHER": 3
+    },
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 122602.8308,
+        "volume": 14501833.852568978
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 683381.05978,
+        "volume": 10367435.50259785
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 298638.74214,
+        "volume": 12085727.75879496
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      }
+    ],
+    "realized_pnl": 2920.3695000000002
+  },
+  {
+    "address": "0x5724104527eea45cfe044d834b52b16d5e5756ec",
+    "total_trades": 141,
+    "total_activity": 200,
+    "open_positions_count": 6,
+    "current_value": 10.6625,
+    "trades_7d": 85,
+    "trades_30d": 141,
+    "trades_90d": 141,
+    "categories": {},
+    "last_active_ts": 1776391914,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x26e2e2998ac09380a6ec9108aec6165594e1aed7",
+    "total_trades": 32,
+    "total_activity": 47,
+    "open_positions_count": 17,
+    "current_value": 19.8852,
+    "trades_7d": 27,
+    "trades_30d": 32,
+    "trades_90d": 32,
+    "categories": {},
+    "last_active_ts": 1776392058,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x915129114d8bea556594e281af9e1b817d8448c4",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 17,
+    "current_value": 6.2707,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391906,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x1f54ab25728772de41e100f277c3a5bc8a97edd3",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391966,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0xa5e8654516d43ff1275d24bed9bacf3493473f48",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 150,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392088,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0xc2b52ad653673802993f20fb09f28c5f200838a5",
+    "total_trades": 115,
+    "total_activity": 163,
+    "open_positions_count": 14,
+    "current_value": 125.6285,
+    "trades_7d": 14,
+    "trades_30d": 53,
+    "trades_90d": 115,
+    "categories": {
+      "OTHER": 8,
+      "POLITICS": 10
+    },
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 1053580.52079,
+        "volume": 30403455.48615253
+      },
+      {
+        "liquidity": 1053580.52079,
+        "volume": 30403455.48615253
+      },
+      {
+        "liquidity": 1777642.91717,
+        "volume": 39919809.57225612
+      },
+      {
+        "liquidity": 1777642.91717,
+        "volume": 39919809.57225612
+      },
+      {
+        "liquidity": 1777642.91717,
+        "volume": 39919809.57225612
+      },
+      {
+        "liquidity": 1777642.91717,
+        "volume": 39919809.57225612
+      },
+      {
+        "liquidity": 1006164.03343,
+        "volume": 33183134.39931704
+      },
+      {
+        "liquidity": 1006164.03343,
+        "volume": 33183134.39931704
+      },
+      {
+        "liquidity": 2408018.40752,
+        "volume": 14467602.47105278
+      },
+      {
+        "liquidity": 2408018.40752,
+        "volume": 14467602.47105278
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 1719795.2512,
+        "volume": 34502211.77002864
+      },
+      {
+        "liquidity": 1719795.2512,
+        "volume": 34502211.77002864
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xead152b855effa6b5b5837f53b24c0756830c76a",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 918521.1999,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 60
+    },
+    "last_active_ts": 1776392070,
+    "liquidity_exposure": [
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 130504.76242,
+        "volume": 4331914.765887001
+      },
+      {
+        "liquidity": 51999.4609,
+        "volume": 519952.2520460026
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      }
+    ],
+    "realized_pnl": 16511.1074
+  },
+  {
+    "address": "0xce3f3024fdc295b90b860e43920b57dcbae44a79",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 4,
+    "current_value": 23.778399999999998,
+    "trades_7d": 43,
+    "trades_30d": 194,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 31,
+      "POLITICS": 64,
+      "OTHER": 28,
+      "CRYPTO": 8
+    },
+    "last_active_ts": 1776391920,
+    "liquidity_exposure": [
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 412184.29931,
+        "volume": 5014784.871678
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 254758.51027,
+        "volume": 5794591.577584829
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 462213.46291,
+        "volume": 7183479.156279312
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 449376.04571,
+        "volume": 6252064.218433961
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 312354.51264,
+        "volume": 7876040.888493025
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 880671.42801,
+        "volume": 13541725.83604082
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 319372.99179,
+        "volume": 10116200.658944126
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 786837.30429,
+        "volume": 12964202.484257648
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 231165.08311,
+        "volume": 7470152.362363949
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 496905.2338,
+        "volume": 6992127.6673701545
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1381664.42378,
+        "volume": 11858557.826621078
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 201240.14619,
+        "volume": 7061027.474403039
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 1415514.2511,
+        "volume": 11116482.290758573
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 242773.17721,
+        "volume": 17707729.140936088
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 321539.49908,
+        "volume": 10265576.89227396
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 1345793.15234,
+        "volume": 13833283.796867903
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 1569433.15606,
+        "volume": 12089140.799372202
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 478463.34159,
+        "volume": 10962050.001035873
+      },
+      {
+        "liquidity": 478463.34159,
+        "volume": 10962050.001035873
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 294735.89305,
+        "volume": 8203461.175173907
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 522994.51982,
+        "volume": 11488193.726830129
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 157004.70965,
+        "volume": 8189663.72302669
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 380374.26694,
+        "volume": 5843897.547085901
+      },
+      {
+        "liquidity": 380374.26694,
+        "volume": 5843897.547085901
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      },
+      {
+        "liquidity": 174903.67137,
+        "volume": 6958143.294098101
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 289259.67443,
+        "volume": 8488882.293313889
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 577990.7928,
+        "volume": 11050530.458200876
+      },
+      {
+        "liquidity": 288015.97294,
+        "volume": 10832598.401070982
+      },
+      {
+        "liquidity": 324216.63693,
+        "volume": 12496570.859506724
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 206244.161,
+        "volume": 8670406.742795972
+      },
+      {
+        "liquidity": 282886.2077,
+        "volume": 7219130.687825941
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 491900.74486,
+        "volume": 12401249.551643211
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 451472.79829,
+        "volume": 10116393.058057616
+      },
+      {
+        "liquidity": 368066.99453,
+        "volume": 15340627.258119084
+      }
+    ],
+    "realized_pnl": -0.0093
+  },
+  {
+    "address": "0xad118e7b06daed1ee35aa61b70f82b1fa03d52f4",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 12,
+    "current_value": 450.0017,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x8a5486fb0731d4d8a08d4078da5dc61b14f52365",
+    "total_trades": 27,
+    "total_activity": 48,
+    "open_positions_count": 2,
+    "current_value": 106.6242,
+    "trades_7d": 8,
+    "trades_30d": 18,
+    "trades_90d": 27,
+    "categories": {},
+    "last_active_ts": 1776391910,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x61f6c7a094c893349d51ba04382d03829e1bed9e",
+    "total_trades": 173,
+    "total_activity": 200,
+    "open_positions_count": 24,
+    "current_value": 8608.0588,
+    "trades_7d": 14,
+    "trades_30d": 127,
+    "trades_90d": 168,
+    "categories": {},
+    "last_active_ts": 1776391930,
+    "liquidity_exposure": [],
+    "realized_pnl": 11.654699999999998
+  },
+  {
+    "address": "0x73ae49814fc961a3a108f35f9e2389347ff703ad",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 9.9079,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391926,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x20d2309cd92b797ae7ca175ed828ed8a27fbe29d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 19,
+    "current_value": 361.1024,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391770,
+    "liquidity_exposure": [],
+    "realized_pnl": 48.2634
+  },
+  {
+    "address": "0xce9d204439cfcc2affaf0ce4de449e5750c23c05",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 17,
+    "current_value": 2671.0504,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391926,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xc4c2ea698d104ca72a73aa27d2238c97593e1007",
+    "total_trades": 11,
+    "total_activity": 173,
+    "open_positions_count": 2,
+    "current_value": 818.4969,
+    "trades_7d": 11,
+    "trades_30d": 11,
+    "trades_90d": 11,
+    "categories": {},
+    "last_active_ts": 1776391928,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xeb6654ad315dc7dbc22a7b63e635a2ffbddc577b",
+    "total_trades": 143,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 9.6564,
+    "trades_7d": 143,
+    "trades_30d": 143,
+    "trades_90d": 143,
+    "categories": {},
+    "last_active_ts": 1776391926,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x864871201ab4048a990bb2e5281ef04fed27ca84",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392030,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0x0cb8b3a74a6552e79527cd89edb14d00f77639e6",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 4,
+    "current_value": 2.8782,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391964,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x1fc82e096da1f53ee32ed407c264fb76ae2305cf",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 2300.2556,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392002,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xe7387473b067235436884d16799777cf279edf65",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 219499.2268,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392070,
+    "liquidity_exposure": [],
+    "realized_pnl": 3620.3084000000003
+  },
+  {
+    "address": "0xf06a61b17336c58f3e0019c35f8bf9e752e89d2e",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 18,
+    "current_value": 11462.3068,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392046,
+    "liquidity_exposure": [],
+    "realized_pnl": 220.7195
+  },
+  {
+    "address": "0x238e652e2a6e09eb8a343770e533575688c3a9bc",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 77,
+    "current_value": 0.0,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392002,
+    "liquidity_exposure": [],
+    "realized_pnl": 22.5172
+  },
+  {
+    "address": "0x01ac8a81cfb1b42ea20d8c97b1a6bbef3b4bc9d9",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 66,
+    "current_value": 210.3252,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392070,
+    "liquidity_exposure": [],
+    "realized_pnl": -54.2034
+  },
+  {
+    "address": "0x55c5e9d2bbcb14b8588e8ceda9a36258f885d83b",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 0.0,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391916,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xc52a00057ffaca7ff902898c77db86745d78e37a",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 1248.625,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391910,
+    "liquidity_exposure": [],
+    "realized_pnl": -24.0985
+  },
+  {
+    "address": "0x481d8f709143da7942abe3a3705fd6f1035b0b42",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 3,
+    "current_value": 15.927,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392112,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x153fd6dbce3bc766746d7e2ffb8e826014e7cb70",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 21,
+    "current_value": 337.7959,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392154,
+    "liquidity_exposure": [],
+    "realized_pnl": 7.957699999999999
+  },
+  {
+    "address": "0x38e59b36aae31b164200d0cad7c3fe5e0ee795e7",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 150109.8971,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {
+      "SPORTS": 11,
+      "CRYPTO": 1,
+      "POLITICS": 1
+    },
+    "last_active_ts": 1776391940,
+    "liquidity_exposure": [
+      {
+        "liquidity": 19865.20148,
+        "volume": 719568.0036830009
+      },
+      {
+        "liquidity": 19865.20148,
+        "volume": 719568.0036830009
+      },
+      {
+        "liquidity": 72139.0105,
+        "volume": 5956251.745708093
+      },
+      {
+        "liquidity": 59292.2542,
+        "volume": 4230935.507337039
+      },
+      {
+        "liquidity": 154855.60884,
+        "volume": 1190894.1958409944
+      },
+      {
+        "liquidity": 154855.60884,
+        "volume": 1190894.1958409944
+      },
+      {
+        "liquidity": 154855.60884,
+        "volume": 1190894.1958409944
+      },
+      {
+        "liquidity": 6164.92751,
+        "volume": 968604.6721409992
+      },
+      {
+        "liquidity": 6164.92751,
+        "volume": 968604.6721409992
+      },
+      {
+        "liquidity": 6164.92751,
+        "volume": 968604.6721409992
+      },
+      {
+        "liquidity": 6164.92751,
+        "volume": 968604.6721409992
+      },
+      {
+        "liquidity": 19865.20148,
+        "volume": 719568.0036830009
+      },
+      {
+        "liquidity": 146409.26281,
+        "volume": 1359892.0879519924
+      }
+    ],
+    "realized_pnl": 68435.2774
+  },
+  {
+    "address": "0x2d4c2af878f3615bf94f39d7183ac47174d23bdd",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 1,
+    "current_value": 145.9267,
+    "trades_7d": 38,
+    "trades_30d": 160,
+    "trades_90d": 200,
+    "categories": {
+      "POLITICS": 12,
+      "OTHER": 34,
+      "SPORTS": 6
+    },
+    "last_active_ts": 1776391924,
+    "liquidity_exposure": [
+      {
+        "liquidity": 896246.41821,
+        "volume": 16996534.599074114
+      },
+      {
+        "liquidity": 896246.41821,
+        "volume": 16996534.599074114
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 1584978.49863,
+        "volume": 47135107.158521466
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4758103.57165,
+        "volume": 19408006.011081785
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 1487374.62044,
+        "volume": 31256345.79498824
+      },
+      {
+        "liquidity": 1487374.62044,
+        "volume": 31256345.79498824
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 592157.41436,
+        "volume": 9987856.73054697
+      },
+      {
+        "liquidity": 592157.41436,
+        "volume": 9987856.73054697
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 2400802.60293,
+        "volume": 41755219.44853258
+      },
+      {
+        "liquidity": 592157.41436,
+        "volume": 9987856.73054697
+      },
+      {
+        "liquidity": 592157.41436,
+        "volume": 9987856.73054697
+      },
+      {
+        "liquidity": 870642.8235,
+        "volume": 34568194.3641588
+      },
+      {
+        "liquidity": 870642.8235,
+        "volume": 34568194.3641588
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 4522674.68574,
+        "volume": 14762377.550655795
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 3930836.49915,
+        "volume": 32146538.26170017
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 3354481.76444,
+        "volume": 15239021.258111296
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4943517.30364,
+        "volume": 16804028.540688872
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xfd0c3406742b53bef1d747848824f6f9f199fd94",
+    "total_trades": 57,
+    "total_activity": 153,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 57,
+    "trades_30d": 57,
+    "trades_90d": 57,
+    "categories": {},
+    "last_active_ts": 1776391906,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0x41be79e4f1d704d52b8b0ec7ec5b456c91b2d38b",
+    "total_trades": 51,
+    "total_activity": 200,
+    "open_positions_count": 11,
+    "current_value": 59.198899999999995,
+    "trades_7d": 51,
+    "trades_30d": 51,
+    "trades_90d": 51,
+    "categories": {
+      "OTHER": 12,
+      "SPORTS": 11,
+      "POLITICS": 21
+    },
+    "last_active_ts": 1776392024,
+    "liquidity_exposure": [
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 866335.0635,
+        "volume": 17070894.39687856
+      },
+      {
+        "liquidity": 1629311.66699,
+        "volume": 22988627.25644716
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 1702420.5176,
+        "volume": 19045986.116670527
+      },
+      {
+        "liquidity": 1132773.50054,
+        "volume": 17940692.833421934
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 541894.71836,
+        "volume": 12702327.367797911
+      },
+      {
+        "liquidity": 660150.22311,
+        "volume": 14246692.703841722
+      },
+      {
+        "liquidity": 568582.34502,
+        "volume": 30113574.45401611
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 369514.4582,
+        "volume": 45570219.07233831
+      },
+      {
+        "liquidity": 369514.4582,
+        "volume": 45570219.07233831
+      },
+      {
+        "liquidity": 897898.13382,
+        "volume": 9025257.820086868
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 1322162.01133,
+        "volume": 16573041.798198877
+      },
+      {
+        "liquidity": 866335.0635,
+        "volume": 17070894.39687856
+      },
+      {
+        "liquidity": 660150.22311,
+        "volume": 14246692.703841722
+      },
+      {
+        "liquidity": 300039.92132,
+        "volume": 12879295.739208488
+      },
+      {
+        "liquidity": 477533.59568,
+        "volume": 34724516.68561424
+      },
+      {
+        "liquidity": 2077110.53411,
+        "volume": 17797688.335843302
+      },
+      {
+        "liquidity": 1132773.50054,
+        "volume": 17940692.833421934
+      },
+      {
+        "liquidity": 866335.0635,
+        "volume": 17070894.39687856
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      }
+    ],
+    "realized_pnl": 1.4964
+  },
+  {
+    "address": "0x36d8cbf698826ca74d9e444df634e303de4cc7c7",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 26,
+    "current_value": 15529.8964,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391906,
+    "liquidity_exposure": [],
+    "realized_pnl": -197.33339999999998
+  },
+  {
+    "address": "0xbeb96995c45ba6c2ff0b6bcb9a300d8ef38f752e",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 0,
+    "current_value": 0,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391992,
+    "liquidity_exposure": [],
+    "realized_pnl": 0
+  },
+  {
+    "address": "0x95fa958a86d9089ccf424d60a38a6b3aff40c639",
+    "total_trades": 91,
+    "total_activity": 159,
+    "open_positions_count": 2,
+    "current_value": 3.4501999999999997,
+    "trades_7d": 15,
+    "trades_30d": 91,
+    "trades_90d": 91,
+    "categories": {},
+    "last_active_ts": 1776391912,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x39e3b83aab254e3f477beddc5366c3a933bd24d1",
+    "total_trades": 37,
+    "total_activity": 61,
+    "open_positions_count": 7,
+    "current_value": 51.0369,
+    "trades_7d": 7,
+    "trades_30d": 13,
+    "trades_90d": 34,
+    "categories": {},
+    "last_active_ts": 1776392112,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x83974248a51a8b639888479d4db18ff2a9c47e78",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 2,
+    "current_value": 2.6985,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391952,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x6b23c73159b753c96d3c1ed94413f113300c04a3",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 183.8512,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391856,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x5da6cd2742d232d8bb71d3f8e3eadc0fd567370d",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 3,
+    "current_value": 5.698,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392164,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xe9010cf300384ce6b86ed9cd9436d515d3593139",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 25,
+    "current_value": 2.5677,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391908,
+    "liquidity_exposure": [],
+    "realized_pnl": 24.1212
+  },
+  {
+    "address": "0x010f74119437d18ff1828aa5ed10cd23cc8d31cf",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 92,
+    "current_value": 4.8702,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391986,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x548254ca3e01e6c33498be4ed54ae03cd45023cd",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 331.2978,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392036,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x72e2bc5836d4d272a77f538118db26226312750e",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 6,
+    "current_value": 79.7038,
+    "trades_7d": 200,
+    "trades_30d": 200,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776392166,
+    "liquidity_exposure": [],
+    "realized_pnl": -1.2032000000000007
+  },
+  {
+    "address": "0xc6f5b38e2ecfdfaf93b2fa56803d294136f8f34c",
+    "total_trades": 133,
+    "total_activity": 200,
+    "open_positions_count": 84,
+    "current_value": 84.7845,
+    "trades_7d": 133,
+    "trades_30d": 133,
+    "trades_90d": 133,
+    "categories": {},
+    "last_active_ts": 1776391912,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xa15c8f77397c5511fc0ad6c64e2f212c9cb74785",
+    "total_trades": 152,
+    "total_activity": 164,
+    "open_positions_count": 7,
+    "current_value": 23.9938,
+    "trades_7d": 37,
+    "trades_30d": 140,
+    "trades_90d": 152,
+    "categories": {
+      "SPORTS": 5,
+      "OTHER": 46,
+      "POLITICS": 11
+    },
+    "last_active_ts": 1776391922,
+    "liquidity_exposure": [
+      {
+        "liquidity": 800069.24582,
+        "volume": 10535433.589193976
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 1153898.81983,
+        "volume": 14380552.956527982
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 848390.88062,
+        "volume": 13482608.20787013
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 1318364.96176,
+        "volume": 22428634.49112583
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 4905040.97801,
+        "volume": 4525643.110099984
+      },
+      {
+        "liquidity": 4905040.97801,
+        "volume": 4525643.110099984
+      },
+      {
+        "liquidity": 1262798.22447,
+        "volume": 14237522.1076908
+      },
+      {
+        "liquidity": 1262798.22447,
+        "volume": 14237522.1076908
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 1397781.03645,
+        "volume": 26835516.03292101
+      },
+      {
+        "liquidity": 1397781.03645,
+        "volume": 26835516.03292101
+      },
+      {
+        "liquidity": 1472335.71321,
+        "volume": 28980474.04426204
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 2376505.1594,
+        "volume": 37440592.8232297
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 4432805.12491,
+        "volume": 29169723.13659324
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 3399261.87334,
+        "volume": 14383910.145800969
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 4184231.67418,
+        "volume": 14382964.60318919
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3622604.36119,
+        "volume": 18150709.246646
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 3285361.60491,
+        "volume": 15257518.346444348
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 4034320.37892,
+        "volume": 21162607.558910534
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 1290753.01513,
+        "volume": 20497052.104947727
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 4625696.45825,
+        "volume": 15846573.360299932
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 3740057.4835,
+        "volume": 22749242.826914947
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 4960571.65876,
+        "volume": 15369953.963820064
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 3730328.15369,
+        "volume": 12668877.954814767
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4415959.43477,
+        "volume": 22655988.96750435
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4606933.30229,
+        "volume": 12609341.286236998
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 4436656.08304,
+        "volume": 13834372.635190217
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      },
+      {
+        "liquidity": 3550373.20609,
+        "volume": 15391142.579538122
+      }
+    ],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0xf80a116fc8f1611c9b7ee740590502d47fc8af3b",
+    "total_trades": 86,
+    "total_activity": 145,
+    "open_positions_count": 2,
+    "current_value": 4.7499,
+    "trades_7d": 86,
+    "trades_30d": 86,
+    "trades_90d": 86,
+    "categories": {},
+    "last_active_ts": 1776391960,
+    "liquidity_exposure": [],
+    "realized_pnl": 0.0
+  },
+  {
+    "address": "0x879752bca887bc247ba883a52bc45e9c6be6bbbe",
+    "total_trades": 200,
+    "total_activity": 200,
+    "open_positions_count": 100,
+    "current_value": 27402.9968,
+    "trades_7d": 122,
+    "trades_30d": 128,
+    "trades_90d": 200,
+    "categories": {},
+    "last_active_ts": 1776391856,
+    "liquidity_exposure": [],
+    "realized_pnl": 877.5154000000001
+  }
+]
