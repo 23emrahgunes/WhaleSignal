@@ -1,0 +1,16 @@
+[
+  {
+    "address":"addr_upgraded",
+    "final_score":0.8,
+    "tier":"A",
+    "sub_scores":{
+      "recency":1.0,
+      "consistency":0.8
+    },
+    "penalties":{
+      "stale":0,
+      "concentration":0,
+      "noise":0
+    }
+  }
+]
