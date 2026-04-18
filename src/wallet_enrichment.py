@@ -16,7 +16,6 @@ class WalletEnrichment:
         """
         enriched_data = []
 
-        # Create a lookup for market data by token_id/asset_id
         token_to_market = {}
         for _, m in markets_df.iterrows():
             for t in m.get("tokens", []):
@@ -27,23 +26,18 @@ class WalletEnrichment:
             try:
                 wallet_info = self._enrich_single_wallet(address, token_to_market)
                 enriched_data.append(wallet_info)
-            except Exception as e:
-                # print(f"Error enriching {address}: {e}")
+            except Exception:
                 continue
 
         return enriched_data
 
     def _enrich_single_wallet(self, address, token_to_market):
-        # 1. Fetch data
         trades = self.data_client.get_trades(user_address=address, limit=200)
         positions = self.data_client.get_positions(user_address=address)
         closed_positions = self.data_client.get_closed_positions(user_address=address)
         activity = self.data_client.get_activity(user_address=address, limit=200)
 
-        # 2. Process Statistics
         current_time = time.time()
-
-        # Windows in seconds
         short_window = WINDOWS["short"] * 86400
         mid_window = WINDOWS["mid"] * 86400
         long_window = WINDOWS["long"] * 86400
@@ -58,31 +52,33 @@ class WalletEnrichment:
             "trades_30d": 0,
             "trades_90d": 0,
             "categories": {},
+            "market_concentration": {},
             "last_active_ts": 0,
-            "liquidity_exposure": [], # spread of markets traded
+            "liquidity_exposure": [],
             "realized_pnl_open": sum(float(p.get("realizedPnl", 0)) for p in positions),
             "realized_pnl_closed": sum(float(p.get("realizedPnl", 0)) for p in closed_positions),
         }
 
-        # Process Trades for time windows and categories
         for t in trades:
             ts = int(t.get("timestamp", 0))
             if ts > stats["last_active_ts"]:
                 stats["last_active_ts"] = ts
 
             age = current_time - ts
-            if age <= short_window: stats["trades_7d"] += 1
-            if age <= mid_window: stats["trades_30d"] += 1
-            if age <= long_window: stats["trades_90d"] += 1
+            if age <= short_window:
+                stats["trades_7d"] += 1
+            if age <= mid_window:
+                stats["trades_30d"] += 1
+            if age <= long_window:
+                stats["trades_90d"] += 1
 
             asset_id = str(t.get("asset"))
             market = token_to_market.get(asset_id)
             if market is not None:
                 cat = market.get("category", "OTHER")
                 stats["categories"][cat] = stats["categories"].get(cat, 0) + 1
-
-                # Liquidity (liquidityNum or spread)
-                # In enrichment we just collect what we have
+                m_id = str(market.get("market_id"))
+                stats["market_concentration"][m_id] = stats["market_concentration"].get(m_id, 0) + 1
                 stats["liquidity_exposure"].append({
                     "liquidity": market.get("liquidity", 0),
                     "volume": market.get("volume", 0),
@@ -91,12 +87,10 @@ class WalletEnrichment:
         return stats
 
 if __name__ == "__main__":
-    # Small test
     enricher = WalletEnrichment()
-    # We need some markets to map categories
     from src.market_census import MarketCensus
     census = MarketCensus()
-    markets = census.fetch_active_markets(limit=50)
+    census.fetch_active_markets(limit=50)
     markets_df = census.get_market_universe()
 
     test_wallets = ["0xd34f657c7e0a8e0a9d84cbcfa402de6ad9383ae4"]
