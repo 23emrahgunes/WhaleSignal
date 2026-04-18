@@ -8,5 +8,6 @@ reports/watchlists/*.json
 reports/watchlists/*.csv
 data/history/*.json
 !reports/.gitkeep
+!reports/watchlists/.gitkeep
 !data/history/.gitkeep
-!reports/watchlists/
+!data/snapshots/.gitkeep

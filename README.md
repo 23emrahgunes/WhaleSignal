@@ -20,15 +20,6 @@ Milestone 2 transforms the engine from a static reporter into a continuous track
 - `data/history/`: Persistent storage for daily snapshots.
 - `reports/watchlists/`: Bot-consumable JSON/CSV files.
 
-## Installation
-
-1. Clone the repository and install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. (Optional) Configure environment variables in `.env`.
-
 ## Daily Pipeline Workflow
 
 Run the following scripts in sequence to update the intelligence engine and publish new watchlists:
@@ -65,11 +56,3 @@ Run the following scripts in sequence to update the intelligence engine and publ
 - **Emerging Watchlist**: Wallets with rapidly rising scores or recent upgrades.
 - **Probation Watchlist**: Previously high-quality wallets showing signs of decay, downgrades, or staleness.
 - **Category Watchlists**: Top wallets filtered by domain expertise (Crypto, Sports, Politics, Other).
-
-## Scoring & Penalties
-
-The engine applies a weighted formula (0.22 Consistency, 0.20 Realized Quality, etc.) and history-based modifiers:
-- **Stability Bonus**: Extra points for steady score trends.
-- **Volatility Penalty**: Deductions for erratic score changes.
-- **Stale Penalty**: Applied to inactive wallets (>14 days normal, >30 days double penalty).
-- **Concentration Penalty**: Deductions for wallets over-reliant on single markets.

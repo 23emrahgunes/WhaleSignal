@@ -1,166 +1,83 @@
 import time
-from src.config import WEIGHTS, WINDOW_WEIGHTS, PENALTIES, LIQUIDITY_THRESHOLDS
+from src.config import WEIGHTS, WINDOW_WEIGHTS, PENALTIES
 
 class WalletQualityScorer:
     def __init__(self, history=None):
         self.weights = WEIGHTS
         self.window_weights = WINDOW_WEIGHTS
         self.penalties = PENALTIES
-        self.history = history # Historical trend for this wallet
+        self.history = history
 
-    def score_wallet(self, enriched_wallet):
-        """
-        Calculate the Wallet Quality Score based on enriched data.
-        Returns a dict with final score and sub-scores.
-        """
-        # 1. Consistency Score (0.22)
-        consistency_score = self._calc_consistency(enriched_wallet)
+    def score_wallet(self, w):
+        consistency = self._calc_consistency(w)
+        realized = self._calc_realized_quality(w)
+        recency = self._calc_recency(w)
+        cat_strength = self._calc_category_strength(w)
+        liquidity = self._calc_liquidity(w)
+        followability = self._calc_followability(w, liquidity)
 
-        # 2. Realized Quality Score (0.20)
-        realized_quality_score = self._calc_realized_quality(enriched_wallet)
+        base_score = (consistency * self.weights["consistency"] + realized * self.weights["realized_quality"] +
+                      recency * self.weights["recency"] + cat_strength * self.weights["category_strength"] +
+                      liquidity * self.weights["liquidity_adjusted"] + followability * self.weights["followability"])
 
-        # 3. Recency Score (0.14)
-        recency_score = self._calc_recency(enriched_wallet)
+        stability = self._calc_stability_modifier()
+        final_score = max(0, min(1.0, base_score + stability - self._calc_penalties(w)))
 
-        # 4. Category Strength Score (0.14)
-        category_strength_score = self._calc_category_strength(enriched_wallet)
-
-        # 5. Liquidity Adjusted Score (0.15)
-        liquidity_adjusted_score = self._calc_liquidity_adjusted(enriched_wallet)
-
-        # 6. Followability Score (0.15)
-        followability_score = self._calc_followability(enriched_wallet)
-
-        # Base Score
-        base_score = (
-            consistency_score * self.weights["consistency"] +
-            realized_quality_score * self.weights["realized_quality"] +
-            recency_score * self.weights["recency"] +
-            category_strength_score * self.weights["category_strength"] +
-            liquidity_adjusted_score * self.weights["liquidity_adjusted"] +
-            followability_score * self.weights["followability"]
-        )
-
-        # Milestone 2: Stability Bonus / Volatility Penalty
-        stability_modifier = self._calc_stability_modifier()
-        base_score += stability_modifier
-
-        # Penalties
-        concentration_penalty = self._calc_concentration_penalty(enriched_wallet)
-        stale_penalty = self._calc_stale_penalty(enriched_wallet)
-        noise_penalty = self._calc_noise_penalty(enriched_wallet)
-
-        total_penalty = concentration_penalty + stale_penalty + noise_penalty
-        final_score = max(0, min(1.0, base_score - total_penalty))
-
-        # Classification
         tier = "C"
-        if final_score >= 0.7:
-            tier = "A"
-        elif final_score >= 0.4:
-            tier = "B"
+        if final_score >= 0.7: tier = "A"
+        elif final_score >= 0.4: tier = "B"
 
-        return {
-            "address": enriched_wallet["address"],
-            "final_score": round(final_score, 4),
-            "tier": tier,
-            "sub_scores": {
-                "consistency": round(consistency_score, 4),
-                "realized_quality": round(realized_quality_score, 4),
-                "recency": round(recency_score, 4),
-                "category_strength": round(category_strength_score, 4),
-                "liquidity_adjusted": round(liquidity_adjusted_score, 4),
-                "followability": round(followability_score, 4),
-                "stability_modifier": round(stability_modifier, 4),
-            },
-            "penalties": {
-                "concentration": round(concentration_penalty, 4),
-                "stale": round(stale_penalty, 4),
-                "noise": round(noise_penalty, 4),
-            }
-        }
+        return {"address": w["address"], "final_score": round(final_score, 4), "tier": tier,
+                "sub_scores": {"consistency": round(consistency, 4), "realized": round(realized, 4), "recency": round(recency, 4), "stability": round(stability, 4)},
+                "penalties": {"stale": round(self._calc_stale_penalty(w), 4)}}
 
     def _calc_consistency(self, w):
-        # Weighted activity across windows
         denom = 50.0
-        s = (w["trades_7d"] / denom) * self.window_weights["short"] + \
-            (w["trades_30d"] / denom) * self.window_weights["mid"] + \
-            (w["trades_90d"] / denom) * self.window_weights["long"]
+        s = (w["trades_7d"]/denom)*self.window_weights["short"] + (w["trades_30d"]/denom)*self.window_weights["mid"] + (w["trades_90d"]/denom)*self.window_weights["long"]
         return min(1.0, s)
 
     def _calc_realized_quality(self, w):
-        # Based on realized PnL normalized by value/volume
-        realized_total = w.get("realized_pnl_open", 0) + w.get("realized_pnl_closed", 0)
-
-        if w["current_value"] > 10:
-            roi = realized_total / w["current_value"]
-            return min(1.0, max(0, 0.5 + roi))
-
-        if realized_total > 100: return 0.8
-        elif realized_total > 0: return 0.6
-        return 0.4
+        total = w.get("realized_pnl_open", 0) + w.get("realized_pnl_closed", 0)
+        if w["current_value"] > 10: return min(1.0, max(0, 0.5 + (total/w["current_value"])))
+        return 0.8 if total > 100 else 0.6 if total > 0 else 0.4
 
     def _calc_recency(self, w):
-        # Decay factor: activity in last 7 days vs 30 days
         if w["trades_30d"] == 0: return 0
-        ratio = w["trades_7d"] / (w["trades_30d"] / 4.0)
-        return min(1.0, ratio * 0.5 + (w["trades_7d"] / 20.0) * 0.5)
+        return min(1.0, (w["trades_7d"] / (w["trades_30d"]/4.0)) * 0.5 + (w["trades_7d"]/20.0)*0.5)
 
     def _calc_category_strength(self, w):
         cats = w.get("categories", {})
         if not cats: return 0
-        # Diversity and Depth
-        max_trades = max(cats.values())
-        diversity_bonus = min(0.2, len(cats) * 0.05)
-        return min(1.0, (max_trades / 15.0) + diversity_bonus)
+        return min(1.0, (max(cats.values())/15.0) + min(0.2, len(cats)*0.05))
 
-    def _calc_liquidity_adjusted(self, w):
+    def _calc_liquidity(self, w):
         lexp = w.get("liquidity_exposure", [])
         if not lexp: return 0.4
-        avg_liq = sum(float(l["liquidity"]) for l in lexp) / len(lexp)
-        return min(1.0, avg_liq / 150000.0)
+        return min(1.0, (sum(float(l["liquidity"]) for l in lexp)/len(lexp))/150000.0)
 
-    def _calc_followability(self, w):
-        # Followability decreases if markets are low-liquidity
-        liq_score = self._calc_liquidity_adjusted(w)
-        # Entry detectability: more trades = more detectable pattern
-        activity_bonus = min(0.2, w["total_trades"] / 100.0)
-        return min(1.0, liq_score * 0.8 + activity_bonus)
+    def _calc_followability(self, w, liq):
+        return min(1.0, liq * 0.8 + min(0.2, w["total_trades"]/100.0))
 
     def _calc_stability_modifier(self):
-        """Milestone 2: Bonus for consistent historical scores, penalty for volatility."""
-        if not self.history or len(self.history) < 3:
-            return 0
-
+        if not self.history or len(self.history) < 3: return 0
         scores = [h["score"] for h in self.history]
-        avg_score = sum(scores) / len(scores)
-        # Simple volatility: variance
-        variance = sum((s - avg_score) ** 2 for s in scores) / len(scores)
+        avg = sum(scores)/len(scores)
+        var = sum((s-avg)**2 for s in scores)/len(scores)
+        return 0.05 if var < 0.01 else -0.05 if var > 0.05 else 0
 
-        if variance < 0.01: # Very stable
-            return 0.05
-        if variance > 0.05: # Very volatile
-            return -0.05
-        return 0
+    def _calc_penalties(self, w):
+        return self._calc_stale_penalty(w) + self._calc_concentration_penalty(w) + (0.1 if w["total_trades"] < 10 else 0)
 
     def _calc_concentration_penalty(self, w):
-        # Penalty if trades are concentrated in too few markets
         m_con = w.get("market_concentration", {})
         if not m_con: return 0
         total = sum(m_con.values())
-        if total == 0: return 0
-        max_share = max(m_con.values()) / total
-        if max_share > 0.8: return self.penalties["concentration"]
-        return 0
+        return 0.1 if total > 0 and max(m_con.values())/total > 0.8 else 0
 
     def _calc_stale_penalty(self, w):
-        last_active = w.get("last_active_ts", 0)
-        if last_active == 0: return self.penalties["stale"]
-        age_days = (time.time() - last_active) / 86400
-        if age_days > 30: return self.penalties["stale"] * 2
-        if age_days > 14: return self.penalties["stale"]
-        return 0
-
-    def _calc_noise_penalty(self, w):
-        if w["total_trades"] < 10: return self.penalties["noise"]
+        last = w.get("last_active_ts", 0)
+        if last == 0: return self.penalties["stale"]
+        age = (time.time() - last) / 86400
+        if age > 30: return self.penalties["stale"] * 2
+        if age > 14: return self.penalties["stale"]
         return 0

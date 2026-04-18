@@ -16,7 +16,6 @@ CATEGORY_MAP = {
     "Entertainment": "OTHER",
     "Science": "OTHER",
     "Business": "OTHER",
-    # Add more mappings as discovered from Gamma API
 }
 
 # Scoring Weights
