@@ -1,5 +1,22 @@
-# Polymarket Whale Engine
+# Polymarket Whale Intelligence Engine
 
-Polymarket Whale Engine, tüm Polymarket piyasalarını sürekli tarayarak leaderboard dışındaki istikrarlı, takip edilebilir ve yüksek kaliteli cüzdanları keşfetmek için tasarlanmış bir analiz motorudur. Bu proje; market census, wallet census, wallet enrichment ve wallet quality scoring katmanlarıyla çalışır ve tek seferlik büyük kazançları değil, zaman içinde daha düzenli ve güvenilir performans gösteren cüzdanları bulmayı hedefler.
+Polymarket Whale Engine scans Polymarket markets to discover leaderboard-independent, stable, followable, high-quality wallets. The repo is not for trade execution; it is an intelligence engine for wallet discovery, scoring, ranking, and watchlist generation.
 
-Repo’nun amacı trade execution değil, Polymarket ekosistemindeki güçlü cüzdanları sistematik biçimde tespit etmek, puanlamak, sıralamak ve güncel watchlist’ler üretmektir. Çıktılar; global stable wallet listeleri, kategori bazlı sıralamalar, yükselen cüzdanlar, düşen cüzdanlar ve takip edilmeye değer whale kümeleri gibi raporlar üretir.
+## Milestone 2 Capabilities
+- Persistent daily snapshots of wallet scores and tiers.
+- Trend analysis with stability and volatility tracking.
+- Transition tracking for Rising, Dropped, Stale, Upgraded, and Downgraded wallets.
+- Automated Core, Emerging, Probation, and category-specific watchlists.
+
+## Project Structure
+- src/: core logic and API clients.
+- scripts/: daily pipeline scripts.
+- data/history/: persistent snapshot storage.
+- reports/watchlists/: bot-consumable JSON/CSV outputs.
+
+## Daily Pipeline
+1. python3 scripts/run_fast_scan.py
+2. python3 scripts/run_enrichment.py
+3. python3 scripts/run_daily_rescore.py
+4. python3 scripts/run_transitions.py
+5. python3 scripts/publish_watchlists.py
