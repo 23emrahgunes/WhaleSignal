@@ -4,6 +4,7 @@ from tqdm import tqdm
 from src.api_clients import DataClient, CLOBClient
 from src.config import WINDOWS
 
+
 class WalletEnrichment:
     def __init__(self):
         self.data_client = DataClient()
@@ -31,6 +32,18 @@ class WalletEnrichment:
 
         return enriched_data
 
+    def _compact_position(self, position):
+        return {
+            "position_id": str(position.get("id") or position.get("asset") or position.get("conditionId") or position.get("slug") or "unknown"),
+            "asset": str(position.get("asset") or position.get("tokenId") or ""),
+            "market_id": str(position.get("market") or position.get("marketId") or position.get("conditionId") or ""),
+            "market_label": position.get("title") or position.get("question") or position.get("marketSlug") or position.get("slug") or "unknown",
+            "outcome": position.get("outcome") or position.get("side") or position.get("positionSide") or "UNKNOWN",
+            "current_value": float(position.get("currentValue", 0) or 0),
+            "realized_pnl": float(position.get("realizedPnl", 0) or 0),
+            "size": float(position.get("size", 0) or position.get("balance", 0) or position.get("shares", 0) or 0),
+        }
+
     def _enrich_single_wallet(self, address, token_to_market):
         trades = self.data_client.get_trades(user_address=address, limit=200)
         positions = self.data_client.get_positions(user_address=address)
@@ -57,6 +70,7 @@ class WalletEnrichment:
             "liquidity_exposure": [],
             "realized_pnl_open": sum(float(p.get("realizedPnl", 0)) for p in positions),
             "realized_pnl_closed": sum(float(p.get("realizedPnl", 0)) for p in closed_positions),
+            "open_positions_snapshot": [self._compact_position(p) for p in positions],
         }
 
         for t in trades:
@@ -85,6 +99,7 @@ class WalletEnrichment:
                 })
 
         return stats
+
 
 if __name__ == "__main__":
     enricher = WalletEnrichment()
