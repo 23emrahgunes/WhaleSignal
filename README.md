@@ -1,53 +1,70 @@
-# Polymarket Whale Intelligence Engine
+# PM-Edge TV-Direction Research Engine (Paper-Only)
 
-Polymarket Whale Engine, tüm Polymarket piyasalarını sürekli tarayarak leaderboard dışındaki istikrarlı, takip edilebilir ve yüksek kaliteli cüzdanları keşfetmek için tasarlanmış bir analiz motorudur. Repo’nun amacı trade execution değil, Polymarket ekosistemindeki güçlü cüzdanları sistematik biçimde tespit etmek, puanlamak, sıralamak ve güncel watchlist’ler üretmektir.
+PM-Edge TV-Direction is a high-frequency probability & direction intelligence research engine. It utilizes real-time BTCUSDT spot market prices and deep orderbook levels from Binance to analyze and calculate continuous mathematical probability and order-flow signals targeting active 5-minute binary outcome contracts on Polymarket.
 
-## Milestone 2: Continuous Intelligence
+---
 
-Milestone 2 ile proje statik rapor üreten yapıdan sürekli çalışan bir intelligence pipeline haline gelir:
-- **Persistent History**: Günlük wallet score ve tier snapshot'ları `data/history/` altında saklanır.
-- **Trend Analysis**: Wallet score stabilitesi ve volatilitesi zaman içinde hesaplanır.
-- **Transition Tracking**: `Rising`, `Dropped`, `Stale`, `Upgraded` ve `Downgraded` wallet'lar otomatik bulunur.
-- **Bot-Ready Watchlists**: `Core`, `Emerging`, `Probation` ve kategori bazlı watchlist'ler JSON ve CSV olarak üretilir.
+### ⚠️ IMPORTANT: PAPER-ONLY POLICY
+This project is exclusively designed for backtesting, academic research, and statistics.
+- **NO trade execution**
+- **NO order placement**
+- **NO private key signatures / integrations**
+- **NO autonomous execution capabilities**
 
-## Project Structure
+All data logs, predictions, decisions, and analytics generated are purely academic and informational.
 
-- `src/`: Core logic and API clients.
-  - `persistence.py`: Historical snapshot management.
-  - `wallet_transitions.py`: Transition analysis between snapshots.
-  - `wallet_ranker.py`: Ranking and watchlist generation.
-- `scripts/`: Daily pipeline scripts.
-- `data/history/`: Persistent snapshot storage.
-- `reports/watchlists/`: Bot-consumable JSON/CSV outputs.
+---
 
-## Installation
+### Core Mechanics & Equations
 
+1. **CDF-based Probability Model**:
+   $$P_{\text{up}} = \Phi\left(\frac{\ln(S/K) + \mu T}{\sigma \sqrt{T}}\right)$$
+   - $S$: Spot Price
+   - $K$: target price (`priceToBeat`)
+   - $T$: remaining time to expiry (annualized)
+   - $\sigma$: annualized realized volatility (calculated from past 60s returns)
+   - $\mu$: annualized expected short-term drift
+
+2. **Order Flow Imbalance**:
+   $$\text{Imbalance} = \frac{\text{BidVol} - \text{AskVol}}{\text{BidVol} + \text{AskVol}}$$
+   $$\text{Weighted Imbalance} = \frac{\text{WeightedBidVol} - \text{WeightedAskVol}}{\text{WeightedBidVol} + \text{WeightedAskVol}}$$
+   *Weighted volumes apply a squared-distance penalty relative to the current spot price.*
+
+3. **In-Memory Candlesticks**:
+   Generates live, thread-safe `1m` and `5m` candlestick bars using Binance `btcusdt@trade` data to feed a suite of 11 core technical indicator systems.
+
+---
+
+### Installation & Run
+
+#### Prerequisites
+- Go 1.25+
+- Modern C SQLite driver (bundled)
+
+#### Compilation & Running
 ```bash
-pip install -r requirements.txt
+# Setup Environment variables
+cp .env.example .env
+
+# Run the live prediction pipeline
+go run ./cmd/pm-edge tv-direction
 ```
 
-## Daily Pipeline Workflow
+#### Makefile Targets
+- `make build`: Compiles the binary
+- `make run`: Starts the live paper engine
+- `make test`: Runs unit tests
+- `make fmt`: Standardizes code layouts using `gofmt`
 
-```bash
-export PYTHONPATH=$PYTHONPATH:.
-python3 scripts/run_fast_scan.py
-python3 scripts/run_enrichment.py
-python3 scripts/run_daily_rescore.py
-python3 scripts/run_transitions.py
-python3 scripts/publish_watchlists.py
-```
+---
 
-## Watchlist Definitions
+### API Reference
+- `GET /health`: Server diagnostic check (Returns "OK")
+- `GET /api/live`: Real-time state details including spot prices, current active Polymarket question, computed parameters, indicator signals, and the final combined bias recommendation.
+- `GET /api/history?limit=100`: Query historical computed records.
+- `GET /api/market`: Polymarket contract metadata detail.
+- `GET /api/orderflow`: Specific summary of bids and asks sizes and imbalances.
 
-- **Core Watchlist**: Uzun süredir güçlü kalan A-tier wallet'lar.
-- **Emerging Watchlist**: Skoru yükselen veya yakın zamanda upgrade olan wallet'lar.
-- **Probation Watchlist**: Kalitesi düşen, downgrade olan veya stale davranan wallet'lar.
-- **Category Watchlists**: Crypto, Sports, Politics ve Other uzmanlık listeleri.
+---
 
-## Scoring & Penalties
-
-Engine, weighted wallet quality formula ve history-based modifier kullanır:
-- **Stability Bonus**: Kararlı score trendine ek puan.
-- **Volatility Penalty**: Oynak score davranışına ceza.
-- **Stale Penalty**: >14 gün inaktif wallet'lar için ceza, >30 gün için double stale penalty.
-- **Concentration Penalty**: Tek markete aşırı bağımlılık cezası.
+*Geoblock / Jurisdiction Notice: This tool serves purely analytical and simulation purposes and does not communicate with, or place transactions on, any restricted environments.*
