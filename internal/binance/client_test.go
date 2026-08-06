@@ -9,9 +9,9 @@ import (
 func TestClientUpdateFromTradeAndReturns(t *testing.T) {
 	c := NewClient()
 
-	c.UpdateFromTrade(1000.0, 1.0, time.Now().UTC())
-	c.UpdateFromTrade(1010.0, 1.5, time.Now().UTC())
-	c.UpdateFromTrade(1020.1, 2.0, time.Now().UTC())
+	c.UpdateFromTrade(1000.0, 1.0, time.Now().UTC(), true)
+	c.UpdateFromTrade(1010.0, 1.5, time.Now().UTC(), true)
+	c.UpdateFromTrade(1020.1, 2.0, time.Now().UTC(), true)
 
 	price := c.GetPrice()
 	if price != 1020.1 {
@@ -47,22 +47,17 @@ func TestIsSpoofingAndMedian(t *testing.T) {
 	c.UpdateDepth(bids, asks, t1)
 
 	median := c.getMedianDepthSize(true)
-	// sorted bids sizes: 0.5, 1.0, 2.5, 3.0. Even count (4), median of 1.0 and 2.5 = 1.75
 	if median != 1.75 {
 		t.Errorf("Expected median 1.75, got %f", median)
 	}
 
-	// Dynamic threshold = max(2.0, 1.75 * 3) = 5.25.
-	// Now, spoof attempt at price 98500 with size 10.0 (greater than 5.25)
 	spoofPrice := 98500.0
 	spoofSize := 10.0
 
-	// Order gets inserted
 	t2 := t1.Add(100 * time.Millisecond)
 	bidsWithSpoof := append(bids, []string{"98500", "10.0"})
 	c.UpdateDepth(bidsWithSpoof, asks, t2)
 
-	// Order gets cancelled completely within 1 sec
 	t3 := t2.Add(200 * time.Millisecond)
 	bidsCancelled := append(bids, []string{"98500", "0.0"})
 	c.UpdateDepth(bidsCancelled, asks, t3)

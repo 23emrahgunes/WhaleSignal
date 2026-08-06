@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
 	"pm-edge/internal/util"
+	"go.uber.org/zap"
 )
 
 type Token struct {
@@ -21,19 +21,19 @@ type Token struct {
 }
 
 type Market struct {
-	ID           string    `json:"id"`
-	Question     string    `json:"question"`
-	Slug         string    `json:"slug"`
-	EndDate      string    `json:"endDate"`      // ISO format end date (e.g. 2026-12-31T00:00:00Z)
-	EndDateIso   string    `json:"endDateIso"`   // Simple date (e.g. 2026-12-31)
-	ClobTokenIds string    `json:"clobTokenIds"` // String representation of token IDs
-	Tokens       []Token   `json:"tokens"`       // Custom tokens populated or parsed
-	Active       bool      `json:"active"`
-	Closed       bool      `json:"closed"`
-	PriceToBeat  float64   `json:"priceToBeat"`
-	EndTime      time.Time `json:"endTime"`
-	Outcomes     []string  `json:"outcomes"`
-	MarketStale  bool      `json:"marketStale"`
+	ID            string    `json:"id"`
+	Question      string    `json:"question"`
+	Slug          string    `json:"slug"`
+	EndDate       string    `json:"endDate"`       // ISO format end date (e.g. 2026-12-31T00:00:00Z)
+	EndDateIso    string    `json:"endDateIso"`    // Simple date (e.g. 2026-12-31)
+	ClobTokenIds  string    `json:"clobTokenIds"`  // String representation of token IDs
+	Tokens        []Token   `json:"tokens"`        // Custom tokens populated or parsed
+	Active        bool      `json:"active"`
+	Closed        bool      `json:"closed"`
+	PriceToBeat   float64   `json:"priceToBeat"`
+	EndTime       time.Time `json:"endTime"`
+	Outcomes      []string  `json:"outcomes"`
+	MarketStale   bool      `json:"marketStale"`
 }
 
 type Client struct {
@@ -80,17 +80,14 @@ func (c *Client) ParsePriceToBeat(question string) (float64, bool) {
 	return 0.0, false
 }
 
-// Is5MinMarket checks if a question refers to a 5-minute interval (usually ending in hh:mm format, or specific intervals).
-// E.g., "... at 14:35?"
+// Is5MinMarket checks if a question refers to a 5-minute interval.
 func (c *Client) Is5MinMarket(question string) bool {
-	// Look for a specific time like at 14:35?
 	reTime := regexp.MustCompile(`(?i)(?:at|by)\s+([0-9]{1,2}:[0-9]{2})`)
 	return reTime.MatchString(question)
 }
 
 // FetchActiveBTC5mMarket queries Gamma API and returns the closest active 5m BTC market.
 func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
-	// Query Gamma markets for Active, Tag "Cryptocurrencies" or containing Bitcoin/BTC
 	url := "https://gamma-api.polymarket.com/markets?limit=100&active=true"
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
@@ -108,15 +105,15 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 	}
 
 	var rawMarkets []struct {
-		ID           string   `json:"id"`
-		Question     string   `json:"question"`
-		Slug         string   `json:"slug"`
-		EndDate      string   `json:"endDate"`
-		EndDateIso   string   `json:"endDateIso"`
-		ClobTokenIds string   `json:"clobTokenIds"`
-		Closed       bool     `json:"closed"`
-		Active       bool     `json:"active"`
-		Outcomes     []string `json:"outcomes"`
+		ID           string          `json:"id"`
+		Question     string          `json:"question"`
+		Slug         string          `json:"slug"`
+		EndDate      string          `json:"endDate"`
+		EndDateIso   string          `json:"endDateIso"`
+		ClobTokenIds string          `json:"clobTokenIds"`
+		Closed       bool            `json:"closed"`
+		Active       bool            `json:"active"`
+		Outcomes     json.RawMessage `json:"outcomes"`
 	}
 
 	if err := json.Unmarshal(body, &rawMarkets); err != nil {
@@ -127,7 +124,6 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 	now := time.Now().UTC()
 
 	for _, m := range rawMarkets {
-		// Basic filters: open and has BTC/Bitcoin
 		lowerQ := strings.ToLower(m.Question)
 		if m.Closed || !m.Active {
 			continue
@@ -136,7 +132,6 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 			continue
 		}
 
-		// 5 min market check
 		if !c.Is5MinMarket(m.Question) {
 			continue
 		}
@@ -146,7 +141,6 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 			continue
 		}
 
-		// End date parsing (Try full ISO, fallback to layout)
 		var endTime time.Time
 		var parseErr error
 		if m.EndDate != "" {
@@ -160,11 +154,20 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 			continue
 		}
 
-		// Minimum remaining time constraint
 		remaining := endTime.Sub(now)
 		if remaining < 5*time.Second {
-			// expiring market
 			continue
+		}
+
+		// Defensively parse Outcomes
+		var outcomes []string
+		if len(m.Outcomes) > 0 {
+			if err := json.Unmarshal(m.Outcomes, &outcomes); err != nil {
+				var str string
+				if err := json.Unmarshal(m.Outcomes, &str); err == nil {
+					_ = json.Unmarshal([]byte(str), &outcomes)
+				}
+			}
 		}
 
 		var clobTokens []Token
@@ -173,8 +176,8 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 			if err := json.Unmarshal([]byte(m.ClobTokenIds), &ids); err == nil {
 				for i, id := range ids {
 					outcome := ""
-					if i < len(m.Outcomes) {
-						outcome = m.Outcomes[i]
+					if i < len(outcomes) {
+						outcome = outcomes[i]
 					}
 					clobTokens = append(clobTokens, Token{
 						Outcome: outcome,
@@ -194,9 +197,9 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 			Tokens:       clobTokens,
 			Active:       m.Active,
 			Closed:       m.Closed,
-			PriceToBeat:  price,
+			PriceToBeat:   price,
 			EndTime:      endTime,
-			Outcomes:     m.Outcomes,
+			Outcomes:     outcomes,
 		})
 	}
 
@@ -204,7 +207,6 @@ func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
 		return nil, fmt.Errorf("no active 5m BTC markets found")
 	}
 
-	// Find the one with minimum remaining time (closest to expiry)
 	bestIdx := 0
 	minRemaining := candidateMarkets[0].EndTime.Sub(now)
 	for i := 1; i < len(candidateMarkets); i++ {

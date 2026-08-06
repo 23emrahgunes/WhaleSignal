@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"pm-edge/internal/util"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
-	"pm-edge/internal/util"
 )
 
 type WSManager struct {
@@ -20,12 +20,14 @@ type WSManager struct {
 	wsConn       *websocket.Conn
 	mu           sync.Mutex
 	reconnecting bool
+	IsMockMode   bool
 }
 
-func NewWSManager(client *Client) *WSManager {
+func NewWSManager(client *Client, isMockMode bool) *WSManager {
 	return &WSManager{
-		client:   client,
-		stopChan: make(chan struct{}),
+		client:     client,
+		stopChan:   make(chan struct{}),
+		IsMockMode: isMockMode,
 	}
 }
 
@@ -47,9 +49,8 @@ func (w *WSManager) Stop() {
 func (w *WSManager) run() {
 	defer w.wg.Done()
 
-	// Connect to Combined Streams (Trade + Depth)
-	// URL format: wss://stream.binance.com:9443/ws/btcusdt@trade/btcusdt@depth20@100ms
-	url := "wss://stream.binance.com:9443/ws/btcusdt@trade/btcusdt@depth20@100ms"
+	// Correct official combined-stream Binance WS URL
+	url := "wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms"
 
 	backoff := 1 * time.Second
 
@@ -135,7 +136,7 @@ func (w *WSManager) readLoop(conn *websocket.Conn) error {
 				price, _ := strconv.ParseFloat(ev.Price, 64)
 				size, _ := strconv.ParseFloat(ev.Quantity, 64)
 				t := time.UnixMilli(ev.EventTime).UTC()
-				w.client.UpdateFromTrade(price, size, t)
+				w.client.UpdateFromTrade(price, size, t, true)
 			}
 		} else if payload.Stream == "btcusdt@depth20@100ms" {
 			var ev DepthEvent
@@ -159,11 +160,11 @@ func (w *WSManager) StartFallbackRESTPoller() {
 			case <-w.stopChan:
 				return
 			case <-ticker.C:
-				if w.client.WSFallback {
+				if w.client.WSFallback && !w.IsMockMode {
 					price, err := w.client.FetchTickerPriceREST()
 					if err == nil {
-						// Update client current price using artificial trade update
-						w.client.UpdateFromTrade(price, 0.0, time.Now().UTC())
+						// Update client current price using real REST fallback data update
+						w.client.UpdateFromTrade(price, 0.0, time.Now().UTC(), false)
 					} else {
 						util.Logger.Warn("Binance fallback REST poller failed", zap.Error(err))
 					}
@@ -173,8 +174,12 @@ func (w *WSManager) StartFallbackRESTPoller() {
 	}()
 }
 
-// MockDataInjector populates mock Binance and Polymarket values to keep calculations active for headless envs.
+// MockDataInjector only starts when explicit IsMockMode flag is passed.
 func (w *WSManager) StartMockDataInjector() {
+	if !w.IsMockMode {
+		return // Do not inject mock data in production or paper live modes!
+	}
+
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
@@ -186,20 +191,19 @@ func (w *WSManager) StartMockDataInjector() {
 			case <-w.stopChan:
 				return
 			case <-ticker.C:
-				if !w.client.IsWsConnected && w.client.GetPrice() == 0 {
-					// Inject synthetic price changes
-					p := 98000.0 + rand.Float64()*1000.0
-					w.client.UpdateFromTrade(p, 0.5, time.Now().UTC())
-					bids := [][]string{
-						{fmt.Sprintf("%f", p-10), "5.5"},
-						{fmt.Sprintf("%f", p-20), "10.0"},
-					}
-					asks := [][]string{
-						{fmt.Sprintf("%f", p+10), "4.8"},
-						{fmt.Sprintf("%f", p+20), "12.0"},
-					}
-					w.client.UpdateDepth(bids, asks, time.Now().UTC())
+				p := 98000.0 + rand.Float64()*1000.0
+				w.client.UpdateFromTrade(p, 0.5, time.Now().UTC(), false)
+				w.client.DataSource = "MOCK"
+
+				bids := [][]string{
+					{fmt.Sprintf("%f", p-10), "5.5"},
+					{fmt.Sprintf("%f", p-20), "10.0"},
 				}
+				asks := [][]string{
+					{fmt.Sprintf("%f", p+10), "4.8"},
+					{fmt.Sprintf("%f", p+20), "12.0"},
+				}
+				w.client.UpdateDepth(bids, asks, time.Now().UTC())
 			}
 		}
 	}()

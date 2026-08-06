@@ -12,7 +12,6 @@ func TestEvaluator(t *testing.T) {
 	ev := NewEvaluator()
 	bc := binance.NewClient()
 
-	// Initialise mock depth
 	bids := [][]string{
 		{"99000", "2.0"},
 	}
@@ -21,9 +20,8 @@ func TestEvaluator(t *testing.T) {
 	}
 	bc.UpdateDepth(bids, asks, time.Now().UTC())
 
-	// Warmup manual data
-	bc.UpdateFromTrade(100000.0, 1.0, time.Now().UTC())
-	bc.UpdateFromTrade(100100.0, 1.5, time.Now().UTC())
+	bc.UpdateFromTrade(100000.0, 1.0, time.Now().UTC(), true)
+	bc.UpdateFromTrade(100100.0, 1.5, time.Now().UTC(), true)
 
 	market := &polymarket.Market{
 		PriceToBeat: 100200.0,

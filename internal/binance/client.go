@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
 	"pm-edge/internal/util"
+	"go.uber.org/zap"
 )
 
 type Candle struct {
@@ -67,9 +67,12 @@ type Client struct {
 	SeenBids  map[float64]*SeenOrder
 	SeenAsks  map[float64]*SeenOrder
 
-	// Reconnection states & flags
+	// Reconnection states, flags, data source tracking
 	IsWsConnected bool
 	WSFallback    bool
+	DataSource    string // "BINANCE_WS", "BINANCE_REST", "MOCK"
+
+	LastPriceUpdateTime time.Time
 }
 
 func NewClient() *Client {
@@ -81,6 +84,7 @@ func NewClient() *Client {
 		SeenBids:   make(map[float64]*SeenOrder),
 		SeenAsks:   make(map[float64]*SeenOrder),
 		Snapshots:  make([]DepthSnapshot, 0, 10),
+		DataSource: "MOCK", // default initial source before real ticks arrive
 	}
 }
 
@@ -89,14 +93,12 @@ func (c *Client) WarmupCandles() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 1m warmup
 	candles1, err := c.fetchKlines("1m", 200)
 	if err != nil {
 		return fmt.Errorf("1m klines warmup failed: %w", err)
 	}
 	c.Candles1m = candles1
 
-	// 5m warmup
 	candles5, err := c.fetchKlines("5m", 200)
 	if err != nil {
 		return fmt.Errorf("5m klines warmup failed: %w", err)
@@ -105,6 +107,8 @@ func (c *Client) WarmupCandles() error {
 
 	if len(candles1) > 0 {
 		c.CurrentPrice = candles1[len(candles1)-1].Close
+		c.LastPriceUpdateTime = time.Now().UTC()
+		c.DataSource = "BINANCE_REST"
 	}
 
 	util.Logger.Info("Warmup completed successfully",
@@ -163,12 +167,18 @@ func (c *Client) fetchKlines(interval string, limit int) ([]Candle, error) {
 }
 
 // UpdateFromTrade updates real-time BTC price and processes returning log-returns.
-func (c *Client) UpdateFromTrade(price float64, size float64, t time.Time) {
+func (c *Client) UpdateFromTrade(price float64, size float64, t time.Time, isWS bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	oldPrice := c.CurrentPrice
 	c.CurrentPrice = price
+	c.LastPriceUpdateTime = time.Now().UTC()
+	if isWS {
+		c.DataSource = "BINANCE_WS"
+	} else {
+		c.DataSource = "BINANCE_REST"
+	}
 
 	if oldPrice > 0 {
 		ret := math.Log(price / oldPrice)
@@ -203,7 +213,6 @@ func (c *Client) aggregateCandle(price float64, size float64, t time.Time, inter
 	lastCandle := (*list)[lastIdx]
 
 	if roundedTime.Equal(lastCandle.StartTime) {
-		// Update current candle
 		if price > lastCandle.High {
 			(*list)[lastIdx].High = price
 		}
@@ -213,7 +222,6 @@ func (c *Client) aggregateCandle(price float64, size float64, t time.Time, inter
 		(*list)[lastIdx].Close = price
 		(*list)[lastIdx].Volume += size
 	} else if roundedTime.After(lastCandle.StartTime) {
-		// New candle
 		newCandle := Candle{
 			StartTime: roundedTime,
 			Open:      price,
@@ -237,11 +245,9 @@ func (c *Client) UpdateDepth(bidsRaw [][]string, asksRaw [][]string, t time.Time
 	bids := parseLevels(bidsRaw)
 	asks := parseLevels(asksRaw)
 
-	// Save raw levels
 	c.LastBids = bids
 	c.LastAsks = asks
 
-	// Keep last 10 snapshots
 	snap := DepthSnapshot{
 		Timestamp: t,
 		Bids:      bids,
@@ -252,7 +258,6 @@ func (c *Client) UpdateDepth(bidsRaw [][]string, asksRaw [][]string, t time.Time
 	}
 	c.Snapshots = append(c.Snapshots, snap)
 
-	// Track order lifetimes to spot potential spoofing
 	c.trackOrderLife(bids, t, true)
 	c.trackOrderLife(asks, t, false)
 }
@@ -276,10 +281,8 @@ func (c *Client) trackOrderLife(current map[float64]float64, t time.Time, isBid 
 		seenMap = c.SeenAsks
 	}
 
-	// Update or insert currently seen orders
 	for p, size := range current {
 		if size == 0 {
-			// order was cancelled or removed
 			if ord, ok := seenMap[p]; ok {
 				ord.LastSeen = t
 			}
@@ -297,7 +300,6 @@ func (c *Client) trackOrderLife(current map[float64]float64, t time.Time, isBid 
 		}
 	}
 
-	// Cleanup very old orders from Seen tracker
 	for p, ord := range seenMap {
 		if t.Sub(ord.LastSeen) > 10*time.Second {
 			delete(seenMap, p)
@@ -320,13 +322,11 @@ func (c *Client) IsSpoofing(price float64, size float64, isBid bool) bool {
 		return false
 	}
 
-	// Check lifetime (1s or less)
 	duration := order.LastSeen.Sub(order.FirstSeen)
 	if duration > time.Second {
 		return false
 	}
 
-	// Check if completely gone now (size == 0)
 	var currentSize float64
 	if isBid {
 		currentSize = c.LastBids[price]
@@ -338,7 +338,6 @@ func (c *Client) IsSpoofing(price float64, size float64, isBid bool) bool {
 		return false
 	}
 
-	// Dynamic size threshold
 	medianSize := c.getMedianDepthSize(isBid)
 	threshold := math.Max(2.0, medianSize*3.0)
 
@@ -418,6 +417,12 @@ func (c *Client) GetLogReturns() []float64 {
 	return ret
 }
 
+func (c *Client) GetDataSource() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.DataSource
+}
+
 // FetchTickerPriceREST fallbacks on REST if WebSocket fails
 func (c *Client) FetchTickerPriceREST() (float64, error) {
 	resp, err := c.httpClient.Get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
@@ -425,6 +430,10 @@ func (c *Client) FetchTickerPriceREST() (float64, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
 
 	var data struct {
 		Price string `json:"price"`

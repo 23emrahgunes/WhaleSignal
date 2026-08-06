@@ -10,24 +10,34 @@ import (
 )
 
 type EvaluationResult struct {
-	Timestamp         string         `json:"timestamp"`
-	PriceToBeat       float64        `json:"priceToBeat"`
-	CurrentPrice      float64        `json:"currentPrice"`
-	SecondsRemaining  float64        `json:"secondsRemaining"`
-	PUp               float64        `json:"pUp"`
-	PDown             float64        `json:"pDown"`
-	BidVol            float64        `json:"bidVol"`
-	AskVol            float64        `json:"askVol"`
-	Imbalance         float64        `json:"imbalance"`
-	WeightedImbalance float64        `json:"weightedImbalance"`
-	ProbabilityScore  float64        `json:"probabilityScore"`
-	OrderFlowScore    float64        `json:"orderFlowScore"`
-	TechnicalScore    float64        `json:"technicalScore"`
-	FinalScore        float64        `json:"finalScore"`
-	Decision          string         `json:"decision"`
-	Confidence        float64        `json:"confidence"`
-	Indicators        map[string]int `json:"indicators"`
-	MarketStale       bool           `json:"marketStale"`
+	Timestamp               string         `json:"timestamp"`
+	Question                string         `json:"question"`
+	Slug                    string         `json:"slug"`
+	MarketEndTime           string         `json:"marketEndTime"`
+	PriceToBeat             float64        `json:"priceToBeat"`
+	CurrentPrice            float64        `json:"currentPrice"`
+	SpotMinusPriceToBeat    float64        `json:"spotMinusPriceToBeat"`
+	SecondsRemaining        float64        `json:"secondsRemaining"`
+	PUp                     float64        `json:"pUp"`
+	PDown                   float64        `json:"pDown"`
+	BidVol                  float64        `json:"bidVol"`
+	AskVol                  float64        `json:"askVol"`
+	SpoofFilteredBidVol     float64        `json:"spoofFilteredBidVol"`
+	SpoofFilteredAskVol     float64        `json:"spoofFilteredAskVol"`
+	Imbalance               float64        `json:"imbalance"`
+	WeightedImbalance       float64        `json:"weightedImbalance"`
+	ProbabilityScore        float64        `json:"probabilityScore"`
+	OrderFlowScore          float64        `json:"orderFlowScore"`
+	TechnicalScore          float64        `json:"technicalScore"`
+	Volatility              float64        `json:"volatility"`
+	Drift                   float64        `json:"drift"`
+	CompositeScore          float64        `json:"compositeScore"`
+	FinalScore              float64        `json:"finalScore"`
+	Decision                string         `json:"decision"`
+	Confidence              float64        `json:"confidence"`
+	Indicators              map[string]int `json:"indicators"`
+	MarketStale             bool           `json:"marketStale"`
+	DataSource              string         `json:"dataSource"`
 }
 
 type Evaluator struct{}
@@ -36,35 +46,42 @@ func NewEvaluator() *Evaluator {
 	return &Evaluator{}
 }
 
-// Evaluate performs all mathematical, order flow, indicator, and scoring metrics for a single interval tick.
 func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, nowUTC string, elapsedSec float64) *EvaluationResult {
 	currentPrice := binanceClient.GetPrice()
+	// Defensively ignore or return nil if no real price was fetched yet
 	if currentPrice == 0 {
 		return nil
 	}
 
-	// 1. Kalan süre hesabı (years)
 	var secondsRemaining float64
+	var question string
+	var slug string
+	var marketEndTime string
+
 	if market != nil {
 		endTimeUTC := market.EndTime
 		nowTime, _ := timeParseRFC3339(nowUTC)
 		secondsRemaining = endTimeUTC.Sub(nowTime).Seconds()
+		question = market.Question
+		slug = market.Slug
+		marketEndTime = endTimeUTC.Format(time.RFC3339)
 	} else {
-		// Default or placeholder remaining seconds for headless tests
 		secondsRemaining = 150.0
+		question = "BTC above $100,000 at 15:05?"
+		slug = "btc-above-100k-1505"
+		marketEndTime = time.Now().UTC().Add(150 * time.Second).Format(time.RFC3339)
 	}
+
 	if secondsRemaining < 0 {
 		secondsRemaining = 0
 	}
-	T := secondsRemaining / 31536000.0 // seconds to years
+	T := secondsRemaining / 31536000.0
 
-	// 2. Volatilite ve Drift hesabı (annualized)
 	logReturns := binanceClient.GetLogReturns()
-	sigmaAnnual := 0.15 // default fallback (15% annualized)
-	muAnnual := 0.05    // default fallback (5% annualized)
+	sigmaAnnual := 0.15
+	muAnnual := 0.05
 
 	if len(logReturns) >= 2 {
-		// Calculate mean and variance of log returns
 		sum := 0.0
 		for _, r := range logReturns {
 			sum += r
@@ -77,10 +94,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		}
 		variance := varianceSum / float64(len(logReturns)-1)
 
-		// Annualise: 1s returns -> annual
-		// sigma_annual = sqrt(variance * 31,536,000)
 		sigmaAnnual = math.Sqrt(variance * 31536000.0)
-		// mu_annual = mean * 31,536,000 + 0.5 * sigma_annual^2
 		muAnnual = mean*31536000.0 + 0.5*sigmaAnnual*sigmaAnnual
 	}
 
@@ -89,23 +103,23 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		priceToBeat = market.PriceToBeat
 	}
 
-	// 3. Olasılık hesabı
 	pUp, pDown := probability.CalculateProbability(currentPrice, priceToBeat, T, sigmaAnnual, muAnnual)
 
-	// 4. Order Book likidite yoğunluğu analizi, bid/ask imbalance, liquidity wall tespiti
 	lastBids, lastAsks := binanceClient.GetLastBidsAndAsks()
 
 	bidVol := 0.0
 	askVol := 0.0
+	spoofFilteredBidVol := 0.0
+	spoofFilteredAskVol := 0.0
 	weightedBidVol := 0.0
 	weightedAskVol := 0.0
 
-	// Imbalance ve wall detection
 	for p, size := range lastBids {
-		if binanceClient.IsSpoofing(p, size, true) {
-			continue // skip spoofing order
-		}
 		bidVol += size
+		if binanceClient.IsSpoofing(p, size, true) {
+			continue
+		}
+		spoofFilteredBidVol += size
 		dist := math.Abs(currentPrice - p)
 		if dist > 0 {
 			weightedBidVol += size / (dist * dist)
@@ -115,10 +129,11 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 
 	for p, size := range lastAsks {
-		if binanceClient.IsSpoofing(p, size, false) {
-			continue // skip spoofing order
-		}
 		askVol += size
+		if binanceClient.IsSpoofing(p, size, false) {
+			continue
+		}
+		spoofFilteredAskVol += size
 		dist := math.Abs(currentPrice - p)
 		if dist > 0 {
 			weightedAskVol += size / (dist * dist)
@@ -137,7 +152,6 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		weightedImbalance = (weightedBidVol - weightedAskVol) / (weightedBidVol + weightedAskVol)
 	}
 
-	// 5. Teknik indikatör skoru
 	candles1m := binanceClient.GetCandles("1m")
 	candles5m := binanceClient.GetCandles("5m")
 	indicators := GetIndicatorScores(candles1m, candles5m)
@@ -151,12 +165,11 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		technicalScore = technicalSum / float64(len(indicators))
 	}
 
-	// 6. Birleşik yön skoru
-	// finalScore = 0.55 * probabilityScore + 0.30 * orderFlowScore + 0.15 * technicalScore
 	probabilityScore := (pUp - 0.5) * 2.0
 	orderFlowScore := weightedImbalance
 
-	finalScore := (0.55 * probabilityScore) + (0.30 * orderFlowScore) + (0.15 * technicalScore)
+	compositeScore := (0.55 * probabilityScore) + (0.30 * orderFlowScore) + (0.15 * technicalScore)
+	finalScore := compositeScore
 
 	decision := "NEUTRAL"
 	if finalScore >= 0.20 {
@@ -172,25 +185,37 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		marketStale = market.MarketStale
 	}
 
+	source := binanceClient.GetDataSource()
+
 	return &EvaluationResult{
-		Timestamp:         nowUTC,
-		PriceToBeat:       priceToBeat,
-		CurrentPrice:      currentPrice,
-		SecondsRemaining:  secondsRemaining,
-		PUp:               pUp,
-		PDown:             pDown,
-		BidVol:            bidVol,
-		AskVol:            askVol,
-		Imbalance:         imbalance,
-		WeightedImbalance: weightedImbalance,
-		ProbabilityScore:  probabilityScore,
-		OrderFlowScore:    orderFlowScore,
-		TechnicalScore:    technicalScore,
-		FinalScore:        finalScore,
-		Decision:          decision,
-		Confidence:        confidence,
-		Indicators:        indicators,
-		MarketStale:       marketStale,
+		Timestamp:               nowUTC,
+		Question:                question,
+		Slug:                    slug,
+		MarketEndTime:           marketEndTime,
+		PriceToBeat:             priceToBeat,
+		CurrentPrice:            currentPrice,
+		SpotMinusPriceToBeat:    currentPrice - priceToBeat,
+		SecondsRemaining:        secondsRemaining,
+		PUp:                     pUp,
+		PDown:                   pDown,
+		BidVol:                  bidVol,
+		AskVol:                  askVol,
+		SpoofFilteredBidVol:     spoofFilteredBidVol,
+		SpoofFilteredAskVol:     spoofFilteredAskVol,
+		Imbalance:               imbalance,
+		WeightedImbalance:       weightedImbalance,
+		ProbabilityScore:        probabilityScore,
+		OrderFlowScore:          orderFlowScore,
+		TechnicalScore:          technicalScore,
+		Volatility:              sigmaAnnual,
+		Drift:                   muAnnual,
+		CompositeScore:          compositeScore,
+		FinalScore:              finalScore,
+		Decision:                decision,
+		Confidence:              confidence,
+		Indicators:              indicators,
+		MarketStale:             marketStale,
+		DataSource:              source,
 	}
 }
 
