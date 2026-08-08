@@ -76,6 +76,20 @@ async function run() {
   console.log("tick3 (DOWN düştü):", "DOWN filled =", ctrl.down.filled);
   console.log("  NET PnL =", snap.netPnl.toFixed(3), "| kilitli box =", snap.lockedCount);
   console.log("  combined =", snap.combined);
+
+  // --- ADAPTIVE mod: karar verilmiş market (0.15/0.84), best-bid'e otur ---
+  console.log("\n=== ADAPTIVE mod testi (bidSum 0.99) ===");
+  const c2: any = new WebController();
+  c2.feed = new FakeFeed();
+  c2.pm = new FakePM();
+  const pm2: FakePM = c2.pm;
+  c2.setAuto(true, { mode: "adaptive", shares: 5, maxCombined: 0.99, minSec: 45 });
+  pm2.setBook("UP", 0.15, 0.16);
+  pm2.setBook("DOWN", 0.84, 0.85);
+  await c2.tick();
+  console.log("tick1:", c2.status);
+  console.log("  emirler:", pm2.fills.slice());
+  console.log("  UP@", c2.up.price, "DOWN@", c2.down.price, "combined =", (c2.up.price + c2.down.price).toFixed(3));
 }
 
 run().catch((e) => console.error(e));

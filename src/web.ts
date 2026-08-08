@@ -119,10 +119,12 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
     if (url === "/api/auto" && req.method === "POST") {
       const b = await readBody(req);
       ctrl.setAuto(Boolean(b.on), {
+        mode: b.mode === "adaptive" ? "adaptive" : b.mode === "fixed" ? "fixed" : undefined,
         price: b.price != null ? Number(b.price) : undefined,
         shares: b.shares != null ? Number(b.shares) : undefined,
         proxUsd: b.proxUsd != null ? Number(b.proxUsd) : undefined,
         minSec: b.minSec != null ? Number(b.minSec) : undefined,
+        maxCombined: b.maxCombined != null ? Number(b.maxCombined) : undefined,
       });
       json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
       return;
@@ -266,13 +268,22 @@ const HTML = /* html */ `<!doctype html>
 
       <hr style="border:0;border-top:1px solid var(--bd);margin:14px 0">
       <h2>🤖 Otomatik mod <span id="autoBadge" class="badge" style="background:#6e768133">KAPALI</span></h2>
+      <div class="controls" style="margin-bottom:8px">
+        <div><label>Mod</label>
+          <select id="mode" style="background:#0d1117;border:1px solid var(--bd);color:var(--fg);border-radius:6px;padding:8px;font-size:14px">
+            <option value="fixed">fixed (0.40/0.40 · tombul)</option>
+            <option value="adaptive">adaptive (best-bid · sık/ince)</option>
+          </select>
+        </div>
+        <div><label>Min kalan (sn)</label><input id="minSec" type="number" step="5" value="45"></div>
+      </div>
       <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
-        Spot, priceToBeat'e ≤ <b id="pxLbl">2</b>$ yaklaşınca ve ≥ <b id="msLbl">45</b>s kalınca
-        otomatik olarak UP+DOWN limit koyar. Sen izlersin.
+        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ yaklaşınca UP+DOWN'a <b>Limit fiyat</b> (0.40) koyar.<br>
+        <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar (en ince kârı bile kovalar).
       </div>
       <div class="controls">
-        <div><label>Yakınlık (≤ $)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
-        <div><label>Min kalan (sn)</label><input id="minSec" type="number" step="5" value="45"></div>
+        <div><label>Yakınlık ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
+        <div><label>Max combined (adaptive)</label><input id="maxCombined" type="number" step="0.01" value="0.97"></div>
         <button class="b-go" id="autoOn">Oto AÇ</button>
         <button class="b-cancel" id="autoOff">Oto KAPAT</button>
       </div>
@@ -330,7 +341,7 @@ async function poll(){
     ab.style.background = s.auto ? "#2ea04333" : "#6e768133";
     ab.style.color = s.auto ? "var(--up)" : "var(--mut)";
     $("pxLbl").textContent = s.autoProxUsd;
-    $("msLbl").textContent = s.autoMinSec;
+    $("mcLbl").textContent = s.autoMaxCombined;
     const tbl = $("lockedTbl");
     tbl.innerHTML = "<tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr>" +
       (s.locked||[]).map(l=>"<tr><td>"+l.slug+"</td><td class=mono>"+l.shares+
@@ -350,8 +361,8 @@ $("cancel").onclick = ()=>post("/api/cancel");
 $("reset").onclick = ()=>post("/api/reset");
 async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({on,price:Number($("price").value),shares:Number($("shares").value),
-      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value)})});
+    body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),shares:Number($("shares").value),
+      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),maxCombined:Number($("maxCombined").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
 }
 $("autoOn").onclick = ()=>postAuto(true);

@@ -39,10 +39,12 @@ export class WebController {
 
   // --- Otomatik mod ---
   auto = false;
-  autoPrice = cfg.targetLegPrice; // 0.40
+  targetMode: "fixed" | "adaptive" = "fixed";
+  autoPrice = cfg.targetLegPrice; // 0.40 (fixed mod)
   autoShares = cfg.pairShares; // 5
-  autoProxUsd = 2; // |spot - strike| <= bu (USD) olunca otomatik box
+  autoProxUsd = 2; // |spot - strike| <= bu (USD) olunca (fixed mod)
   autoMinSec = 45; // en az bu kadar sure kalmisken box ac
+  autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
   autoReason = ""; // neden acilmadi (UI icin)
 
   constructor() {
@@ -114,22 +116,47 @@ export class WebController {
       return;
     }
 
-    // --- OTOMATIK MOD: pinned degilken proximity izle, uygunsa box ac ---
+    // --- OTOMATIK MOD ---
     if (this.auto) {
-      const dist = Math.abs(this.feed.price - this.market.strike);
       if (!this.feed.ready || this.feed.isStale()) {
         this.autoReason = "fiyat bekleniyor";
       } else if (secLeft < this.autoMinSec) {
         this.autoReason = `kalan süre az (${secLeft.toFixed(0)}s < ${this.autoMinSec}s)`;
-      } else if (dist > this.autoProxUsd) {
-        this.autoReason = `uzak (${dist.toFixed(2)}$ > ${this.autoProxUsd}$)`;
+      } else if (this.targetMode === "fixed") {
+        // FIXED: spot strike'a yakinken 0.40/0.40
+        const dist = Math.abs(this.feed.price - this.market.strike);
+        if (dist > this.autoProxUsd) {
+          this.autoReason = `uzak (${dist.toFixed(2)}$ > ${this.autoProxUsd}$)`;
+        } else {
+          this.autoReason = "";
+          const r = await this.placeBox(this.autoPrice, this.autoShares);
+          this.status = "🤖 OTO(fixed) box: " + r.msg;
+          return;
+        }
       } else {
-        this.autoReason = "";
-        const r = await this.placeBox(this.autoPrice, this.autoShares);
-        this.status = "🤖 OTO box açıldı: " + r.msg;
-        return;
+        // ADAPTIVE: her bacagi best bid'ine oturt, combined <= autoMaxCombined
+        if (!a || !b) {
+          this.autoReason = "order book yok";
+        } else {
+          let upPx = a.bestBid;
+          let downPx = b.bestBid;
+          // Kuyrukta one gecmek icin +1 tick, tavani asmiyorsa
+          if (upPx + downPx + 0.02 <= this.autoMaxCombined) {
+            upPx += 0.01;
+            downPx += 0.01;
+          }
+          const combined = upPx + downPx;
+          if (combined > this.autoMaxCombined) {
+            this.autoReason = `bid toplamı yüksek (${combined.toFixed(3)} > ${this.autoMaxCombined})`;
+          } else {
+            this.autoReason = "";
+            const r = await this.placeBoxLegs(upPx, downPx, this.autoShares);
+            this.status = "🤖 OTO(adaptif) box: " + r.msg;
+            return;
+          }
+        }
       }
-      this.status = `🤖 oto izliyor — ${this.autoReason} (kalan ${secLeft.toFixed(0)}s)`;
+      this.status = `🤖 oto(${this.targetMode}) izliyor — ${this.autoReason} (kalan ${secLeft.toFixed(0)}s)`;
     } else {
       this.status = `izleniyor (kalan ${secLeft.toFixed(0)}s)`;
     }
@@ -194,12 +221,25 @@ export class WebController {
     }
   }
 
-  setAuto(on: boolean, opts: { price?: number; shares?: number; proxUsd?: number; minSec?: number }) {
+  setAuto(
+    on: boolean,
+    opts: {
+      mode?: "fixed" | "adaptive";
+      price?: number;
+      shares?: number;
+      proxUsd?: number;
+      minSec?: number;
+      maxCombined?: number;
+    }
+  ) {
     this.auto = on;
+    if (opts.mode) this.targetMode = opts.mode;
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
     if (opts.shares != null) this.autoShares = Math.max(1, opts.shares);
     if (opts.proxUsd != null) this.autoProxUsd = Math.max(0.1, opts.proxUsd);
     if (opts.minSec != null) this.autoMinSec = Math.max(10, opts.minSec);
+    if (opts.maxCombined != null)
+      this.autoMaxCombined = Math.min(0.999, Math.max(0.5, opts.maxCombined));
   }
 
   private async refresh(side: "UP" | "DOWN", book: Book | null) {
@@ -248,23 +288,36 @@ export class WebController {
     }
   }
 
-  /** UP ve DOWN'a ayni anda limit emir koy (tek seferde). */
+  /** UP ve DOWN'a AYNI fiyattan limit koy (manuel / fixed mod). */
   async placeBox(price: number, shares: number): Promise<{ ok: boolean; msg: string }> {
+    return this.placeBoxLegs(price, price, shares);
+  }
+
+  /** UP ve DOWN'a AYRI fiyatlardan limit koy (adaptif mod best-bid'e oturur). */
+  async placeBoxLegs(
+    upPrice: number,
+    downPrice: number,
+    shares: number
+  ): Promise<{ ok: boolean; msg: string }> {
     if (!this.market) return { ok: false, msg: "market yok" };
     if (this.pinned) return { ok: false, msg: "zaten aktif box var (önce Reset)" };
-    const px = Math.min(0.99, Math.max(0.01, price));
+    const upPx = Math.min(0.99, Math.max(0.01, Number(upPrice.toFixed(3))));
+    const downPx = Math.min(0.99, Math.max(0.01, Number(downPrice.toFixed(3))));
     const sz = Math.max(1, shares);
+    if (upPx + downPx >= 1) {
+      return { ok: false, msg: `combined ${(upPx + downPx).toFixed(3)} >= 1.00, açılmadı` };
+    }
 
     this.pinned = true;
     this.settled = false;
-    this.up = { price: px, shares: sz, filled: 0 };
-    this.down = { price: px, shares: sz, filled: 0 };
+    this.up = { price: upPx, shares: sz, filled: 0 };
+    this.down = { price: downPx, shares: sz, filled: 0 };
     this.upCost = 0;
     this.downCost = 0;
 
     const [ru, rd] = await Promise.all([
-      this.pm.placeLimit(this.market.yesTokenId, "BUY", sz, px),
-      this.pm.placeLimit(this.market.noTokenId, "BUY", sz, px),
+      this.pm.placeLimit(this.market.yesTokenId, "BUY", sz, upPx),
+      this.pm.placeLimit(this.market.noTokenId, "BUY", sz, downPx),
     ]);
     this.up.id = ru.id;
     this.down.id = rd.id;
@@ -274,7 +327,7 @@ export class WebController {
     }
     return {
       ok: true,
-      msg: `Box yerleştirildi: UP+DOWN ${sz} share @ ${px} (${cfg.dryRun ? "DRY" : "CANLI"})`,
+      msg: `UP@${upPx} + DOWN@${downPx} ${sz} share (combined ${(upPx + downPx).toFixed(3)}, ${cfg.dryRun ? "DRY" : "CANLI"})`,
     };
   }
 
@@ -307,10 +360,12 @@ export class WebController {
       status: this.status,
       lastError: this.lastError,
       auto: this.auto,
+      targetMode: this.targetMode,
       autoPrice: this.autoPrice,
       autoShares: this.autoShares,
       autoProxUsd: this.autoProxUsd,
       autoMinSec: this.autoMinSec,
+      autoMaxCombined: this.autoMaxCombined,
       market: this.market
         ? {
             slug: this.market.id,
