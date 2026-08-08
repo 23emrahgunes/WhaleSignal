@@ -65,9 +65,29 @@ Kritik `.env` alanlari:
 ## Çalıştırma
 
 ```bash
-npm start        # tek sefer
+npm start        # otomatik bot (headless)
 npm run dev      # dosya değişince yeniden başlat
+npm run web      # WEB PANEL (manuel kontrol + net PnL)
 ```
+
+## Web panel (manuel box kontrolü)
+
+`npm run web` → `http://127.0.0.1:3000`. Net PnL, aktif market, UP/DOWN order
+book ve limit fiyatlarını gösterir; tek tıkla **UP+DOWN'a aynı anda limit emir**
+koyar (varsayılan 0.40 fiyat, 5 share). İki bacak da dolup toplam < $1 olunca
+kilitlenir ve garanti kâr net PnL'e eklenir.
+
+**Güvenlik:** Panel varsayılan olarak sadece `127.0.0.1`'e bağlanır (trading
+kontrolü halka açık olmamalı). Uzaktan erişim için SSH tüneli kullan:
+
+```bash
+ssh -L 3000:localhost:3000 KULLANICI@VPS_IP
+```
+Sonra kendi tarayıcında `http://localhost:3000`. (Genel IP'ye açmak istersen
+`WEB_HOST=0.0.0.0 WEB_PORT=3000` + firewall — önerilmez.)
+
+> Not: Web panelini VE otomatik botu (`npm start`) aynı anda çalıştırma —
+> ikisi de emir verir, çakışır. Birini seç.
 
 ## ⚠️ Canlıya geçmeden DOĞRULA
 

@@ -1,0 +1,210 @@
+import http from "node:http";
+import { validateConfig, cfg } from "./config.js";
+import { WebController } from "./webController.js";
+import { log } from "./logger.js";
+
+const PORT = Number(process.env.WEB_PORT || 3000);
+const HOST = process.env.WEB_HOST || "127.0.0.1"; // guvenlik: varsayilan sadece localhost
+
+const ctrl = new WebController();
+
+function json(res: http.ServerResponse, code: number, body: unknown) {
+  const s = JSON.stringify(body);
+  res.writeHead(code, { "Content-Type": "application/json" });
+  res.end(s);
+}
+
+async function readBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = req.url || "/";
+  try {
+    if (url === "/" || url === "/index.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(HTML);
+      return;
+    }
+    if (url === "/api/state") {
+      json(res, 200, ctrl.snapshot());
+      return;
+    }
+    if (url === "/api/place" && req.method === "POST") {
+      const b = await readBody(req);
+      const price = Number(b.price ?? cfg.targetLegPrice);
+      const shares = Number(b.shares ?? cfg.pairShares);
+      const r = await ctrl.placeBox(price, shares);
+      json(res, r.ok ? 200 : 400, r);
+      return;
+    }
+    if (url === "/api/cancel" && req.method === "POST") {
+      json(res, 200, await ctrl.cancelAll());
+      return;
+    }
+    if (url === "/api/reset" && req.method === "POST") {
+      json(res, 200, await ctrl.reset());
+      return;
+    }
+    res.writeHead(404);
+    res.end("not found");
+  } catch (e) {
+    json(res, 500, { ok: false, msg: (e as Error).message });
+  }
+});
+
+async function main() {
+  validateConfig();
+  await ctrl.start();
+  server.listen(PORT, HOST, () => {
+    log.ok(`Web panel: http://${HOST}:${PORT}  (DRY_RUN=${cfg.dryRun})`);
+    log.info(
+      `Uzaktan erisim icin SSH tuneli: ssh -L ${PORT}:localhost:${PORT} KULLANICI@VPS_IP`
+    );
+  });
+}
+
+main().catch((e) => {
+  log.err("Fatal:", e);
+  process.exit(1);
+});
+
+const HTML = /* html */ `<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Basit-Arbitraj Panel</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;
+    --up:#2ea043;--down:#f85149;--acc:#58a6ff;--warn:#d29922}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+  .wrap{max-width:840px;margin:0 auto;padding:18px}
+  h1{font-size:18px;margin:0 0 4px} .sub{color:var(--mut);font-size:12px;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
+  .big{font-size:28px;font-weight:700}
+  .row{display:flex;justify-content:space-between;padding:3px 0}
+  .row .k{color:var(--mut)} .mono{font-variant-numeric:tabular-nums}
+  .up{color:var(--up)} .down{color:var(--down)} .acc{color:var(--acc)} .warn{color:var(--warn)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+  .badge.dry{background:#1f6feb33;color:var(--acc);border:1px solid #1f6feb66}
+  .badge.live{background:#f8514933;color:var(--down);border:1px solid #f8514966}
+  .controls{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+  label{display:block;font-size:11px;color:var(--mut);margin-bottom:4px}
+  input{background:#0d1117;border:1px solid var(--bd);color:var(--fg);border-radius:6px;padding:8px;width:90px;font-size:15px}
+  button{border:0;border-radius:6px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;color:#fff}
+  .b-go{background:var(--up)} .b-cancel{background:#6e7681} .b-reset{background:var(--down)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;margin-top:6px} td,th{text-align:right;padding:4px 6px}
+  th{color:var(--mut);font-weight:500;font-size:11px} td:first-child,th:first-child{text-align:left}
+  .msg{margin-top:10px;font-size:13px;min-height:18px}
+  .full{grid-column:1/3}
+  .fill-bar{height:5px;background:#21262d;border-radius:3px;overflow:hidden;margin-top:3px}
+  .fill-bar>div{height:100%;background:var(--acc)}
+  small{color:var(--mut)}
+</style></head>
+<body><div class="wrap">
+  <h1>Basit-Arbitraj — BTC 5dk BOX Panel <span id="mode" class="badge dry">…</span></h1>
+  <div class="sub">UP + DOWN limit emir, toplam &lt; $1 → garanti kâr · <span id="status">…</span></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Net PnL (kilitli kutulardan, garanti)</h2>
+      <div class="big mono" id="pnl">$0.00</div>
+      <div class="row"><span class="k">Kilitlenen box</span><span class="mono" id="lockedCount">0</span></div>
+    </div>
+    <div class="card">
+      <h2>Aktif Market</h2>
+      <div class="row"><span class="k">Slug</span><span class="mono acc" id="slug">—</span></div>
+      <div class="row"><span class="k">Strike (priceToBeat)</span><span class="mono" id="strike">—</span></div>
+      <div class="row"><span class="k">BTC spot</span><span class="mono" id="spot">—</span></div>
+      <div class="row"><span class="k">Kalan süre</span><span class="mono" id="secLeft">—</span></div>
+    </div>
+
+    <div class="card full">
+      <h2>Order Book & Emirlerin</h2>
+      <table>
+        <tr><th>Taraf</th><th>Best Bid</th><th>Best Ask</th><th>Senin Limit</th><th>Dolan / Toplam</th></tr>
+        <tr><td class="up">UP</td><td class="mono" id="u_bid">—</td><td class="mono" id="u_ask">—</td>
+            <td class="mono" id="u_lim">—</td><td class="mono" id="u_fill">—</td></tr>
+        <tr><td class="down">DOWN</td><td class="mono" id="d_bid">—</td><td class="mono" id="d_ask">—</td>
+            <td class="mono" id="d_lim">—</td><td class="mono" id="d_fill">—</td></tr>
+      </table>
+      <div class="row" style="margin-top:8px"><span class="k">Toplam maliyet (combined)</span>
+        <span class="mono" id="combined">—</span></div>
+
+      <div class="controls">
+        <div><label>Limit fiyat ($)</label><input id="price" type="number" step="0.01" value="0.40"></div>
+        <div><label>Share (her bacak)</label><input id="shares" type="number" step="1" value="5"></div>
+        <button class="b-go" id="go">Box Yerleştir (UP+DOWN)</button>
+        <button class="b-cancel" id="cancel">İptal</button>
+        <button class="b-reset" id="reset">Reset</button>
+      </div>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card full">
+      <h2>Son kilitlenen kutular</h2>
+      <table id="lockedTbl"><tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr></table>
+    </div>
+  </div>
+  <p style="margin-top:14px"><small>Fiyatlar 0–1 arası olasılık = USD/share. DRY_RUN'da emirler simüledir.</small></p>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const f = (v,d=3) => v==null ? "—" : Number(v).toFixed(d);
+
+async function poll(){
+  try{
+    const s = await (await fetch("/api/state")).json();
+    $("mode").textContent = s.dryRun ? "DRY_RUN" : "CANLI";
+    $("mode").className = "badge " + (s.dryRun ? "dry" : "live");
+    $("status").textContent = s.status + (s.lastError ? " · hata: "+s.lastError : "");
+    $("pnl").textContent = "$" + f(s.netPnl,2);
+    $("pnl").className = "big mono " + (s.netPnl>0?"up":s.netPnl<0?"down":"");
+    $("lockedCount").textContent = s.lockedCount;
+    if(s.market){
+      $("slug").textContent = s.market.slug;
+      $("strike").textContent = f(s.market.strike,2);
+      $("secLeft").textContent = s.market.secLeft + "s";
+      $("secLeft").className = "mono " + (s.market.secLeft<20?"warn":"");
+    }
+    $("spot").textContent = f(s.spot,2);
+    $("u_bid").textContent=f(s.up.bestBid); $("u_ask").textContent=f(s.up.bestAsk);
+    $("u_lim").textContent=f(s.up.limit); $("u_fill").textContent=s.up.filled+" / "+(s.up.shares??"—");
+    $("d_bid").textContent=f(s.down.bestBid); $("d_ask").textContent=f(s.down.bestAsk);
+    $("d_lim").textContent=f(s.down.limit); $("d_fill").textContent=s.down.filled+" / "+(s.down.shares??"—");
+    $("combined").textContent = s.combined!=null ? f(s.combined)+(s.combined<1?" ✓ kâr":" ✗"):"—";
+    $("combined").className = "mono " + (s.combined!=null ? (s.combined<1?"up":"down"):"");
+    $("go").disabled = s.pinned;
+    const tbl = $("lockedTbl");
+    tbl.innerHTML = "<tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr>" +
+      (s.locked||[]).map(l=>"<tr><td>"+l.slug+"</td><td class=mono>"+l.shares+
+      "</td><td class=mono>"+f(l.combined)+"</td><td class='mono up'>"+f(l.profit,3)+"</td></tr>").join("");
+  }catch(e){ $("status").textContent = "panel bağlantı hatası"; }
+}
+async function post(path, body){
+  const r = await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body||{})});
+  const j = await r.json();
+  $("msg").textContent = j.msg || "";
+  $("msg").className = "msg " + (j.ok?"up":"down");
+  poll();
+}
+$("go").onclick = ()=>post("/api/place",{price:Number($("price").value),shares:Number($("shares").value)});
+$("cancel").onclick = ()=>post("/api/cancel");
+$("reset").onclick = ()=>post("/api/reset");
+poll(); setInterval(poll, 1000);
+</script>
+</body></html>`;
