@@ -310,9 +310,10 @@ export class WebController {
     const delta = filledTotal - leg.filled;
     if (delta > 0) {
       leg.filled = filledTotal;
-      // Limit alis, en fazla leg.price'a; kitap daha ucuzsa ondan dolar.
-      // (Maker dolumunda ask=limit oldugundan esittir; capraz dolumda daha ucuz.)
-      const fillPx = cfg.dryRun ? Math.min(leg.price, book.bestAsk) : leg.price;
+      // Resting maker limit alis => fill LIMIT fiyatindan olur (0.40).
+      // (Ask sonradan daha da dusse bile sen bid'ine 0.40'tan dolarsin.)
+      // Limitten daha kotu asla dolmaz => tutucu ve dogru.
+      const fillPx = leg.price;
       if (side === "UP") this.upCost += delta * fillPx;
       else this.downCost += delta * fillPx;
       log.trade(`WEB FILL ${side} +${delta}@${fillPx.toFixed(3)}`);
