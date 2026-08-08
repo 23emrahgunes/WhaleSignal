@@ -1,4 +1,7 @@
 import http from "node:http";
+import https from "node:https";
+import fs from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { validateConfig, cfg } from "./config.js";
 import { WebController } from "./webController.js";
 import { log } from "./logger.js";
@@ -9,8 +12,45 @@ const AUTH_USER = process.env.WEB_USER || "";
 const AUTH_PASS = process.env.WEB_PASS || "";
 const IS_LOCAL = HOST === "127.0.0.1" || HOST === "localhost";
 const AUTH_ON = Boolean(AUTH_USER && AUTH_PASS);
+const TLS_CERT = process.env.WEB_TLS_CERT || "";
+const TLS_KEY = process.env.WEB_TLS_KEY || "";
+const TLS_ON =
+  Boolean(TLS_CERT && TLS_KEY) && fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY);
 
 const ctrl = new WebController();
+
+// --- Brute-force korumasi: IP basina hatali deneme sayaci ---
+const fails = new Map<string, { count: number; until: number }>();
+const MAX_FAILS = 8;
+const LOCK_MS = 5 * 60_000;
+function ipOf(req: http.IncomingMessage): string {
+  return String(req.socket.remoteAddress || "?");
+}
+function isLocked(ip: string): boolean {
+  const e = fails.get(ip);
+  return Boolean(e && e.until > Date.now());
+}
+function noteFail(ip: string) {
+  const e = fails.get(ip) || { count: 0, until: 0 };
+  e.count++;
+  if (e.count >= MAX_FAILS) {
+    e.until = Date.now() + LOCK_MS;
+    e.count = 0;
+    log.warn(`Brute-force kilidi: ${ip} ${LOCK_MS / 60000}dk bloklandi`);
+  }
+  fails.set(ip, e);
+}
+function noteOk(ip: string) {
+  fails.delete(ip);
+}
+
+/** Sabit-zamanli string karsilastirma (timing attack'e karsi). */
+function safeEq(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 /** HTTP Basic Auth kontrolu. Auth kapaliysa (yerel) her zaman gecer. */
 function checkAuth(req: http.IncomingMessage): boolean {
@@ -18,7 +58,7 @@ function checkAuth(req: http.IncomingMessage): boolean {
   const h = req.headers.authorization || "";
   if (!h.startsWith("Basic ")) return false;
   const [u, p] = Buffer.from(h.slice(6), "base64").toString().split(":");
-  return u === AUTH_USER && p === AUTH_PASS;
+  return safeEq(u || "", AUTH_USER) && safeEq(p || "", AUTH_PASS);
 }
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
@@ -41,16 +81,24 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
   const url = req.url || "/";
   try {
+    const ip = ipOf(req);
+    if (AUTH_ON && isLocked(ip)) {
+      res.writeHead(429);
+      res.end("cok fazla hatali deneme, biraz bekle");
+      return;
+    }
     if (!checkAuth(req)) {
+      if (AUTH_ON) noteFail(ip);
       res.writeHead(401, {
         "WWW-Authenticate": 'Basic realm="basit-arbitraj panel"',
       });
       res.end("yetkisiz");
       return;
     }
+    if (AUTH_ON) noteOk(ip);
     if (url === "/" || url === "/index.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(HTML);
@@ -81,31 +129,42 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     json(res, 500, { ok: false, msg: (e as Error).message });
   }
-});
+}
+
+const server = TLS_ON
+  ? https.createServer(
+      { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) },
+      handler
+    )
+  : http.createServer(handler);
 
 async function main() {
   validateConfig();
 
-  // GUVENLIK: halka acik bind (0.0.0.0 vb) sadece Basic Auth ile.
+  // GUVENLIK: halka acik bind (0.0.0.0 vb) sadece sifre (Basic Auth) ile.
   if (!IS_LOCAL && !AUTH_ON) {
     throw new Error(
       `Halka acik bind (WEB_HOST=${HOST}) icin sifre zorunlu. ` +
-        `.env'e WEB_USER ve WEB_PASS ekle (guclu bir sifre). ` +
-        `Ayrica GCP firewall'da portu SADECE kendi IP'ne ac.`
+        `.env'e WEB_USER ve WEB_PASS ekle (uzun/guclu bir key).`
+    );
+  }
+  // Halka acik + sifreli ama TLS yoksa uyar (sifre acik metin gider).
+  if (!IS_LOCAL && !TLS_ON) {
+    log.warn(
+      "TLS KAPALI: sifre sifrelenmeden (HTTP) gidiyor. HTTPS icin WEB_TLS_CERT/WEB_TLS_KEY ayarla (README)."
     );
   }
 
+  const scheme = TLS_ON ? "https" : "http";
   await ctrl.start();
   server.listen(PORT, HOST, () => {
     log.ok(
-      `Web panel: http://${HOST}:${PORT}  (DRY_RUN=${cfg.dryRun}, auth=${AUTH_ON ? "ACIK" : "KAPALI"})`
+      `Web panel: ${scheme}://${HOST}:${PORT}  (DRY_RUN=${cfg.dryRun}, auth=${AUTH_ON ? "ACIK" : "KAPALI"}, tls=${TLS_ON ? "ACIK" : "KAPALI"})`
     );
     if (IS_LOCAL) {
       log.info(`SSH tuneli: ssh -L ${PORT}:localhost:${PORT} KULLANICI@VPS_IP`);
     } else {
-      log.warn(
-        `PANEL HALKA ACIK (${HOST}). Firewall'da portu sadece kendi IP'ne acmali; DRY_RUN=false iken cok dikkatli ol.`
-      );
+      log.warn(`PANEL HALKA ACIK (${HOST}:${PORT}). DRY_RUN=false iken cok dikkatli ol.`);
     }
   });
 }

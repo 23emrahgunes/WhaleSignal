@@ -77,14 +77,26 @@ book ve limit fiyatlarını gösterir; tek tıkla **UP+DOWN'a aynı anda limit e
 koyar (varsayılan 0.40 fiyat, 5 share). İki bacak da dolup toplam < $1 olunca
 kilitlenir ve garanti kâr net PnL'e eklenir.
 
-**Güvenlik:** Panel varsayılan olarak sadece `127.0.0.1`'e bağlanır (trading
-kontrolü halka açık olmamalı). Uzaktan erişim için SSH tüneli kullan:
+**Güvenlik katmanları:**
+- Varsayılan `WEB_HOST=127.0.0.1` → sadece VPS içi (SSH tüneli ile eriş, en güvenli).
+- Halka açık (`WEB_HOST=0.0.0.0`) için **şifre zorunlu** (`WEB_USER`/`WEB_PASS`) — yoksa başlamaz.
+- **HTTPS** (`WEB_TLS_CERT`/`WEB_TLS_KEY`) → şifre şifreli gider (halka açıkta şart).
+- **Brute-force kilidi**: 8 hatalı denemeden sonra IP 5dk bloklanır.
+- Basic Auth **sabit-zamanlı** karşılaştırma (timing attack'e karşı).
 
+### A) SSH tüneli (IP kısıtlaması yok, en güvenli)
 ```bash
 ssh -L 3000:localhost:3000 KULLANICI@VPS_IP
 ```
-Sonra kendi tarayıcında `http://localhost:3000`. (Genel IP'ye açmak istersen
-`WEB_HOST=0.0.0.0 WEB_PORT=3000` + firewall — önerilmez.)
+Sonra `http://localhost:3000`. Firewall'da hiçbir port açma.
+
+### B) Halka açık + HTTPS + key (IP değişkense)
+1. Self-signed sertifika üret (VPS'te, proje kökünde):
+   ```bash
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 3650 -subj "/CN=arbitraj"
+   ```
+2. `.env`: `WEB_HOST=0.0.0.0`, `WEB_USER`, uzun `WEB_PASS`, `WEB_TLS_CERT=cert.pem`, `WEB_TLS_KEY=key.pem`.
+3. Firewall'da portu aç, tarayıcıda `https://VPS_IP:3000` (self-signed → tek seferlik güvenlik uyarısını kabul et).
 
 > Not: Web panelini VE otomatik botu (`npm start`) aynı anda çalıştırma —
 > ikisi de emir verir, çakışır. Birini seç.
