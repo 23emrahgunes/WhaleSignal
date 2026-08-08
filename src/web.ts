@@ -5,8 +5,21 @@ import { log } from "./logger.js";
 
 const PORT = Number(process.env.WEB_PORT || 3000);
 const HOST = process.env.WEB_HOST || "127.0.0.1"; // guvenlik: varsayilan sadece localhost
+const AUTH_USER = process.env.WEB_USER || "";
+const AUTH_PASS = process.env.WEB_PASS || "";
+const IS_LOCAL = HOST === "127.0.0.1" || HOST === "localhost";
+const AUTH_ON = Boolean(AUTH_USER && AUTH_PASS);
 
 const ctrl = new WebController();
+
+/** HTTP Basic Auth kontrolu. Auth kapaliysa (yerel) her zaman gecer. */
+function checkAuth(req: http.IncomingMessage): boolean {
+  if (!AUTH_ON) return true;
+  const h = req.headers.authorization || "";
+  if (!h.startsWith("Basic ")) return false;
+  const [u, p] = Buffer.from(h.slice(6), "base64").toString().split(":");
+  return u === AUTH_USER && p === AUTH_PASS;
+}
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -31,6 +44,13 @@ async function readBody(req: http.IncomingMessage): Promise<any> {
 const server = http.createServer(async (req, res) => {
   const url = req.url || "/";
   try {
+    if (!checkAuth(req)) {
+      res.writeHead(401, {
+        "WWW-Authenticate": 'Basic realm="basit-arbitraj panel"',
+      });
+      res.end("yetkisiz");
+      return;
+    }
     if (url === "/" || url === "/index.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(HTML);
@@ -65,12 +85,28 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   validateConfig();
+
+  // GUVENLIK: halka acik bind (0.0.0.0 vb) sadece Basic Auth ile.
+  if (!IS_LOCAL && !AUTH_ON) {
+    throw new Error(
+      `Halka acik bind (WEB_HOST=${HOST}) icin sifre zorunlu. ` +
+        `.env'e WEB_USER ve WEB_PASS ekle (guclu bir sifre). ` +
+        `Ayrica GCP firewall'da portu SADECE kendi IP'ne ac.`
+    );
+  }
+
   await ctrl.start();
   server.listen(PORT, HOST, () => {
-    log.ok(`Web panel: http://${HOST}:${PORT}  (DRY_RUN=${cfg.dryRun})`);
-    log.info(
-      `Uzaktan erisim icin SSH tuneli: ssh -L ${PORT}:localhost:${PORT} KULLANICI@VPS_IP`
+    log.ok(
+      `Web panel: http://${HOST}:${PORT}  (DRY_RUN=${cfg.dryRun}, auth=${AUTH_ON ? "ACIK" : "KAPALI"})`
     );
+    if (IS_LOCAL) {
+      log.info(`SSH tuneli: ssh -L ${PORT}:localhost:${PORT} KULLANICI@VPS_IP`);
+    } else {
+      log.warn(
+        `PANEL HALKA ACIK (${HOST}). Firewall'da portu sadece kendi IP'ne acmali; DRY_RUN=false iken cok dikkatli ol.`
+      );
+    }
   });
 }
 
