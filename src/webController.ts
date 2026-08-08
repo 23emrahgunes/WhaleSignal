@@ -123,10 +123,17 @@ export class WebController {
       } else if (secLeft < this.autoMinSec) {
         this.autoReason = `kalan süre az (${secLeft.toFixed(0)}s < ${this.autoMinSec}s)`;
       } else if (this.targetMode === "fixed") {
-        // FIXED: spot strike'a yakinken 0.40/0.40
+        // FIXED: spot strike'a yakin VE iki bacak da hedefin (0.40) ustunde
+        // (yoksa hedef limit ucuz bacagi capraz alir -> naked). Iki ask de
+        // 0.40 ustundeyse market ~0.50/0.50 demektir; 0.40 limitler BEKLER.
         const dist = Math.abs(this.feed.price - this.market.strike);
         if (dist > this.autoProxUsd) {
           this.autoReason = `uzak (${dist.toFixed(2)}$ > ${this.autoProxUsd}$)`;
+        } else if (!a || !b) {
+          this.autoReason = "order book yok";
+        } else if (a.bestAsk <= this.autoPrice || b.bestAsk <= this.autoPrice) {
+          const lo = a.bestAsk <= this.autoPrice ? "UP" : "DOWN";
+          this.autoReason = `${lo} zaten ≤ ${this.autoPrice} (çapraz almam, ikisi de 0.40 üstü olmalı)`;
         } else {
           this.autoReason = "";
           const r = await this.placeBox(this.autoPrice, this.autoShares);
@@ -254,9 +261,12 @@ export class WebController {
     const delta = filledTotal - leg.filled;
     if (delta > 0) {
       leg.filled = filledTotal;
-      if (side === "UP") this.upCost += delta * leg.price;
-      else this.downCost += delta * leg.price;
-      log.trade(`WEB FILL ${side} +${delta}@${leg.price.toFixed(3)}`);
+      // Limit alis, en fazla leg.price'a; kitap daha ucuzsa ondan dolar.
+      // (Maker dolumunda ask=limit oldugundan esittir; capraz dolumda daha ucuz.)
+      const fillPx = cfg.dryRun ? Math.min(leg.price, book.bestAsk) : leg.price;
+      if (side === "UP") this.upCost += delta * fillPx;
+      else this.downCost += delta * fillPx;
+      log.trade(`WEB FILL ${side} +${delta}@${fillPx.toFixed(3)}`);
     }
   }
 
