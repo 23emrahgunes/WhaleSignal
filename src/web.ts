@@ -231,6 +231,12 @@ const HTML = /* html */ `<!doctype html>
       <h2>Net PnL (kilitli kutulardan, garanti)</h2>
       <div class="big mono" id="pnl">$0.00</div>
       <div class="row"><span class="k">Kilitlenen box</span><span class="mono" id="lockedCount">0</span></div>
+      <div class="row" id="openRiskRow" style="display:none;border-top:1px solid var(--bd);margin-top:6px;padding-top:6px">
+        <span class="k">⚠ Açık risk (naked)</span><span class="mono" id="openRisk">—</span>
+      </div>
+      <div class="row" id="totalRow" style="display:none">
+        <span class="k">Toplam (gerçekleşen + açık)</span><span class="mono" id="totalPnl">—</span>
+      </div>
     </div>
     <div class="card">
       <h2>Aktif Market</h2>
@@ -310,6 +316,20 @@ async function poll(){
     $("pnl").textContent = "$" + f(s.netPnl,2);
     $("pnl").className = "big mono " + (s.netPnl>0?"up":s.netPnl<0?"down":"");
     $("lockedCount").textContent = s.lockedCount;
+    // Açık risk (naked bacak) göstergesi
+    if(s.openRisk){
+      const o=s.openRisk;
+      $("openRiskRow").style.display="flex";
+      $("totalRow").style.display="flex";
+      $("openRisk").innerHTML = o.side+" "+o.shares+" @ "+f(o.avg)+
+        " → şimdi: <b class='"+(o.unrealized>=0?"up":"down")+"'>"+(o.unrealized>=0?"+":"")+f(o.unrealized,2)+"$</b>"+
+        " · ters:<span class='down'>"+f(o.worst,2)+"$</span> lehte:<span class='up'>+"+f(o.best,2)+"$</span>";
+      $("totalPnl").textContent="$"+f(s.totalPnl,2);
+      $("totalPnl").className="mono "+(s.totalPnl>0?"up":s.totalPnl<0?"down":"");
+    } else {
+      $("openRiskRow").style.display="none";
+      $("totalRow").style.display="none";
+    }
     if(s.market){
       $("slug").textContent = s.market.slug;
       $("strike").textContent = f(s.market.strike,2);

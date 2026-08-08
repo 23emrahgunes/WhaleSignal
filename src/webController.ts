@@ -103,12 +103,7 @@ export class WebController {
       }
 
       if (secLeft < -2) {
-        const m2 = Math.min(this.up.filled, this.down.filled);
-        const nk = this.up.filled + this.down.filled - 2 * m2;
-        this.status =
-          nk > 0
-            ? "⚠ market çözüldü — hedge edilmemiş bacak vardı (manuel kontrol)"
-            : "market çözüldü — temiz";
+        this.resolveHeldNaked();
         this.unpinAndReset();
       } else {
         this.status = `box aktif (kalan ${secLeft.toFixed(0)}s)`;
@@ -209,15 +204,61 @@ export class WebController {
         const px = Math.max(0.01, nakedBook.bestBid - cfg.slippage);
         const res = await this.pm.placeMarketable(nakedToken, "SELL", need, px);
         if (res.ok) {
-          const realized = (px - cost) * need;
+          const sold = res.filled ?? need;
+          const realized = (px - cost) * sold;
           this.realizedPnl += realized;
-          log.trade(`WEB ABORT sat ${haveUp ? "UP" : "DOWN"} ${need}@${px.toFixed(3)} pnl=${realized.toFixed(3)}`);
+          // Satilan naked'i pozisyondan dus (resolution'da tekrar sayilmasin)
+          if (haveUp) {
+            this.up.filled -= sold;
+            this.upCost -= cost * sold;
+          } else {
+            this.down.filled -= sold;
+            this.downCost -= cost * sold;
+          }
+          log.trade(
+            `WEB ABORT sat ${haveUp ? "UP" : "DOWN"} ${sold}@${px.toFixed(3)} pnl=${realized.toFixed(3)} (net=${this.realizedPnl.toFixed(3)})`
+          );
         }
       } else {
-        log.warn("WEB ABORT=hold: cıplak bacak resolution'a tutuluyor");
+        log.warn("WEB ABORT=hold: cıplak bacak resolution'a tutuluyor (sonuç resolution'da işlenecek)");
       }
       this.settled = true; // bu markette isimiz bitti
     }
+  }
+
+  /**
+   * Resolution aninda hala tutulan (satilmamis) naked bacak varsa kazanc/kaybi
+   * net PnL'e isle. Kazanan taraf: spot > strike ise UP, degilse DOWN (Binance
+   * proxy; gercek oracle biraz farkli olabilir).
+   */
+  private resolveHeldNaked() {
+    if (!this.market) {
+      this.status = "market çözüldü";
+      return;
+    }
+    const matched = Math.min(this.up.filled, this.down.filled);
+    const upNaked = this.up.filled - matched;
+    const downNaked = this.down.filled - matched;
+    if (upNaked <= 0 && downNaked <= 0) {
+      this.status = "market çözüldü — temiz" + (matched > 0 ? " (box kilitliydi)" : "");
+      return;
+    }
+    const upWins = this.feed.price > this.market.strike;
+    let msg = "";
+    if (upNaked > 0) {
+      const payoff = upWins ? 1 : 0;
+      const realized = (payoff - this.upAvg) * upNaked;
+      this.realizedPnl += realized;
+      msg = `naked UP ${upNaked} ${upWins ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
+    }
+    if (downNaked > 0) {
+      const payoff = upWins ? 0 : 1;
+      const realized = (payoff - this.downAvg) * downNaked;
+      this.realizedPnl += realized;
+      msg = `naked DOWN ${downNaked} ${!upWins ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
+    }
+    log.warn(`WEB resolution: ${msg} | net=${this.realizedPnl.toFixed(3)}`);
+    this.status = `market çözüldü — ${msg}`;
   }
 
   private async cancelSide(side: "UP" | "DOWN") {
@@ -364,6 +405,36 @@ export class WebController {
   snapshot() {
     const secLeft = this.market ? this.market.resolveTs - Date.now() / 1000 : 0;
     const combined = this.upAvg + this.downAvg;
+
+    // Acik risk: bir bacak dolu digeri degil -> naked mark-to-market
+    const matched = Math.min(this.up.filled, this.down.filled);
+    const upNaked = this.up.filled - matched;
+    const downNaked = this.down.filled - matched;
+    let openRisk: any = null;
+    if (upNaked > 0) {
+      const bid = this.upBook?.bestBid ?? 0;
+      openRisk = {
+        side: "UP",
+        shares: upNaked,
+        avg: this.upAvg,
+        mark: bid,
+        unrealized: (bid - this.upAvg) * upNaked, // simdi satsan
+        worst: (0 - this.upAvg) * upNaked, // ters resolve
+        best: (1 - this.upAvg) * upNaked, // lehte resolve
+      };
+    } else if (downNaked > 0) {
+      const bid = this.downBook?.bestBid ?? 0;
+      openRisk = {
+        side: "DOWN",
+        shares: downNaked,
+        avg: this.downAvg,
+        mark: bid,
+        unrealized: (bid - this.downAvg) * downNaked,
+        worst: (0 - this.downAvg) * downNaked,
+        best: (1 - this.downAvg) * downNaked,
+      };
+    }
+
     return {
       dryRun: cfg.dryRun,
       legMode: cfg.legMode,
@@ -403,6 +474,8 @@ export class WebController {
       pinned: this.pinned,
       combined: this.pinned && this.up.filled && this.down.filled ? combined : null,
       netPnl: this.realizedPnl,
+      openRisk,
+      totalPnl: this.realizedPnl + (openRisk ? openRisk.unrealized : 0),
       lockedCount: this.locked.length,
       locked: this.locked.slice(-10).reverse(),
     };
