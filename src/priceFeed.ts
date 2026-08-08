@@ -1,17 +1,28 @@
 import WebSocket from "ws";
 import { log } from "./logger.js";
 
-export type PriceSource = "coinbase" | "binance";
+export type PriceSource = "polymarket" | "coinbase" | "binance";
 
 const URLS: Record<PriceSource, string> = {
+  // Polymarket RTDS — 5dk marketlerin RESOLVE oldugu birebir Chainlink BTC/USD
+  polymarket: "wss://ws-live-data.polymarket.com",
   coinbase: "wss://ws-feed.exchange.coinbase.com",
   binance: "wss://stream.binance.com:9443/ws/btcusdt@trade",
 };
 
+// Polymarket RTDS abonelik mesaji (kardes repo ters-trader'dan birebir)
+const RTDS_SUB = JSON.stringify({
+  action: "subscribe",
+  subscriptions: [
+    { topic: "crypto_prices_chainlink", type: "*", filters: '{"symbol":"btc/usd"}' },
+  ],
+});
+
 /**
- * BTC spot fiyat akisi. Kaynak: coinbase (BTC-USD, VARSAYILAN) veya binance.
- * Coinbase, kardes bot (pyton-polymarket) referans kaynagi ile ayni; Polymarket
- * priceToBeat ile fark hesabinda tutarli olmasi icin ayni kaynak kullanilmali.
+ * BTC fiyat akisi. Kaynak:
+ *  - polymarket (VARSAYILAN): Polymarket RTDS Chainlink btc/usd — marketin
+ *    RESOLVE oldugu birebir fiyat. priceToBeat ile fark birebir tutarli.
+ *  - coinbase / binance: proxy borsalar.
  * En son fiyati tutar + son ~N sn getiriden anlik volatilite tahmini uretir.
  */
 export class PriceFeed {
@@ -22,9 +33,10 @@ export class PriceFeed {
   private readonly volWindowMs = 20_000;
   private closed = false;
   private url: string;
+  private keepalive?: ReturnType<typeof setInterval>;
 
-  constructor(public source: PriceSource = "coinbase") {
-    this.url = URLS[source];
+  constructor(public source: PriceSource = "polymarket") {
+    this.url = URLS[source] ?? URLS.polymarket;
   }
 
   get price() {
@@ -38,7 +50,17 @@ export class PriceFeed {
     this.ws = new WebSocket(this.url);
     this.ws.on("open", () => {
       log.ok(`${this.source} WS baglandi`);
-      if (this.source === "coinbase") {
+      if (this.source === "polymarket") {
+        this.ws?.send(RTDS_SUB);
+        // RTDS keepalive: 5sn'de bir PING (text)
+        this.keepalive = setInterval(() => {
+          try {
+            this.ws?.send("PING");
+          } catch {
+            /* recv kopmayi gorecek */
+          }
+        }, 5000);
+      } else if (this.source === "coinbase") {
         this.ws?.send(
           JSON.stringify({
             type: "subscribe",
@@ -51,6 +73,7 @@ export class PriceFeed {
     this.ws.on("message", (buf) => this.onMsg(buf));
     this.ws.on("error", (e) => log.err(`${this.source} WS hata:`, (e as Error).message));
     this.ws.on("close", () => {
+      if (this.keepalive) clearInterval(this.keepalive);
       if (this.closed) return;
       log.warn(`${this.source} WS kapandi, 1sn sonra yeniden baglaniyor...`);
       setTimeout(() => this.connect(), 1000);
@@ -58,11 +81,18 @@ export class PriceFeed {
   }
 
   private onMsg(buf: WebSocket.RawData) {
+    const raw = buf.toString();
+    if (!raw || (raw[0] !== "{" && raw[0] !== "[")) return; // PONG vb.
     try {
-      const m = JSON.parse(buf.toString());
-      // coinbase ticker: { type:"ticker", price:"..." } | binance trade: { p:"..." }
+      const m = JSON.parse(raw);
       let p = 0;
-      if (this.source === "coinbase") {
+      if (this.source === "polymarket") {
+        // { payload: { symbol:"btc/usd", value:"...", timestamp:... } }
+        const pl = m?.payload;
+        if (!pl || typeof pl !== "object") return;
+        if (pl.symbol !== "btc/usd") return; // snapshot/diger sembol -> ele
+        p = Number(pl.value);
+      } else if (this.source === "coinbase") {
         if (m.type !== "ticker") return;
         p = Number(m.price);
       } else {
@@ -116,6 +146,7 @@ export class PriceFeed {
 
   close() {
     this.closed = true;
+    if (this.keepalive) clearInterval(this.keepalive);
     this.ws?.close();
   }
 }

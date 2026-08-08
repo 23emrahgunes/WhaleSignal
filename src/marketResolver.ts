@@ -170,7 +170,8 @@ export async function autoMarket(): Promise<MarketRef | null> {
   let strike = Number(recursiveFind(live.p, STRIKE_KEYS)) || 0;
   if (!strike && live.start) {
     strike = await strikeFromCandle(live.start);
-    if (strike) log.info(`strike ${cfg.priceSource} 5m acilisindan turetildi: ${strike}`);
+    const src = cfg.priceSource === "binance" ? "binance" : "coinbase(fallback)";
+    if (strike) log.info(`strike ${src} 5m acilisindan turetildi: ${strike}`);
   }
   if (!strike) {
     log.warn("auto: strike bulunamadi, market atlaniyor:", live.slug);

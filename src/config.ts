@@ -25,9 +25,14 @@ export const cfg = {
   apiSecret: str("CLOB_API_SECRET"),
   apiPassphrase: str("CLOB_API_PASSPHRASE"),
 
-  // Fiyat kaynagi: coinbase (BTC-USD, ONERILEN - Polymarket referansiyla tutarli)
-  // veya binance. Kardes bot pyton-polymarket coinbase kullaniyor.
-  priceSource: str("PRICE_SOURCE", "coinbase") as "coinbase" | "binance",
+  // Fiyat kaynagi:
+  //  polymarket (VARSAYILAN): Polymarket RTDS Chainlink btc/usd — marketin
+  //    RESOLVE oldugu birebir fiyat (priceToBeat ile birebir tutarli).
+  //  coinbase / binance: proxy borsalar (RTDS erisilemezse).
+  priceSource: str("PRICE_SOURCE", "polymarket") as
+    | "polymarket"
+    | "coinbase"
+    | "binance",
 
   // Market
   marketMode: str("MARKET_MODE", "auto") as "manual" | "auto",
