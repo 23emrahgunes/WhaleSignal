@@ -124,6 +124,7 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
         shares: b.shares != null ? Number(b.shares) : undefined,
         proxUsd: b.proxUsd != null ? Number(b.proxUsd) : undefined,
         minSec: b.minSec != null ? Number(b.minSec) : undefined,
+        maxSec: b.maxSec != null ? Number(b.maxSec) : undefined,
         maxCombined: b.maxCombined != null ? Number(b.maxCombined) : undefined,
       });
       json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
@@ -281,11 +282,13 @@ const HTML = /* html */ `<!doctype html>
             <option value="adaptive">adaptive (best-bid · sık/ince)</option>
           </select>
         </div>
-        <div><label>Min kalan (sn)</label><input id="minSec" type="number" step="5" value="45"></div>
+        <div><label>En erken (≤ sn kala)</label><input id="maxSec" type="number" step="5" value="45"></div>
+        <div><label>En geç (≥ sn kala)</label><input id="minSec" type="number" step="5" value="20"></div>
       </div>
       <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
-        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ yaklaşınca UP+DOWN'a <b>Limit fiyat</b> (0.40) koyar.<br>
-        <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar (en ince kârı bile kovalar).
+        <b>Emir penceresi:</b> kalan süre <b id="winLbl">45–20</b>s arasındayken box açar (son saniyeler).<br>
+        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ + iki bacak da 0.40 üstündeyken 0.40/0.40 koyar.<br>
+        <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar.
       </div>
       <div class="controls">
         <div><label>Yakınlık ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
@@ -362,6 +365,7 @@ async function poll(){
     ab.style.color = s.auto ? "var(--up)" : "var(--mut)";
     $("pxLbl").textContent = s.autoProxUsd;
     $("mcLbl").textContent = s.autoMaxCombined;
+    $("winLbl").textContent = s.autoMaxSec + "–" + s.autoMinSec;
     const tbl = $("lockedTbl");
     tbl.innerHTML = "<tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr>" +
       (s.locked||[]).map(l=>"<tr><td>"+l.slug+"</td><td class=mono>"+l.shares+
@@ -382,7 +386,8 @@ $("reset").onclick = ()=>post("/api/reset");
 async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),shares:Number($("shares").value),
-      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),maxCombined:Number($("maxCombined").value)})});
+      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),maxSec:Number($("maxSec").value),
+      maxCombined:Number($("maxCombined").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
 }
 $("autoOn").onclick = ()=>postAuto(true);

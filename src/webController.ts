@@ -43,7 +43,9 @@ export class WebController {
   autoPrice = cfg.targetLegPrice; // 0.40 (fixed mod)
   autoShares = cfg.pairShares; // 5
   autoProxUsd = 2; // |spot - strike| <= bu (USD) olunca (fixed mod)
-  autoMinSec = 45; // en az bu kadar sure kalmisken box ac
+  // Emir penceresi: secLeft bu araliktayken box acar [minSec, maxSec]
+  autoMinSec = 20; // en gec: bundan az kalinca ACMAZ (fill zamani kalmaz)
+  autoMaxSec = 45; // en erken: bundan fazla kalinca bekler (son saniyeleri kolla)
   autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
   autoReason = ""; // neden acilmadi (UI icin)
 
@@ -116,7 +118,9 @@ export class WebController {
       if (!this.feed.ready || this.feed.isStale()) {
         this.autoReason = "fiyat bekleniyor";
       } else if (secLeft < this.autoMinSec) {
-        this.autoReason = `kalan süre az (${secLeft.toFixed(0)}s < ${this.autoMinSec}s)`;
+        this.autoReason = `çok geç (${secLeft.toFixed(0)}s < ${this.autoMinSec}s, açmaz)`;
+      } else if (secLeft > this.autoMaxSec) {
+        this.autoReason = `henüz erken (${secLeft.toFixed(0)}s > ${this.autoMaxSec}s, ${this.autoMaxSec}s kala girer)`;
       } else if (this.targetMode === "fixed") {
         // FIXED: spot strike'a yakin VE iki bacak da hedefin (0.40) ustunde
         // (yoksa hedef limit ucuz bacagi capraz alir -> naked). Iki ask de
@@ -277,6 +281,7 @@ export class WebController {
       shares?: number;
       proxUsd?: number;
       minSec?: number;
+      maxSec?: number;
       maxCombined?: number;
     }
   ) {
@@ -285,9 +290,12 @@ export class WebController {
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
     if (opts.shares != null) this.autoShares = Math.max(1, opts.shares);
     if (opts.proxUsd != null) this.autoProxUsd = Math.max(0.1, opts.proxUsd);
-    if (opts.minSec != null) this.autoMinSec = Math.max(10, opts.minSec);
+    if (opts.minSec != null) this.autoMinSec = Math.max(cfg.flattenSec + 4, opts.minSec);
+    if (opts.maxSec != null) this.autoMaxSec = opts.maxSec;
     if (opts.maxCombined != null)
       this.autoMaxCombined = Math.min(0.999, Math.max(0.5, opts.maxCombined));
+    // maxSec her zaman minSec'ten buyuk olsun
+    if (this.autoMaxSec < this.autoMinSec + 3) this.autoMaxSec = this.autoMinSec + 3;
   }
 
   private async refresh(side: "UP" | "DOWN", book: Book | null) {
@@ -446,6 +454,7 @@ export class WebController {
       autoShares: this.autoShares,
       autoProxUsd: this.autoProxUsd,
       autoMinSec: this.autoMinSec,
+      autoMaxSec: this.autoMaxSec,
       autoMaxCombined: this.autoMaxCombined,
       market: this.market
         ? {
