@@ -26,7 +26,7 @@ async function main() {
   );
   log.info("=".repeat(60));
 
-  const feed = new PriceFeed(cfg.binanceWs);
+  const feed = new PriceFeed(cfg.priceSource);
   feed.connect();
 
   const pm = new Polymarket();

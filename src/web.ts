@@ -243,7 +243,7 @@ const HTML = /* html */ `<!doctype html>
       <h2>Aktif Market</h2>
       <div class="row"><span class="k">Slug</span><span class="mono acc" id="slug">—</span></div>
       <div class="row"><span class="k">Strike (priceToBeat)</span><span class="mono" id="strike">—</span></div>
-      <div class="row"><span class="k">BTC spot</span><span class="mono" id="spot">—</span></div>
+      <div class="row"><span class="k">BTC fiyat <small id="src"></small></span><span class="mono" id="spot">—</span></div>
       <div class="row"><span class="k">Fark (spot − strike)</span><span class="mono" id="dist">—</span></div>
       <div class="row"><span class="k">Kalan süre</span><span class="mono" id="secLeft">—</span></div>
     </div>
@@ -340,6 +340,7 @@ async function poll(){
       $("secLeft").className = "mono " + (s.market.secLeft<20?"warn":"");
     }
     $("spot").textContent = f(s.spot,2);
+    $("src").textContent = "("+s.priceSource+")";
     if(s.dist!=null){
       $("dist").textContent = (s.dist>=0?"+":"") + f(s.dist,2) + " $  (" +
         (s.dist>=0?"UP tarafı":"DOWN tarafı") + ")";

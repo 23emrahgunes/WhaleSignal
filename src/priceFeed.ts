@@ -1,14 +1,18 @@
 import WebSocket from "ws";
 import { log } from "./logger.js";
 
+export type PriceSource = "coinbase" | "binance";
+
+const URLS: Record<PriceSource, string> = {
+  coinbase: "wss://ws-feed.exchange.coinbase.com",
+  binance: "wss://stream.binance.com:9443/ws/btcusdt@trade",
+};
+
 /**
- * Binance BTCUSDT trade akisi. En son spot fiyati tutar ve son ~N saniyelik
- * getiriden anlik volatilite (saniye basi std) tahmini uretir.
- *
- * UYARI: Bu yalnizca bir PROXY fiyat kaynagidir. Polymarket marketinin
- * gercek resolution kaynagi (Pyth/Chainlink/başka) farkli olabilir; strike'a
- * cok yakin son saniyelerde kucuk farklar sonucu tersine cevirebilir.
- * Canliya gecmeden resolution kaynagini DOGRULA.
+ * BTC spot fiyat akisi. Kaynak: coinbase (BTC-USD, VARSAYILAN) veya binance.
+ * Coinbase, kardes bot (pyton-polymarket) referans kaynagi ile ayni; Polymarket
+ * priceToBeat ile fark hesabinda tutarli olmasi icin ayni kaynak kullanilmali.
+ * En son fiyati tutar + son ~N sn getiriden anlik volatilite tahmini uretir.
  */
 export class PriceFeed {
   private ws?: WebSocket;
@@ -17,8 +21,11 @@ export class PriceFeed {
   private samples: { t: number; p: number }[] = [];
   private readonly volWindowMs = 20_000;
   private closed = false;
+  private url: string;
 
-  constructor(private url: string) {}
+  constructor(public source: PriceSource = "coinbase") {
+    this.url = URLS[source];
+  }
 
   get price() {
     return this._price;
@@ -29,12 +36,23 @@ export class PriceFeed {
 
   connect() {
     this.ws = new WebSocket(this.url);
-    this.ws.on("open", () => log.ok("Binance WS baglandi"));
+    this.ws.on("open", () => {
+      log.ok(`${this.source} WS baglandi`);
+      if (this.source === "coinbase") {
+        this.ws?.send(
+          JSON.stringify({
+            type: "subscribe",
+            product_ids: ["BTC-USD"],
+            channels: ["ticker"],
+          })
+        );
+      }
+    });
     this.ws.on("message", (buf) => this.onMsg(buf));
-    this.ws.on("error", (e) => log.err("Binance WS hata:", (e as Error).message));
+    this.ws.on("error", (e) => log.err(`${this.source} WS hata:`, (e as Error).message));
     this.ws.on("close", () => {
       if (this.closed) return;
-      log.warn("Binance WS kapandi, 1sn sonra yeniden baglaniyor...");
+      log.warn(`${this.source} WS kapandi, 1sn sonra yeniden baglaniyor...`);
       setTimeout(() => this.connect(), 1000);
     });
   }
@@ -42,8 +60,14 @@ export class PriceFeed {
   private onMsg(buf: WebSocket.RawData) {
     try {
       const m = JSON.parse(buf.toString());
-      // @btcusdt@trade: { p: "fiyat", ... }
-      const p = Number(m.p);
+      // coinbase ticker: { type:"ticker", price:"..." } | binance trade: { p:"..." }
+      let p = 0;
+      if (this.source === "coinbase") {
+        if (m.type !== "ticker") return;
+        p = Number(m.price);
+      } else {
+        p = Number(m.p);
+      }
       if (!p || Number.isNaN(p)) return;
       this._price = p;
       const now = Date.now();

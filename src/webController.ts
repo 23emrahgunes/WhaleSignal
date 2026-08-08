@@ -50,7 +50,7 @@ export class WebController {
   autoReason = ""; // neden acilmadi (UI icin)
 
   constructor() {
-    this.feed = new PriceFeed(cfg.binanceWs);
+    this.feed = new PriceFeed(cfg.priceSource);
     this.pm = new Polymarket();
   }
 
@@ -447,6 +447,7 @@ export class WebController {
     return {
       dryRun: cfg.dryRun,
       legMode: cfg.legMode,
+      priceSource: cfg.priceSource,
       status: this.status,
       lastError: this.lastError,
       auto: this.auto,

@@ -95,17 +95,32 @@ async function fetchSlug(slug: string): Promise<any | null> {
   }
 }
 
-/** Strike yoksa Binance 5m mum acilisindan turet (start anindaki open). */
-async function strikeFromBinance(startSec: number): Promise<number> {
+/**
+ * Strike yoksa 5m mum acilisindan turet (start anindaki open).
+ * Fiyat kaynagiyla AYNI borsadan al (tutarlilik icin): coinbase | binance.
+ */
+async function strikeFromCandle(startSec: number): Promise<number> {
   try {
+    if (cfg.priceSource === "binance") {
+      const url =
+        `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m` +
+        `&startTime=${startSec * 1000}&limit=1`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return 0;
+      const k = await r.json();
+      return k?.[0]?.[1] ? Number(k[0][1]) : 0; // [openTime, open, ...]
+    }
+    // coinbase: [ time, low, high, open, close, volume ], time=bucket start (sn)
     const url =
-      `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m` +
-      `&startTime=${startSec * 1000}&limit=1`;
+      `https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=300` +
+      `&start=${startSec}&end=${startSec + 300}`;
     const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!r.ok) return 0;
-    const k = await r.json();
-    // kline: [openTime, open, high, low, close, ...]
-    return k?.[0]?.[1] ? Number(k[0][1]) : 0;
+    const rows: any[] = await r.json();
+    const row = Array.isArray(rows)
+      ? rows.find((x) => Number(x[0]) === startSec) ?? rows[rows.length - 1]
+      : null;
+    return row ? Number(row[3]) : 0; // open = index 3
   } catch {
     return 0;
   }
@@ -154,8 +169,8 @@ export async function autoMarket(): Promise<MarketRef | null> {
 
   let strike = Number(recursiveFind(live.p, STRIKE_KEYS)) || 0;
   if (!strike && live.start) {
-    strike = await strikeFromBinance(live.start);
-    if (strike) log.info(`strike Binance 5m acilisindan turetildi: ${strike}`);
+    strike = await strikeFromCandle(live.start);
+    if (strike) log.info(`strike ${cfg.priceSource} 5m acilisindan turetildi: ${strike}`);
   }
   if (!strike) {
     log.warn("auto: strike bulunamadi, market atlaniyor:", live.slug);

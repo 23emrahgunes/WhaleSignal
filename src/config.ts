@@ -25,8 +25,9 @@ export const cfg = {
   apiSecret: str("CLOB_API_SECRET"),
   apiPassphrase: str("CLOB_API_PASSPHRASE"),
 
-  // Fiyat kaynagi
-  binanceWs: str("BINANCE_WS", "wss://stream.binance.com:9443/ws/btcusdt@trade"),
+  // Fiyat kaynagi: coinbase (BTC-USD, ONERILEN - Polymarket referansiyla tutarli)
+  // veya binance. Kardes bot pyton-polymarket coinbase kullaniyor.
+  priceSource: str("PRICE_SOURCE", "coinbase") as "coinbase" | "binance",
 
   // Market
   marketMode: str("MARKET_MODE", "auto") as "manual" | "auto",
