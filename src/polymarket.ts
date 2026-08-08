@@ -23,13 +23,21 @@ export class Polymarket {
   private ready = false;
 
   async init() {
-    if (cfg.dryRun && !cfg.privateKey.startsWith("0x")) {
-      // DRY_RUN'da sadece okuma icin anahtarsiz da calisir; ama order book
-      // publik oldugundan client'i yine de kurmaya calisiriz.
+    const hasValidKey = /^0x[0-9a-fA-F]{64}$/.test(cfg.privateKey);
+
+    // DRY_RUN'da gercek emir gitmez -> her zaman cuzdansiz salt-okunur mod.
+    // (Order book publik; placeholder/gecersiz PRIVATE_KEY ile cuzdan kurulmaz.)
+    if (cfg.dryRun) {
       log.warn("DRY_RUN: cuzdansiz salt-okunur mod (yalnizca order book).");
       this.client = new ClobClient(cfg.clobHost, cfg.chainId);
       this.ready = true;
       return;
+    }
+
+    if (!hasValidKey) {
+      throw new Error(
+        "Canli mod (DRY_RUN=false) icin gecerli PRIVATE_KEY gerekli (0x + 64 hex karakter)."
+      );
     }
 
     const wallet = new ethers.Wallet(cfg.privateKey);

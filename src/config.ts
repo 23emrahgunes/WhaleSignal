@@ -69,8 +69,8 @@ export const cfg = {
 
 export function validateConfig() {
   const errs: string[] = [];
-  if (!cfg.dryRun && !cfg.privateKey.startsWith("0x"))
-    errs.push("Canli mod icin gecerli PRIVATE_KEY gerekli.");
+  if (!cfg.dryRun && !/^0x[0-9a-fA-F]{64}$/.test(cfg.privateKey))
+    errs.push("Canli mod icin gecerli PRIVATE_KEY gerekli (0x + 64 hex karakter).");
   if (cfg.marketMode === "manual") {
     if (!cfg.yesTokenId) errs.push("manual mod: MARKET_YES_TOKEN_ID gerekli.");
     if (!cfg.noTokenId) errs.push("manual mod: MARKET_NO_TOKEN_ID gerekli.");
