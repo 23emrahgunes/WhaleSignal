@@ -83,6 +83,15 @@ export class WebController {
       return;
     }
 
+    // priceToBeat'i chainlink pencere acilisindan override et (en dogru kaynak).
+    // Market penceresi baslangici = resolveTs - 300. Feed o pencerenin acilisini
+    // yakaladiysa strike'i onunla degistir (Gamma/coinbase yerine).
+    if (cfg.priceSource === "polymarket") {
+      const start = Math.round(this.market.resolveTs - 300);
+      const p2b = this.feed.priceToBeatFor(start);
+      if (p2b > 0) this.market.strike = p2b;
+    }
+
     const secLeft = this.market.resolveTs - Date.now() / 1000;
 
     const [a, b] = await Promise.all([

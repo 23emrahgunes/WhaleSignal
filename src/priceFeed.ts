@@ -34,6 +34,12 @@ export class PriceFeed {
   private closed = false;
   private url: string;
   private keepalive?: ReturnType<typeof setInterval>;
+  // price-to-beat takibi (Chainlink pencere acilisi)
+  private _windowTs = 0;
+  private _p2b = 0;
+  private _prevPrice = 0;
+  private _prevTs = 0;
+  private readonly maxBeforeMs = 3000;
 
   constructor(public source: PriceSource = "polymarket") {
     this.url = URLS[source] ?? URLS.polymarket;
@@ -44,6 +50,30 @@ export class PriceFeed {
   }
   get ready() {
     return this._price > 0;
+  }
+  /** Verilen 5dk pencere baslangici (sn) icin chainlink acilis fiyati (priceToBeat). */
+  priceToBeatFor(startSec: number): number {
+    return this._windowTs === startSec ? this._p2b : 0;
+  }
+
+  /**
+   * Chainlink price-to-beat takibi: pencere sinirinda ilk tick (first_after)
+   * = Polymarket resmi openPrice'i. Yedek: sinirdan hemen once son tick.
+   * (Kardes repo ters-trader PriceToBeatTracker ile birebir.)
+   */
+  private trackP2B(price: number, clTsMs: number) {
+    const win = Math.floor(clTsMs / 1000 / 300) * 300;
+    if (win !== this._windowTs) {
+      const boundaryMs = win * 1000;
+      let p2b = 0;
+      if (clTsMs - boundaryMs <= this.maxBeforeMs) p2b = price; // first_after
+      else if (this._prevPrice > 0 && boundaryMs - this._prevTs <= this.maxBeforeMs)
+        p2b = this._prevPrice; // last_before
+      this._windowTs = win;
+      this._p2b = p2b; // yakalanamadiysa 0 -> resolver strike'ina dusulur
+    }
+    this._prevPrice = price;
+    this._prevTs = clTsMs;
   }
 
   connect() {
@@ -86,12 +116,14 @@ export class PriceFeed {
     try {
       const m = JSON.parse(raw);
       let p = 0;
+      let clTs = 0;
       if (this.source === "polymarket") {
         // { payload: { symbol:"btc/usd", value:"...", timestamp:... } }
         const pl = m?.payload;
         if (!pl || typeof pl !== "object") return;
         if (pl.symbol !== "btc/usd") return; // snapshot/diger sembol -> ele
         p = Number(pl.value);
+        clTs = Number(pl.timestamp) || Date.now();
       } else if (this.source === "coinbase") {
         if (m.type !== "ticker") return;
         p = Number(m.price);
@@ -105,6 +137,7 @@ export class PriceFeed {
       this.samples.push({ t: now, p });
       const cutoff = now - this.volWindowMs;
       while (this.samples.length && this.samples[0].t < cutoff) this.samples.shift();
+      if (this.source === "polymarket") this.trackP2B(p, clTs || now);
     } catch {
       /* yut */
     }
