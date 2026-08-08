@@ -1,40 +1,49 @@
-import { cfg } from "../config.js";
+import { buildSlugCandidates, autoMarket } from "../marketResolver.js";
 import { log } from "../logger.js";
 
 /**
- * Gamma API'den aktif BTC marketlerini cekip HAM semayi gosterir.
- * auto modun filtre/parse mantigini gercek veriye gore dogrulamak icin kullan.
- *
- *   npm run inspect
+ * Aktif 5dk BTC marketini /markets/slug/{slug} ile bulup gosterir.
+ * Bulunan yesTokenId/noTokenId/strike/resolveTs degerlerini .env manual moda
+ * kopyalayabilirsin. Calistir: npm run inspect
  */
 const GAMMA = "https://gamma-api.polymarket.com";
 
 async function main() {
-  const url = `${GAMMA}/markets?closed=false&active=true&limit=100&order=endDate&ascending=true`;
-  const res = await fetch(url);
-  const arr: any[] = await res.json();
-  const now = Date.now() / 1000;
+  const slugs = buildSlugCandidates();
+  console.log("Aday slug'lar:");
+  for (const s of slugs) console.log("  ", s);
+  console.log("─".repeat(60));
 
-  const btc = arr.filter((m) => {
-    const q = (m.question ?? m.title ?? "").toLowerCase();
-    return q.includes("bitcoin") || q.includes("btc");
-  });
-
-  log.info(`Toplam market: ${arr.length}, BTC iceren: ${btc.length}`);
-  for (const m of btc.slice(0, 15)) {
-    const endTs = m.endDate ? Date.parse(m.endDate) / 1000 : 0;
-    const mins = endTs ? ((endTs - now) / 60).toFixed(1) : "?";
-    console.log("─".repeat(70));
-    console.log("question :", m.question ?? m.title);
-    console.log("id       :", m.conditionId ?? m.id);
-    console.log("endDate  :", m.endDate, `(${mins} dk kaldi)`);
-    console.log("outcomes :", m.outcomes);
-    console.log("tokens   :", m.clobTokenIds);
-    console.log("active   :", m.active, "closed:", m.closed);
+  for (const slug of slugs) {
+    try {
+      const r = await fetch(`${GAMMA}/markets/slug/${slug}`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (r.status !== 200) continue;
+      let p: any = await r.json();
+      if (Array.isArray(p)) p = p[0];
+      if (!p) continue;
+      console.log(`\n✓ ${slug}  (active=${p.active})`);
+      console.log("  title  :", p.title || p.question);
+      console.log("  tokens :", p.clobTokenIds);
+      console.log("  outcome:", p.outcomes);
+      console.log("  strike :", p.priceToBeat ?? p.strikePrice ?? p.target ?? "(yok -> Binance fallback)");
+      console.log("  endDate:", p.endDate ?? p.endDateIso);
+    } catch {
+      /* atla */
+    }
   }
 
-  if (cfg.marketMode) {
-    // sadece cfg'yi import ettigimizi tekrar dogrulamak icin (lint no-unused)
+  console.log("\n" + "═".repeat(60));
+  console.log("Resolver'in sectigi CANLI market (.env manual icin):");
+  const m = await autoMarket();
+  if (m) {
+    console.log(`  MARKET_YES_TOKEN_ID=${m.yesTokenId}`);
+    console.log(`  MARKET_NO_TOKEN_ID=${m.noTokenId}`);
+    console.log(`  MARKET_STRIKE=${m.strike}`);
+    console.log(`  MARKET_RESOLVE_TS=${m.resolveTs}`);
+  } else {
+    log.warn("Canli market bulunamadi (ag/geo engeli veya market yok).");
   }
 }
 

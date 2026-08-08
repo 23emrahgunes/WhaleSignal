@@ -29,7 +29,7 @@ export const cfg = {
   binanceWs: str("BINANCE_WS", "wss://stream.binance.com:9443/ws/btcusdt@trade"),
 
   // Market
-  marketMode: str("MARKET_MODE", "manual") as "manual" | "auto",
+  marketMode: str("MARKET_MODE", "auto") as "manual" | "auto",
   yesTokenId: str("MARKET_YES_TOKEN_ID"),
   noTokenId: str("MARKET_NO_TOKEN_ID"),
   strike: num("MARKET_STRIKE", 0),
