@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 logs/
+*.pem
+cert.pem
+key.pem
