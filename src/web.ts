@@ -116,6 +116,17 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
       json(res, r.ok ? 200 : 400, r);
       return;
     }
+    if (url === "/api/auto" && req.method === "POST") {
+      const b = await readBody(req);
+      ctrl.setAuto(Boolean(b.on), {
+        price: b.price != null ? Number(b.price) : undefined,
+        shares: b.shares != null ? Number(b.shares) : undefined,
+        proxUsd: b.proxUsd != null ? Number(b.proxUsd) : undefined,
+        minSec: b.minSec != null ? Number(b.minSec) : undefined,
+      });
+      json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
+      return;
+    }
     if (url === "/api/cancel" && req.method === "POST") {
       json(res, 200, await ctrl.cancelAll());
       return;
@@ -237,7 +248,11 @@ const HTML = /* html */ `<!doctype html>
         <tr><td class="down">DOWN</td><td class="mono" id="d_bid">—</td><td class="mono" id="d_ask">—</td>
             <td class="mono" id="d_lim">—</td><td class="mono" id="d_fill">—</td></tr>
       </table>
-      <div class="row" style="margin-top:8px"><span class="k">Toplam maliyet (combined)</span>
+      <div class="row" style="margin-top:8px"><span class="k">Ask toplamı (ikisini ALırsan = taker)</span>
+        <span class="mono" id="askSum">—</span></div>
+      <div class="row"><span class="k">Bid toplamı (ikisini SATarsan)</span>
+        <span class="mono" id="bidSum">—</span></div>
+      <div class="row"><span class="k">Senin doldurduğun combined</span>
         <span class="mono" id="combined">—</span></div>
 
       <div class="controls">
@@ -248,6 +263,20 @@ const HTML = /* html */ `<!doctype html>
         <button class="b-reset" id="reset">Reset</button>
       </div>
       <div class="msg" id="msg"></div>
+
+      <hr style="border:0;border-top:1px solid var(--bd);margin:14px 0">
+      <h2>🤖 Otomatik mod <span id="autoBadge" class="badge" style="background:#6e768133">KAPALI</span></h2>
+      <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
+        Spot, priceToBeat'e ≤ <b id="pxLbl">2</b>$ yaklaşınca ve ≥ <b id="msLbl">45</b>s kalınca
+        otomatik olarak UP+DOWN limit koyar. Sen izlersin.
+      </div>
+      <div class="controls">
+        <div><label>Yakınlık (≤ $)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
+        <div><label>Min kalan (sn)</label><input id="minSec" type="number" step="5" value="45"></div>
+        <button class="b-go" id="autoOn">Oto AÇ</button>
+        <button class="b-cancel" id="autoOff">Oto KAPAT</button>
+      </div>
+      <div class="msg" id="autoMsg"></div>
     </div>
 
     <div class="card full">
@@ -286,9 +315,22 @@ async function poll(){
     $("u_lim").textContent=f(s.up.limit); $("u_fill").textContent=s.up.filled+" / "+(s.up.shares??"—");
     $("d_bid").textContent=f(s.down.bestBid); $("d_ask").textContent=f(s.down.bestAsk);
     $("d_lim").textContent=f(s.down.limit); $("d_fill").textContent=s.down.filled+" / "+(s.down.shares??"—");
+    const askSum = (s.up.bestAsk!=null&&s.down.bestAsk!=null)?s.up.bestAsk+s.down.bestAsk:null;
+    const bidSum = (s.up.bestBid!=null&&s.down.bestBid!=null)?s.up.bestBid+s.down.bestBid:null;
+    $("askSum").textContent = askSum!=null ? f(askSum)+(askSum<1?" ✓ AL=kâr":" ✗ AL=zarar"):"—";
+    $("askSum").className = "mono " + (askSum!=null?(askSum<1?"up":"down"):"");
+    $("bidSum").textContent = bidSum!=null ? f(bidSum)+" (SAT=zarar, owe $1)":"—";
+    $("bidSum").className = "mono warn";
     $("combined").textContent = s.combined!=null ? f(s.combined)+(s.combined<1?" ✓ kâr":" ✗"):"—";
     $("combined").className = "mono " + (s.combined!=null ? (s.combined<1?"up":"down"):"");
     $("go").disabled = s.pinned;
+    // Otomatik mod göstergesi
+    const ab = $("autoBadge");
+    ab.textContent = s.auto ? "AÇIK" : "KAPALI";
+    ab.style.background = s.auto ? "#2ea04333" : "#6e768133";
+    ab.style.color = s.auto ? "var(--up)" : "var(--mut)";
+    $("pxLbl").textContent = s.autoProxUsd;
+    $("msLbl").textContent = s.autoMinSec;
     const tbl = $("lockedTbl");
     tbl.innerHTML = "<tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr>" +
       (s.locked||[]).map(l=>"<tr><td>"+l.slug+"</td><td class=mono>"+l.shares+
@@ -306,6 +348,14 @@ async function post(path, body){
 $("go").onclick = ()=>post("/api/place",{price:Number($("price").value),shares:Number($("shares").value)});
 $("cancel").onclick = ()=>post("/api/cancel");
 $("reset").onclick = ()=>post("/api/reset");
+async function postAuto(on){
+  const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({on,price:Number($("price").value),shares:Number($("shares").value),
+      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value)})});
+  const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
+}
+$("autoOn").onclick = ()=>postAuto(true);
+$("autoOff").onclick = ()=>postAuto(false);
 poll(); setInterval(poll, 1000);
 </script>
 </body></html>`;
