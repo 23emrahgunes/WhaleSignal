@@ -217,6 +217,7 @@ export class WebController {
           }
         : null,
       spot: this.feed.price,
+      dist: this.market && this.feed.price ? this.feed.price - this.market.strike : null,
       up: {
         bestBid: this.upBook?.bestBid ?? null,
         bestAsk: this.upBook?.bestAsk ?? null,

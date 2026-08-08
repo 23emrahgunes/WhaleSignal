@@ -224,6 +224,7 @@ const HTML = /* html */ `<!doctype html>
       <div class="row"><span class="k">Slug</span><span class="mono acc" id="slug">—</span></div>
       <div class="row"><span class="k">Strike (priceToBeat)</span><span class="mono" id="strike">—</span></div>
       <div class="row"><span class="k">BTC spot</span><span class="mono" id="spot">—</span></div>
+      <div class="row"><span class="k">Fark (spot − strike)</span><span class="mono" id="dist">—</span></div>
       <div class="row"><span class="k">Kalan süre</span><span class="mono" id="secLeft">—</span></div>
     </div>
 
@@ -276,6 +277,11 @@ async function poll(){
       $("secLeft").className = "mono " + (s.market.secLeft<20?"warn":"");
     }
     $("spot").textContent = f(s.spot,2);
+    if(s.dist!=null){
+      $("dist").textContent = (s.dist>=0?"+":"") + f(s.dist,2) + " $  (" +
+        (s.dist>=0?"UP tarafı":"DOWN tarafı") + ")";
+      $("dist").className = "mono " + (s.dist>=0?"up":"down");
+    } else { $("dist").textContent="—"; $("dist").className="mono"; }
     $("u_bid").textContent=f(s.up.bestBid); $("u_ask").textContent=f(s.up.bestAsk);
     $("u_lim").textContent=f(s.up.limit); $("u_fill").textContent=s.up.filled+" / "+(s.up.shares??"—");
     $("d_bid").textContent=f(s.down.bestBid); $("d_ask").textContent=f(s.down.bestAsk);
