@@ -346,6 +346,7 @@ const HTML = /* html */ `<!doctype html>
 <script>
 const $ = id => document.getElementById(id);
 const f = (v,d=3) => v==null ? "—" : Number(v).toFixed(d);
+let autoIsOn = false;
 
 async function poll(){
   try{
@@ -402,6 +403,7 @@ async function poll(){
     $("combined").className = "mono " + (s.combined!=null ? (s.combined<1?"up":"down"):"");
     $("go").disabled = s.pinned;
     // Otomatik mod göstergesi
+    autoIsOn = s.auto;
     const ab = $("autoBadge");
     ab.textContent = s.auto ? "AÇIK" : "KAPALI";
     ab.style.background = s.auto ? "#2ea04333" : "#6e768133";
@@ -455,6 +457,10 @@ async function postAuto(on){
 }
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
+// Auto parametreleri: auto ACIK'ken degistirince aninda uygula (tekrar tiklama yok)
+["mode","proxUsd","minSec","maxSec","maxCombined","price","shares"].forEach(id=>{
+  const el=$(id); if(el) el.addEventListener("change",()=>{ if(autoIsOn) postAuto(true); });
+});
 async function postMom(on){
   const r = await fetch("/api/momentum",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({on,shares:Number($("momShares").value),retZ:Number($("momRetZ").value),
