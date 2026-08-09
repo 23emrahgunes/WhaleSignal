@@ -126,6 +126,7 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
         priceDown: b.priceDown != null ? Number(b.priceDown) : undefined,
         shares: b.shares != null ? Number(b.shares) : undefined,
         proxUsd: b.proxUsd != null ? Number(b.proxUsd) : undefined,
+        stackProx: b.stackProx != null ? Number(b.stackProx) : undefined,
         minSec: b.minSec != null ? Number(b.minSec) : undefined,
         maxSec: b.maxSec != null ? Number(b.maxSec) : undefined,
         maxCombined: b.maxCombined != null ? Number(b.maxCombined) : undefined,
@@ -314,7 +315,8 @@ const HTML = /* html */ `<!doctype html>
         <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar.
       </div>
       <div class="controls">
-        <div><label>priceToBeat mesafe ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" min="0.5" value="1"></div>
+        <div><label>priceToBeat mesafe ≤ $ (1. box)</label><input id="proxUsd" type="number" step="0.5" min="0.5" value="1"></div>
+        <div><label>2. box+ mesafe ≤ $ (stack)</label><input id="stackProx" type="number" step="0.5" min="0.5" value="1"></div>
         <div><label>Max combined (adaptive)</label><input id="maxCombined" type="number" step="0.01" value="0.97"></div>
         <div><label>Ters-drift kapat ($)</label><input id="driftAbort" type="number" step="1" value="8"></div>
         <div><label>Trend filtre ($/20s)</label><input id="maxEntryDrift" type="number" step="1" value="6"></div>
@@ -467,7 +469,7 @@ $("reset").onclick = ()=>post("/api/reset");
 async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),priceDown:Number($("priceDown").value),
-      shares:Number($("shares").value),proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),
+      shares:Number($("shares").value),proxUsd:Number($("proxUsd").value),stackProx:Number($("stackProx").value),minSec:Number($("minSec").value),
       maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value),driftAbort:Number($("driftAbort").value),
       maxEntryDrift:Number($("maxEntryDrift").value),maxBoxes:Number($("maxBoxes").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
@@ -475,7 +477,7 @@ async function postAuto(on){
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
 // Auto parametreleri: auto ACIK'ken degistirince aninda uygula (tekrar tiklama yok)
-["mode","proxUsd","minSec","maxSec","maxCombined","driftAbort","maxEntryDrift","maxBoxes","price","priceDown","shares"].forEach(id=>{
+["mode","proxUsd","stackProx","minSec","maxSec","maxCombined","driftAbort","maxEntryDrift","maxBoxes","price","priceDown","shares"].forEach(id=>{
   const el=$(id); if(el) el.addEventListener("change",()=>{ if(autoIsOn) postAuto(true); });
 });
 async function postMom(on){

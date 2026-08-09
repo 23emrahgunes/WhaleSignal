@@ -51,7 +51,8 @@ export class WebController {
   autoPrice = cfg.targetLegPrice; // UP limit (fixed mod)
   autoPriceDown = cfg.targetLegPrice; // DOWN limit (fixed mod)
   autoShares = cfg.pairShares; // 5
-  autoProxUsd = 1; // |spot - strike| <= bu (USD) olunca (fixed mod) — sikilastirildi
+  autoProxUsd = 1; // ILK box: |spot - strike| <= bu (USD) (fixed mod)
+  stackProxUsd = 1; // STACKING (2.box+): ayri, genelde daha sIki proximity
   // Emir penceresi: secLeft bu araliktayken box acar [minSec, maxSec]
   autoMinSec = 20; // en gec: bundan az kalinca ACMAZ (fill zamani kalmaz)
   autoMaxSec = 45; // en erken: bundan fazla kalinca bekler (son saniyeleri kolla)
@@ -229,9 +230,11 @@ export class WebController {
         // FIXED: spot strike'a yakin VE iki bacak da hedefin (0.40) ustunde
         // (yoksa hedef limit ucuz bacagi capraz alir -> naked). Iki ask de
         // 0.40 ustundeyse market ~0.50/0.50 demektir; 0.40 limitler BEKLER.
+        // Ilk box autoProxUsd; stacking (2.box+) stackProxUsd kullanir.
+        const prox = this.boxCount === 0 ? this.autoProxUsd : this.stackProxUsd;
         const dist = Math.abs(this.feed.price - this.market.strike);
-        if (dist > this.autoProxUsd) {
-          this.autoReason = `uzak (${dist.toFixed(2)}$ > ${this.autoProxUsd}$)`;
+        if (dist > prox) {
+          this.autoReason = `uzak (${dist.toFixed(2)}$ > ${prox}$${this.boxCount > 0 ? " [stack]" : ""})`;
         } else if (!a || !b) {
           this.autoReason = "order book yok";
         } else if (a.bestAsk <= this.autoPrice || b.bestAsk <= this.autoPriceDown) {
@@ -465,6 +468,7 @@ export class WebController {
       priceDown?: number;
       shares?: number;
       proxUsd?: number;
+      stackProx?: number;
       minSec?: number;
       maxSec?: number;
       maxCombined?: number;
@@ -483,6 +487,7 @@ export class WebController {
       this.autoPriceDown = Math.min(0.99, Math.max(0.01, opts.priceDown));
     if (opts.shares != null) this.autoShares = Math.max(1, opts.shares);
     if (opts.proxUsd != null) this.autoProxUsd = Math.max(0.1, opts.proxUsd);
+    if (opts.stackProx != null) this.stackProxUsd = Math.max(0.1, opts.stackProx);
     if (opts.minSec != null) this.autoMinSec = Math.max(cfg.flattenSec + 4, opts.minSec);
     if (opts.maxSec != null) this.autoMaxSec = opts.maxSec;
     if (opts.maxCombined != null)
@@ -672,6 +677,7 @@ export class WebController {
       autoPriceDown: this.autoPriceDown,
       autoShares: this.autoShares,
       autoProxUsd: this.autoProxUsd,
+      stackProxUsd: this.stackProxUsd,
       autoMinSec: this.autoMinSec,
       autoMaxSec: this.autoMaxSec,
       autoMaxCombined: this.autoMaxCombined,
