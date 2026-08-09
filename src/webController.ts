@@ -48,7 +48,8 @@ export class WebController {
   // --- Otomatik mod ---
   auto = false;
   targetMode: "fixed" | "adaptive" = "fixed";
-  autoPrice = cfg.targetLegPrice; // 0.40 (fixed mod)
+  autoPrice = cfg.targetLegPrice; // UP limit (fixed mod)
+  autoPriceDown = cfg.targetLegPrice; // DOWN limit (fixed mod)
   autoShares = cfg.pairShares; // 5
   autoProxUsd = 2; // |spot - strike| <= bu (USD) olunca (fixed mod)
   // Emir penceresi: secLeft bu araliktayken box acar [minSec, maxSec]
@@ -204,12 +205,13 @@ export class WebController {
           this.autoReason = `uzak (${dist.toFixed(2)}$ > ${this.autoProxUsd}$)`;
         } else if (!a || !b) {
           this.autoReason = "order book yok";
-        } else if (a.bestAsk <= this.autoPrice || b.bestAsk <= this.autoPrice) {
+        } else if (a.bestAsk <= this.autoPrice || b.bestAsk <= this.autoPriceDown) {
           const lo = a.bestAsk <= this.autoPrice ? "UP" : "DOWN";
-          this.autoReason = `${lo} zaten ≤ ${this.autoPrice} (çapraz almam, ikisi de 0.40 üstü olmalı)`;
+          const lim = a.bestAsk <= this.autoPrice ? this.autoPrice : this.autoPriceDown;
+          this.autoReason = `${lo} zaten ≤ ${lim} (çapraz almam, ask limitin üstünde olmalı)`;
         } else {
           this.autoReason = "";
-          const r = await this.placeBox(this.autoPrice, this.autoShares);
+          const r = await this.placeBoxLegs(this.autoPrice, this.autoPriceDown, this.autoShares);
           this.status = "🤖 OTO(fixed) box: " + r.msg;
           return;
         }
@@ -431,6 +433,7 @@ export class WebController {
     opts: {
       mode?: "fixed" | "adaptive";
       price?: number;
+      priceDown?: number;
       shares?: number;
       proxUsd?: number;
       minSec?: number;
@@ -441,6 +444,8 @@ export class WebController {
     this.auto = on;
     if (opts.mode) this.targetMode = opts.mode;
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
+    if (opts.priceDown != null)
+      this.autoPriceDown = Math.min(0.99, Math.max(0.01, opts.priceDown));
     if (opts.shares != null) this.autoShares = Math.max(1, opts.shares);
     if (opts.proxUsd != null) this.autoProxUsd = Math.max(0.1, opts.proxUsd);
     if (opts.minSec != null) this.autoMinSec = Math.max(cfg.flattenSec + 4, opts.minSec);
@@ -611,6 +616,7 @@ export class WebController {
       auto: this.auto,
       targetMode: this.targetMode,
       autoPrice: this.autoPrice,
+      autoPriceDown: this.autoPriceDown,
       autoShares: this.autoShares,
       autoProxUsd: this.autoProxUsd,
       autoMinSec: this.autoMinSec,

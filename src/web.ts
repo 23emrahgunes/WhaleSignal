@@ -123,6 +123,7 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
       ctrl.setAuto(Boolean(b.on), {
         mode: b.mode === "adaptive" ? "adaptive" : b.mode === "fixed" ? "fixed" : undefined,
         price: b.price != null ? Number(b.price) : undefined,
+        priceDown: b.priceDown != null ? Number(b.priceDown) : undefined,
         shares: b.shares != null ? Number(b.shares) : undefined,
         proxUsd: b.proxUsd != null ? Number(b.proxUsd) : undefined,
         minSec: b.minSec != null ? Number(b.minSec) : undefined,
@@ -295,8 +296,8 @@ const HTML = /* html */ `<!doctype html>
       <div class="controls" style="margin-bottom:8px">
         <div><label>Mod</label>
           <select id="mode" style="background:#0d1117;border:1px solid var(--bd);color:var(--fg);border-radius:6px;padding:8px;font-size:14px">
-            <option value="fixed">fixed (0.40/0.40 · tombul)</option>
-            <option value="adaptive">adaptive (best-bid · sık/ince)</option>
+            <option value="fixed">fixed · sabit limit (tombul)</option>
+            <option value="adaptive">adaptive · best-bid (sık/ince)</option>
           </select>
         </div>
         <div><label>En erken (≤ sn kala)</label><input id="maxSec" type="number" step="5" value="45"></div>
@@ -304,7 +305,8 @@ const HTML = /* html */ `<!doctype html>
       </div>
       <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
         <b>Emir penceresi:</b> kalan süre <b id="winLbl">45–20</b>s arasındayken box açar (son saniyeler).<br>
-        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ + iki bacak da 0.40 üstündeyken 0.40/0.40 koyar.<br>
+        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ + her ask kendi limitinin üstündeyken
+        <b>UP@<span id="upLimLbl">0.40</span> / DOWN@<span id="dnLimLbl">0.40</span></b> koyar (yukarıdaki UP/DOWN limit kutuları).<br>
         <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar.
       </div>
       <div class="controls">
@@ -410,6 +412,8 @@ async function poll(){
     ab.style.color = s.auto ? "var(--up)" : "var(--mut)";
     $("pxLbl").textContent = s.autoProxUsd;
     $("mcLbl").textContent = s.autoMaxCombined;
+    $("upLimLbl").textContent = f(s.autoPrice,2);
+    $("dnLimLbl").textContent = f(s.autoPriceDown,2);
     $("winLbl").textContent = s.autoMaxSec + "–" + s.autoMinSec;
     // Momentum
     const mb = $("momBadge");
@@ -450,15 +454,15 @@ $("cancel").onclick = ()=>post("/api/cancel");
 $("reset").onclick = ()=>post("/api/reset");
 async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),shares:Number($("shares").value),
-      proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),maxSec:Number($("maxSec").value),
-      maxCombined:Number($("maxCombined").value)})});
+    body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),priceDown:Number($("priceDown").value),
+      shares:Number($("shares").value),proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),
+      maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
 }
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
 // Auto parametreleri: auto ACIK'ken degistirince aninda uygula (tekrar tiklama yok)
-["mode","proxUsd","minSec","maxSec","maxCombined","price","shares"].forEach(id=>{
+["mode","proxUsd","minSec","maxSec","maxCombined","price","priceDown","shares"].forEach(id=>{
   const el=$(id); if(el) el.addEventListener("change",()=>{ if(autoIsOn) postAuto(true); });
 });
 async function postMom(on){
