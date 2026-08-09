@@ -167,19 +167,18 @@ export async function autoMarket(): Promise<MarketRef | null> {
   const outcomes = coerceList(live.p.outcomes);
   const [ui, di] = upDownIndexes(outcomes);
 
+  // Strike: Gamma -> (candle fallback). Bulunamazsa MARKETI ATLAMA — strike=0
+  // dondur; polymarket kaynaginda webController chainlink priceToBeat ile
+  // dolduracak (feed pencere acilisini zaten yakaliyor).
   let strike = Number(recursiveFind(live.p, STRIKE_KEYS)) || 0;
-  if (!strike && live.start) {
+  if (!strike && live.start && cfg.priceSource !== "polymarket") {
     strike = await strikeFromCandle(live.start);
     const src = cfg.priceSource === "binance" ? "binance" : "coinbase(fallback)";
     if (strike) log.info(`strike ${src} 5m acilisindan turetildi: ${strike}`);
   }
-  if (!strike) {
-    log.warn("auto: strike bulunamadi, market atlaniyor:", live.slug);
-    return null;
-  }
 
   log.ok(
-    `auto market: ${live.slug} strike=${strike} resolve=${new Date(live.resolveTs * 1000).toISOString()}`
+    `auto market: ${live.slug} strike=${strike || "(chainlink bekleniyor)"} resolve=${new Date(live.resolveTs * 1000).toISOString()}`
   );
   return {
     id: live.slug,

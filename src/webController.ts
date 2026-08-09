@@ -136,6 +136,8 @@ export class WebController {
         this.autoReason = `çok geç (${secLeft.toFixed(0)}s < ${this.autoMinSec}s, açmaz)`;
       } else if (secLeft > this.autoMaxSec) {
         this.autoReason = `henüz erken (${secLeft.toFixed(0)}s > ${this.autoMaxSec}s, ${this.autoMaxSec}s kala girer)`;
+      } else if (this.market.strike <= 0) {
+        this.autoReason = "priceToBeat bekleniyor (chainlink pencere açılışı)";
       } else if (this.targetMode === "fixed") {
         // FIXED: spot strike'a yakin VE iki bacak da hedefin (0.40) ustunde
         // (yoksa hedef limit ucuz bacagi capraz alir -> naked). Iki ask de
@@ -483,7 +485,10 @@ export class WebController {
           }
         : null,
       spot: this.feed.price,
-      dist: this.market && this.feed.price ? this.feed.price - this.market.strike : null,
+      dist:
+        this.market && this.feed.price && this.market.strike > 0
+          ? this.feed.price - this.market.strike
+          : null,
       up: {
         bestBid: this.upBook?.bestBid ?? null,
         bestAsk: this.upBook?.bestAsk ?? null,
