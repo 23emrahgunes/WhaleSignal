@@ -309,12 +309,12 @@ const HTML = /* html */ `<!doctype html>
       </div>
       <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
         <b>Emir penceresi:</b> kalan süre <b id="winLbl">45–20</b>s arasındayken box açar (son saniyeler).<br>
-        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">2</b>$ + her ask kendi limitinin üstündeyken
+        <b>fixed:</b> spot priceToBeat'e ≤ <b id="pxLbl">1</b>$ + her ask kendi limitinin üstündeyken
         <b>UP@<span id="upLimLbl">0.40</span> / DOWN@<span id="dnLimLbl">0.40</span></b> koyar (yukarıdaki UP/DOWN limit kutuları).<br>
         <b>adaptive:</b> her bacağı best bid'ine oturtur, combined ≤ <b id="mcLbl">0.97</b> tutar.
       </div>
       <div class="controls">
-        <div><label>Yakınlık ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
+        <div><label>priceToBeat mesafe ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" min="0.5" value="1"></div>
         <div><label>Max combined (adaptive)</label><input id="maxCombined" type="number" step="0.01" value="0.97"></div>
         <div><label>Ters-drift kapat ($)</label><input id="driftAbort" type="number" step="1" value="8"></div>
         <div><label>Trend filtre ($/20s)</label><input id="maxEntryDrift" type="number" step="1" value="6"></div>

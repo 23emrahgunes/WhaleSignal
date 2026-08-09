@@ -51,7 +51,7 @@ export class WebController {
   autoPrice = cfg.targetLegPrice; // UP limit (fixed mod)
   autoPriceDown = cfg.targetLegPrice; // DOWN limit (fixed mod)
   autoShares = cfg.pairShares; // 5
-  autoProxUsd = 2; // |spot - strike| <= bu (USD) olunca (fixed mod)
+  autoProxUsd = 1; // |spot - strike| <= bu (USD) olunca (fixed mod) — sikilastirildi
   // Emir penceresi: secLeft bu araliktayken box acar [minSec, maxSec]
   autoMinSec = 20; // en gec: bundan az kalinca ACMAZ (fill zamani kalmaz)
   autoMaxSec = 45; // en erken: bundan fazla kalinca bekler (son saniyeleri kolla)
