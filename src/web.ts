@@ -130,6 +130,7 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
         maxSec: b.maxSec != null ? Number(b.maxSec) : undefined,
         maxCombined: b.maxCombined != null ? Number(b.maxCombined) : undefined,
         driftAbort: b.driftAbort != null ? Number(b.driftAbort) : undefined,
+        maxEntryDrift: b.maxEntryDrift != null ? Number(b.maxEntryDrift) : undefined,
       });
       json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
       return;
@@ -260,6 +261,7 @@ const HTML = /* html */ `<!doctype html>
       <div class="row"><span class="k">Strike (priceToBeat) <small id="strikeSrc"></small></span><span class="mono" id="strike">—</span></div>
       <div class="row"><span class="k">BTC fiyat <small id="src"></small></span><span class="mono" id="spot">—</span></div>
       <div class="row"><span class="k">Fark (spot − strike)</span><span class="mono" id="dist">—</span></div>
+      <div class="row"><span class="k">Oynaklık (20s hareket)</span><span class="mono" id="drift20">—</span></div>
       <div class="row"><span class="k">Kalan süre</span><span class="mono" id="secLeft">—</span></div>
     </div>
 
@@ -314,6 +316,7 @@ const HTML = /* html */ `<!doctype html>
         <div><label>Yakınlık ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
         <div><label>Max combined (adaptive)</label><input id="maxCombined" type="number" step="0.01" value="0.97"></div>
         <div><label>Ters-drift kapat ($)</label><input id="driftAbort" type="number" step="1" value="8"></div>
+        <div><label>Trend filtre ($/20s)</label><input id="maxEntryDrift" type="number" step="1" value="6"></div>
         <button class="b-go" id="autoOn">Oto AÇ</button>
         <button class="b-cancel" id="autoOff">Oto KAPAT</button>
       </div>
@@ -388,6 +391,11 @@ async function poll(){
     }
     $("spot").textContent = f(s.spot,2);
     $("src").textContent = "("+s.priceSource+")";
+    if(s.drift20!=null){
+      const calm = s.drift20 <= s.maxEntryDriftUsd;
+      $("drift20").textContent = f(s.drift20,1)+"$  "+(calm?"✓ sakin":"⚠ trend");
+      $("drift20").className = "mono "+(calm?"up":"warn");
+    } else { $("drift20").textContent="—"; }
     if(s.dist!=null){
       $("dist").textContent = (s.dist>=0?"+":"") + f(s.dist,2) + " $  (" +
         (s.dist>=0?"UP tarafı":"DOWN tarafı") + ")";
@@ -458,13 +466,14 @@ async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),priceDown:Number($("priceDown").value),
       shares:Number($("shares").value),proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),
-      maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value),driftAbort:Number($("driftAbort").value)})});
+      maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value),driftAbort:Number($("driftAbort").value),
+      maxEntryDrift:Number($("maxEntryDrift").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
 }
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
 // Auto parametreleri: auto ACIK'ken degistirince aninda uygula (tekrar tiklama yok)
-["mode","proxUsd","minSec","maxSec","maxCombined","driftAbort","price","priceDown","shares"].forEach(id=>{
+["mode","proxUsd","minSec","maxSec","maxCombined","driftAbort","maxEntryDrift","price","priceDown","shares"].forEach(id=>{
   const el=$(id); if(el) el.addEventListener("change",()=>{ if(autoIsOn) postAuto(true); });
 });
 async function postMom(on){

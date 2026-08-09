@@ -57,6 +57,7 @@ export class WebController {
   autoMaxSec = 45; // en erken: bundan fazla kalinca bekler (son saniyeleri kolla)
   autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
   driftAbortUsd = 8; // naked bacak aleyhine bu kadar $ drift olunca ERKEN kapat (0=kapali)
+  maxEntryDriftUsd = 6; // son 20s net hareket bunu asarsa (trend/ucus) box ACMA (0=kapali)
   autoReason = ""; // neden acilmadi (UI icin)
 
   // --- Momentum overlay (getiri + OBI birlesimi, marketable klip) ---
@@ -211,6 +212,14 @@ export class WebController {
         this.autoReason = `çok geç (${secLeft.toFixed(0)}s < ${this.autoMinSec}s, açmaz)`;
       } else if (secLeft > this.autoMaxSec) {
         this.autoReason = `henüz erken (${secLeft.toFixed(0)}s > ${this.autoMaxSec}s, ${this.autoMaxSec}s kala girer)`;
+      } else if (
+        this.maxEntryDriftUsd > 0 &&
+        Math.abs(this.feed.price - this.feed.priceAgo(20000)) > this.maxEntryDriftUsd
+      ) {
+        // TREND FILTRESI: fiyat son 20s'de cok hareket ettiyse (ucus/cakilma)
+        // box acma -> naked riskini kokten azaltir. Sadece SAKIN/ranging'de gir.
+        const d = Math.abs(this.feed.price - this.feed.priceAgo(20000));
+        this.autoReason = `trend güçlü (${d.toFixed(1)}$/20s > ${this.maxEntryDriftUsd}$), sakinleşmeyi bekliyor`;
       } else if (this.market.strike <= 0) {
         this.autoReason = "priceToBeat bekleniyor (chainlink pencere açılışı)";
       } else if (this.targetMode === "fixed") {
@@ -457,10 +466,12 @@ export class WebController {
       maxSec?: number;
       maxCombined?: number;
       driftAbort?: number;
+      maxEntryDrift?: number;
     }
   ) {
     this.auto = on;
     if (opts.driftAbort != null) this.driftAbortUsd = Math.max(0, opts.driftAbort);
+    if (opts.maxEntryDrift != null) this.maxEntryDriftUsd = Math.max(0, opts.maxEntryDrift);
     if (opts.mode) this.targetMode = opts.mode;
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
     if (opts.priceDown != null)
@@ -642,6 +653,8 @@ export class WebController {
       autoMaxSec: this.autoMaxSec,
       autoMaxCombined: this.autoMaxCombined,
       driftAbortUsd: this.driftAbortUsd,
+      maxEntryDriftUsd: this.maxEntryDriftUsd,
+      drift20: this.feed.price ? Math.abs(this.feed.price - this.feed.priceAgo(20000)) : null,
       market: this.market
         ? {
             slug: this.market.id,
