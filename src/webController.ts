@@ -107,10 +107,12 @@ export class WebController {
       const m = cfg.marketMode === "auto" ? await autoMarket() : manualMarket();
       if (m && (!this.market || m.id !== this.market.id)) {
         this.market = m;
-        // Yeni market -> openPrice cache'ini sifirla, hemen yeniden cek
+        // Yeni market -> openPrice cache + eski book'u temizle (eski market'e ait)
         this.opWin = 0;
         this.opPrice = 0;
         this.opLastFetch = 0;
+        this.upBook = null;
+        this.downBook = null;
         log.info(`web: yeni market ${m.id}`);
       }
     }
@@ -162,9 +164,11 @@ export class WebController {
       this.pm.getBook(this.market.yesTokenId),
       this.pm.getBook(this.market.noTokenId),
     ]);
-    this.upBook = a;
-    this.downBook = b;
-    if (a && b) this.computeMomentum(a, b);
+    // Book'u SADECE gecerli veri gelince guncelle (anlik null'da son degeri koru,
+    // panelde "—" yanip sonmesin). Market degisince yukarida temizlendi.
+    if (a) this.upBook = a;
+    if (b) this.downBook = b;
+    if (this.upBook && this.downBook) this.computeMomentum(this.upBook, this.downBook);
 
     if (this.pinned) {
       await this.refresh("UP", a);
