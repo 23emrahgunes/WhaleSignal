@@ -110,9 +110,11 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
     }
     if (url === "/api/place" && req.method === "POST") {
       const b = await readBody(req);
-      const price = Number(b.price ?? cfg.targetLegPrice);
       const shares = Number(b.shares ?? cfg.pairShares);
-      const r = await ctrl.placeBox(price, shares);
+      // UP ve DOWN ayri fiyat (verilmezse tek price ikisine de)
+      const up = Number(b.upPrice ?? b.price ?? cfg.targetLegPrice);
+      const down = Number(b.downPrice ?? b.price ?? cfg.targetLegPrice);
+      const r = await ctrl.placeBoxLegs(up, down, shares);
       json(res, r.ok ? 200 : 400, r);
       return;
     }
@@ -276,11 +278,15 @@ const HTML = /* html */ `<!doctype html>
         <span class="mono" id="combined">—</span></div>
 
       <div class="controls">
-        <div><label>Limit fiyat ($)</label><input id="price" type="number" step="0.01" value="0.40"></div>
+        <div><label>UP limit ($)</label><input id="price" type="number" step="0.01" value="0.40"></div>
+        <div><label>DOWN limit ($)</label><input id="priceDown" type="number" step="0.01" value="0.40"></div>
         <div><label>Share (her bacak)</label><input id="shares" type="number" step="1" value="5"></div>
         <button class="b-go" id="go">Box Yerleştir (UP+DOWN)</button>
         <button class="b-cancel" id="cancel">İptal</button>
         <button class="b-reset" id="reset">Reset</button>
+      </div>
+      <div style="color:var(--mut);font-size:11px;margin-top:4px">
+        UP + DOWN toplamı &lt; 1.00 olmalı (garanti kâr). Not: fixed oto mod "UP limit"i her iki bacağa uygular.
       </div>
       <div class="msg" id="msg"></div>
 
@@ -437,7 +443,7 @@ async function post(path, body){
   $("msg").className = "msg " + (j.ok?"up":"down");
   poll();
 }
-$("go").onclick = ()=>post("/api/place",{price:Number($("price").value),shares:Number($("shares").value)});
+$("go").onclick = ()=>post("/api/place",{upPrice:Number($("price").value),downPrice:Number($("priceDown").value),shares:Number($("shares").value)});
 $("cancel").onclick = ()=>post("/api/cancel");
 $("reset").onclick = ()=>post("/api/reset");
 async function postAuto(on){
