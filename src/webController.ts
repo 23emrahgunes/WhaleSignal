@@ -58,6 +58,8 @@ export class WebController {
   autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
   driftAbortUsd = 8; // naked bacak aleyhine bu kadar $ drift olunca ERKEN kapat (0=kapali)
   maxEntryDriftUsd = 6; // son 20s net hareket bunu asarsa (trend/ucus) box ACMA (0=kapali)
+  maxBoxesPerMarket = 1; // ayni markette max box (yatay market'te kar katlama). 1=stacking kapali
+  boxCount = 0; // bu markette kilitlenen box sayisi
   autoReason = ""; // neden acilmadi (UI icin)
 
   // --- Momentum overlay (getiri + OBI birlesimi, marketable klip) ---
@@ -114,6 +116,7 @@ export class WebController {
         this.opLastFetch = 0;
         this.upBook = null;
         this.downBook = null;
+        this.boxCount = 0; // yeni market -> box sayaci sifir
         log.info(`web: yeni market ${m.id}`);
       }
     }
@@ -467,11 +470,13 @@ export class WebController {
       maxCombined?: number;
       driftAbort?: number;
       maxEntryDrift?: number;
+      maxBoxes?: number;
     }
   ) {
     this.auto = on;
     if (opts.driftAbort != null) this.driftAbortUsd = Math.max(0, opts.driftAbort);
     if (opts.maxEntryDrift != null) this.maxEntryDriftUsd = Math.max(0, opts.maxEntryDrift);
+    if (opts.maxBoxes != null) this.maxBoxesPerMarket = Math.max(1, Math.floor(opts.maxBoxes));
     if (opts.mode) this.targetMode = opts.mode;
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
     if (opts.priceDown != null)
@@ -533,8 +538,26 @@ export class WebController {
         ts: Date.now(),
       });
       this.pushHistory("BOX", "kâr ✓", matched, profit);
-      log.ok(`WEB BOX KILIT: combined=${combined.toFixed(3)} kar=${profit.toFixed(3)}`);
+      this.boxCount++;
+      log.ok(
+        `WEB BOX KILIT #${this.boxCount}: combined=${combined.toFixed(3)} kar=${profit.toFixed(3)}`
+      );
+      // STACKING: market hala yatay/oynaksa ve limit dolmadiysa AYNI markette
+      // yeni box'a izin ver (kilitlenen paylar cuzdanda kalir, kari sayildi).
+      if (this.boxCount < this.maxBoxesPerMarket) {
+        this.bankAndReset();
+      }
     }
+  }
+
+  /** Kilitlenen box'u "bankaya al": bot state'ini sifirla, ayni markette yeni box acilabilsin. */
+  private bankAndReset() {
+    this.pinned = false;
+    this.up = { price: 0, shares: 0, filled: 0 };
+    this.down = { price: 0, shares: 0, filled: 0 };
+    this.upCost = this.downCost = 0;
+    this.settled = false;
+    // NOT: mom (momentum klibi) KORUNUR — market basina tek klip, resolution'da coz.
   }
 
   /** UP ve DOWN'a AYNI fiyattan limit koy (manuel / fixed mod). */
@@ -655,6 +678,8 @@ export class WebController {
       driftAbortUsd: this.driftAbortUsd,
       maxEntryDriftUsd: this.maxEntryDriftUsd,
       drift20: this.feed.price ? Math.abs(this.feed.price - this.feed.priceAgo(20000)) : null,
+      maxBoxesPerMarket: this.maxBoxesPerMarket,
+      boxCount: this.boxCount,
       market: this.market
         ? {
             slug: this.market.id,
