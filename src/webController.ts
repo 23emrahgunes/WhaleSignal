@@ -81,7 +81,14 @@ export class WebController {
     // Market: pinned degilse guncel marketi al
     if (!this.pinned || !this.market) {
       const m = cfg.marketMode === "auto" ? await autoMarket() : manualMarket();
-      if (m && (!this.market || m.id !== this.market.id)) this.market = m;
+      if (m && (!this.market || m.id !== this.market.id)) {
+        this.market = m;
+        // Yeni market -> openPrice cache'ini sifirla, hemen yeniden cek
+        this.opWin = 0;
+        this.opPrice = 0;
+        this.opLastFetch = 0;
+        log.info(`web: yeni market ${m.id}`);
+      }
     }
     if (!this.market) {
       this.status = "market bekleniyor";
@@ -103,6 +110,7 @@ export class WebController {
       fetchOpenPrice(start)
         .then((op) => {
           if (op > 0) {
+            if (this.opWin !== start) log.ok(`web: openPrice=${op} (win ${start}, Polymarket)`);
             this.opWin = start;
             this.opPrice = op;
           }

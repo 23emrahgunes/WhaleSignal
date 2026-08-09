@@ -33,18 +33,22 @@ export async function fetchOpenPrice(startSec: number): Promise<number> {
     if (!r.ok) return 0;
     let html = await r.text();
     html = html.split("\\").join(""); // escaped JSON: \" -> "
-    // Aktif pencere: openPrice + closePrice:null
-    let m = html.match(/"openPrice":([0-9.]+),"closePrice":null/);
-    if (m) return Number(m[1]);
-    // Rollover yedegi: bu pencerede KAPANAN pencerenin close'u (zincir)
-    const closedRx = new RegExp(
-      `Time":"[^"]*",` + `"openPrice":[0-9.]+,"closePrice":([0-9.]+)`,
-      "g"
-    );
-    let last: RegExpExecArray | null;
-    let lastClose = 0;
-    while ((last = closedRx.exec(html)) !== null) lastClose = Number(last[1]);
-    return lastClose || 0;
+
+    // 1) Aktif pencere: openPrice + closePrice:null = resmi Price to Beat
+    const active = html.match(/"openPrice":([0-9.]+),"closePrice":null/);
+    if (active) return Number(active[1]);
+
+    // 2) Rollover yedegi (chainlink-sentetik): yeni pencerenin open'i =
+    //    startSec'te KAPANAN pencerenin close'u. Kapanmis pencereleri epoch'a
+    //    cevirip startSec ile eslesen close'u dondur.
+    const closedRx =
+      /Time":"(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d)[^"]*","openPrice":[0-9.]+,"closePrice":([0-9.]+)/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = closedRx.exec(html)) !== null) {
+      const ts = Math.floor(Date.parse(mm[1] + "Z") / 1000); // UTC
+      if (ts === startSec) return Number(mm[2]); // bu pencerenin acilisi
+    }
+    return 0;
   } catch {
     return 0;
   }
