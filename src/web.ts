@@ -300,8 +300,8 @@ const HTML = /* html */ `<!doctype html>
     </div>
 
     <div class="card full">
-      <h2>Son kilitlenen kutular</h2>
-      <table id="lockedTbl"><tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr></table>
+      <h2>Son işlemler — kazanç <span id="wins" class="up">0</span> / kayıp <span id="losses" class="down">0</span></h2>
+      <table id="histTbl"><tr><th>Market</th><th>Tip</th><th>Sonuç</th><th>Share</th><th>PnL ($)</th></tr></table>
     </div>
   </div>
   <p style="margin-top:14px"><small>Fiyatlar 0–1 arası olasılık = USD/share. DRY_RUN'da emirler simüledir.</small></p>
@@ -372,10 +372,16 @@ async function poll(){
     $("pxLbl").textContent = s.autoProxUsd;
     $("mcLbl").textContent = s.autoMaxCombined;
     $("winLbl").textContent = s.autoMaxSec + "–" + s.autoMinSec;
-    const tbl = $("lockedTbl");
-    tbl.innerHTML = "<tr><th>Slug</th><th>Share</th><th>Combined</th><th>Kâr ($)</th></tr>" +
-      (s.locked||[]).map(l=>"<tr><td>"+l.slug+"</td><td class=mono>"+l.shares+
-      "</td><td class=mono>"+f(l.combined)+"</td><td class='mono up'>"+f(l.profit,3)+"</td></tr>").join("");
+    $("wins").textContent = s.wins||0;
+    $("losses").textContent = s.losses||0;
+    const tbl = $("histTbl");
+    tbl.innerHTML = "<tr><th>Market</th><th>Tip</th><th>Sonuç</th><th>Share</th><th>PnL ($)</th></tr>" +
+      (s.history||[]).map(h=>{
+        const cls = h.pnl>=0?"up":"down";
+        const slugShort = String(h.slug).replace("btc-updown-5m-","…");
+        return "<tr><td>"+slugShort+"</td><td>"+h.kind+"</td><td class='"+cls+"'>"+h.result+
+          "</td><td class=mono>"+h.shares+"</td><td class='mono "+cls+"'>"+(h.pnl>=0?"+":"")+f(h.pnl,3)+"</td></tr>";
+      }).join("");
   }catch(e){ $("status").textContent = "panel bağlantı hatası"; }
 }
 async function post(path, body){

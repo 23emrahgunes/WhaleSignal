@@ -33,6 +33,9 @@ export class WebController {
   settled = false;
 
   locked: { combined: number; shares: number; profit: number; slug: string; ts: number }[] = [];
+  // Tum sonuclar (kar VE zarar): box kilit, abort satis, naked resolution
+  history: { slug: string; kind: string; result: string; shares: number; pnl: number; ts: number }[] =
+    [];
   realizedPnl = 0;
   status = "başlatılıyor";
   lastError = "";
@@ -95,39 +98,40 @@ export class WebController {
       return;
     }
 
-    // priceToBeat kaynak onceligi:
+    // priceToBeat kaynak onceligi (yalnizca polymarket kaynaginda):
     //  1) Polymarket event sayfasi openPrice (RESMI, birebir) — throttled fetch
     //  2) chainlink tick rekonstruksiyonu (feed) — yedek
     //  3) resolver strike (Gamma) — son yedek
-    const mm = /(\d{6,})$/.exec(this.market.id);
-    const start = mm ? Number(mm[1]) : Math.round(this.market.resolveTs - 300);
+    if (cfg.priceSource === "polymarket") {
+      const mm = /(\d{6,})$/.exec(this.market.id);
+      const start = mm ? Number(mm[1]) : Math.round(this.market.resolveTs - 300);
 
-    // Event sayfasindan openPrice (3sn throttle; henuz alinmadiysa 1sn hizli)
-    const haveOp = this.opWin === start && this.opPrice > 0;
-    const throttle = haveOp ? 5000 : 1200;
-    if (Date.now() - this.opLastFetch > throttle) {
-      this.opLastFetch = Date.now();
-      fetchOpenPrice(start)
-        .then((op) => {
-          if (op > 0) {
-            if (this.opWin !== start) log.ok(`web: openPrice=${op} (win ${start}, Polymarket)`);
-            this.opWin = start;
-            this.opPrice = op;
-          }
-        })
-        .catch(() => {});
-    }
+      const haveOp = this.opWin === start && this.opPrice > 0;
+      const throttle = haveOp ? 5000 : 1200;
+      if (Date.now() - this.opLastFetch > throttle) {
+        this.opLastFetch = Date.now();
+        fetchOpenPrice(start)
+          .then((op) => {
+            if (op > 0) {
+              if (this.opWin !== start) log.ok(`web: openPrice=${op} (win ${start}, Polymarket)`);
+              this.opWin = start;
+              this.opPrice = op;
+            }
+          })
+          .catch(() => {});
+      }
 
-    if (this.opWin === start && this.opPrice > 0) {
-      this.market.strike = this.opPrice;
-      this.strikeSrc = "polymarket-openPrice";
-    } else {
-      const p2b = this.feed.priceToBeatFor(start);
-      if (p2b > 0) {
-        this.market.strike = p2b;
-        this.strikeSrc = "chainlink-tick";
+      if (this.opWin === start && this.opPrice > 0) {
+        this.market.strike = this.opPrice;
+        this.strikeSrc = "polymarket-openPrice";
       } else {
-        this.strikeSrc = "gamma/fallback";
+        const p2b = this.feed.priceToBeatFor(start);
+        if (p2b > 0) {
+          this.market.strike = p2b;
+          this.strikeSrc = "chainlink-tick";
+        } else {
+          this.strikeSrc = "gamma/fallback";
+        }
       }
     }
 
@@ -261,6 +265,12 @@ export class WebController {
           const sold = res.filled ?? need;
           const realized = (px - cost) * sold;
           this.realizedPnl += realized;
+          this.pushHistory(
+            `ABORT ${haveUp ? "UP" : "DOWN"}`,
+            realized >= 0 ? "kâr ✓" : "zarar ✗",
+            sold,
+            realized
+          );
           // Satilan naked'i pozisyondan dus (resolution'da tekrar sayilmasin)
           if (haveUp) {
             this.up.filled -= sold;
@@ -300,19 +310,33 @@ export class WebController {
     const upWins = this.feed.price > this.market.strike;
     let msg = "";
     if (upNaked > 0) {
-      const payoff = upWins ? 1 : 0;
-      const realized = (payoff - this.upAvg) * upNaked;
+      const won = upWins;
+      const realized = ((won ? 1 : 0) - this.upAvg) * upNaked;
       this.realizedPnl += realized;
-      msg = `naked UP ${upNaked} ${upWins ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
+      this.pushHistory("NAKED UP", won ? "kazandı ✓" : "kaybetti ✗", upNaked, realized);
+      msg = `naked UP ${upNaked} ${won ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
     }
     if (downNaked > 0) {
-      const payoff = upWins ? 0 : 1;
-      const realized = (payoff - this.downAvg) * downNaked;
+      const won = !upWins;
+      const realized = ((won ? 1 : 0) - this.downAvg) * downNaked;
       this.realizedPnl += realized;
-      msg = `naked DOWN ${downNaked} ${!upWins ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
+      this.pushHistory("NAKED DOWN", won ? "kazandı ✓" : "kaybetti ✗", downNaked, realized);
+      msg = `naked DOWN ${downNaked} ${won ? "KAZANDI" : "kaybetti"} pnl=${realized.toFixed(3)}`;
     }
     log.warn(`WEB resolution: ${msg} | net=${this.realizedPnl.toFixed(3)}`);
     this.status = `market çözüldü — ${msg}`;
+  }
+
+  private pushHistory(kind: string, result: string, shares: number, pnl: number) {
+    this.history.push({
+      slug: this.market?.id ?? "",
+      kind,
+      result,
+      shares,
+      pnl,
+      ts: Date.now(),
+    });
+    if (this.history.length > 100) this.history.shift();
   }
 
   private async cancelSide(side: "UP" | "DOWN") {
@@ -394,6 +418,7 @@ export class WebController {
         slug: this.market?.id ?? "",
         ts: Date.now(),
       });
+      this.pushHistory("BOX", "kâr ✓", matched, profit);
       log.ok(`WEB BOX KILIT: combined=${combined.toFixed(3)} kar=${profit.toFixed(3)}`);
     }
   }
@@ -542,7 +567,9 @@ export class WebController {
       openRisk,
       totalPnl: this.realizedPnl + (openRisk ? openRisk.unrealized : 0),
       lockedCount: this.locked.length,
-      locked: this.locked.slice(-10).reverse(),
+      wins: this.history.filter((h) => h.pnl >= 0).length,
+      losses: this.history.filter((h) => h.pnl < 0).length,
+      history: this.history.slice(-15).reverse(),
     };
   }
 }
