@@ -36,6 +36,7 @@ export class WebController {
   realizedPnl = 0;
   status = "başlatılıyor";
   lastError = "";
+  strikeSrc = "gamma/fallback"; // strike kaynagi: chainlink | gamma/fallback
 
   // --- Otomatik mod ---
   auto = false;
@@ -84,12 +85,17 @@ export class WebController {
     }
 
     // priceToBeat'i chainlink pencere acilisindan override et (en dogru kaynak).
-    // Market penceresi baslangici = resolveTs - 300. Feed o pencerenin acilisini
-    // yakaladiysa strike'i onunla degistir (Gamma/coinbase yerine).
+    // Pencere baslangicini SLUG'dan al (btc-updown-5m-<start>) — Gamma endDate
+    // saniye kaymis olabilir, slug ise kesin 300-sinir.
+    this.strikeSrc = "gamma/fallback";
     if (cfg.priceSource === "polymarket") {
-      const start = Math.round(this.market.resolveTs - 300);
+      const m = /(\d{6,})$/.exec(this.market.id);
+      const start = m ? Number(m[1]) : Math.round(this.market.resolveTs - 300);
       const p2b = this.feed.priceToBeatFor(start);
-      if (p2b > 0) this.market.strike = p2b;
+      if (p2b > 0) {
+        this.market.strike = p2b;
+        this.strikeSrc = "chainlink";
+      }
     }
 
     const secLeft = this.market.resolveTs - Date.now() / 1000;
@@ -471,6 +477,7 @@ export class WebController {
         ? {
             slug: this.market.id,
             strike: this.market.strike,
+            strikeSrc: this.strikeSrc,
             resolveTs: this.market.resolveTs,
             secLeft: Math.round(secLeft),
           }

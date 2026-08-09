@@ -37,9 +37,11 @@ export class PriceFeed {
   // price-to-beat takibi (Chainlink pencere acilisi)
   private _windowTs = 0;
   private _p2b = 0;
+  private _p2bSrc = "";
   private _prevPrice = 0;
   private _prevTs = 0;
-  private readonly maxBeforeMs = 3000;
+  private readonly maxBeforeMs = 3000; // sinir oncesi son tick toleransi
+  private readonly captureAfterMs = 12000; // sinir sonrasi ilk tick toleransi (genis)
 
   constructor(public source: PriceSource = "polymarket") {
     this.url = URLS[source] ?? URLS.polymarket;
@@ -55,22 +57,41 @@ export class PriceFeed {
   priceToBeatFor(startSec: number): number {
     return this._windowTs === startSec ? this._p2b : 0;
   }
+  get p2bSource() {
+    return this._p2bSrc;
+  }
+  get windowTs() {
+    return this._windowTs;
+  }
 
   /**
-   * Chainlink price-to-beat takibi: pencere sinirinda ilk tick (first_after)
-   * = Polymarket resmi openPrice'i. Yedek: sinirdan hemen once son tick.
-   * (Kardes repo ters-trader PriceToBeatTracker ile birebir.)
+   * Chainlink price-to-beat takibi: pencere sinirindan sonraki ilk tick
+   * (first_after) = Polymarket resmi openPrice'i. Yedek: sinirdan hemen once
+   * son tick. Pencere ortasinda katilinca (ilk tick cok gec) yakalanmaz.
    */
   private trackP2B(price: number, clTsMs: number) {
     const win = Math.floor(clTsMs / 1000 / 300) * 300;
     if (win !== this._windowTs) {
       const boundaryMs = win * 1000;
+      const afterSec = (clTsMs - boundaryMs) / 1000;
       let p2b = 0;
-      if (clTsMs - boundaryMs <= this.maxBeforeMs) p2b = price; // first_after
-      else if (this._prevPrice > 0 && boundaryMs - this._prevTs <= this.maxBeforeMs)
-        p2b = this._prevPrice; // last_before
+      let src = "";
+      if (clTsMs - boundaryMs <= this.captureAfterMs) {
+        p2b = price;
+        src = "first_after";
+      } else if (this._prevPrice > 0 && boundaryMs - this._prevTs <= this.maxBeforeMs) {
+        p2b = this._prevPrice;
+        src = "last_before";
+      }
       this._windowTs = win;
-      this._p2b = p2b; // yakalanamadiysa 0 -> resolver strike'ina dusulur
+      this._p2b = p2b;
+      this._p2bSrc = src;
+      if (p2b > 0)
+        log.info(`priceToBeat yakalandi: ${p2b} (win=${win}, ${src}, +${afterSec.toFixed(1)}s)`);
+      else
+        log.warn(
+          `priceToBeat YAKALANAMADI (win=${win}, ilk tick +${afterSec.toFixed(1)}s > ${this.captureAfterMs / 1000}s) -> fallback`
+        );
     }
     this._prevPrice = price;
     this._prevTs = clTsMs;
