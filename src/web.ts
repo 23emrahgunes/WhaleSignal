@@ -130,6 +130,17 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
       json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
       return;
     }
+    if (url === "/api/momentum" && req.method === "POST") {
+      const b = await readBody(req);
+      ctrl.setMomentum(Boolean(b.on), {
+        shares: b.shares != null ? Number(b.shares) : undefined,
+        retZ: b.retZ != null ? Number(b.retZ) : undefined,
+        obiTh: b.obiTh != null ? Number(b.obiTh) : undefined,
+        maxCost: b.maxCost != null ? Number(b.maxCost) : undefined,
+      });
+      json(res, 200, { ok: true, msg: `Momentum ${b.on ? "AÇIK" : "KAPALI"}` });
+      return;
+    }
     if (url === "/api/cancel" && req.method === "POST") {
       json(res, 200, await ctrl.cancelAll());
       return;
@@ -300,6 +311,26 @@ const HTML = /* html */ `<!doctype html>
     </div>
 
     <div class="card full">
+      <h2>📈 Momentum overlay <span id="momBadge" class="badge" style="background:#6e768133">KAPALI</span>
+        <span style="float:right" class="mono">MOM PnL: <b id="momPnl" class="mono">$0.00</b></span></h2>
+      <div style="color:var(--mut);font-size:12px;margin-bottom:8px">
+        Box'a EK olarak: 20s getiri (z) <b>VE</b> OBI aynı yönü derse, momentum tarafına
+        <b id="momShLbl">5</b> share marketable klip. <b>Yönlü risk</b> (arbitraj değil), ayrı PnL.
+      </div>
+      <div class="row"><span class="k">Canlı sinyal</span><span class="mono" id="momSig">—</span></div>
+      <div class="row" id="momPosRow" style="display:none"><span class="k">Açık momentum pozisyonu</span><span class="mono" id="momPos">—</span></div>
+      <div class="controls" style="margin-top:8px">
+        <div><label>Ekstra share</label><input id="momShares" type="number" step="1" value="5"></div>
+        <div><label>Getiri z-eşik</label><input id="momRetZ" type="number" step="0.1" value="0.7"></div>
+        <div><label>OBI eşik</label><input id="momObiTh" type="number" step="0.05" value="0.2"></div>
+        <div><label>Max maliyet ($)</label><input id="momMaxCost" type="number" step="0.5" value="3"></div>
+        <button class="b-go" id="momOn">Momentum AÇ</button>
+        <button class="b-cancel" id="momOff">KAPAT</button>
+      </div>
+      <div class="msg" id="momMsg"></div>
+    </div>
+
+    <div class="card full">
       <h2>Son işlemler — kazanç <span id="wins" class="up">0</span> / kayıp <span id="losses" class="down">0</span></h2>
       <table id="histTbl"><tr><th>Market</th><th>Tip</th><th>Sonuç</th><th>Share</th><th>PnL ($)</th></tr></table>
     </div>
@@ -372,6 +403,20 @@ async function poll(){
     $("pxLbl").textContent = s.autoProxUsd;
     $("mcLbl").textContent = s.autoMaxCombined;
     $("winLbl").textContent = s.autoMaxSec + "–" + s.autoMinSec;
+    // Momentum
+    const mb = $("momBadge");
+    mb.textContent = s.momOn ? "AÇIK" : "KAPALI";
+    mb.style.background = s.momOn ? "#2ea04333" : "#6e768133";
+    mb.style.color = s.momOn ? "var(--up)" : "var(--mut)";
+    $("momPnl").textContent = "$"+f(s.momPnl,2);
+    $("momPnl").className = "mono "+(s.momPnl>0?"up":s.momPnl<0?"down":"");
+    if(s.momSignal){
+      const sg=s.momSignal;
+      $("momSig").innerHTML = "yön: <b class='"+(sg.dir==="UP"?"up":sg.dir==="DOWN"?"down":"")+"'>"+(sg.dir||"—")+"</b>"+
+        " · z="+f(sg.rz,2)+" · OBI="+f(sg.o,2)+" · "+(sg.active?"<b class='acc'>AKTİF</b>":"pasif");
+    }
+    if(s.momPos){ $("momPosRow").style.display="flex"; $("momPos").textContent=s.momPos.side+" "+s.momPos.shares+" (maliyet $"+f(s.momPos.cost,2)+")"; }
+    else { $("momPosRow").style.display="none"; }
     $("wins").textContent = s.wins||0;
     $("losses").textContent = s.losses||0;
     const tbl = $("histTbl");
@@ -404,6 +449,14 @@ async function postAuto(on){
 }
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
+async function postMom(on){
+  const r = await fetch("/api/momentum",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({on,shares:Number($("momShares").value),retZ:Number($("momRetZ").value),
+      obiTh:Number($("momObiTh").value),maxCost:Number($("momMaxCost").value)})});
+  const j = await r.json(); $("momMsg").textContent=j.msg||""; $("momMsg").className="msg up"; poll();
+}
+$("momOn").onclick = ()=>postMom(true);
+$("momOff").onclick = ()=>postMom(false);
 poll(); setInterval(poll, 1000);
 </script>
 </body></html>`;

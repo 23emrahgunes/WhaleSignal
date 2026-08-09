@@ -57,6 +57,25 @@ export class WebController {
   autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
   autoReason = ""; // neden acilmadi (UI icin)
 
+  // --- Momentum overlay (getiri + OBI birlesimi, marketable klip) ---
+  momOn = false;
+  momShares = 5; // ekstra yonlu hisse
+  momRetZ = 0.7; // getiri z-skor esigi (20s hareket / vol)
+  momObiTh = 0.2; // OBI esigi [-1,1]
+  momMaxCostUsd = 3; // ekstra klip icin max maliyet (risk siniri)
+  momSignal: { dir: "UP" | "DOWN" | null; rz: number; o: number; active: boolean } = {
+    dir: null,
+    rz: 0,
+    o: 0,
+    active: false,
+  };
+  mom: { side: "UP" | "DOWN" | null; shares: number; cost: number } = {
+    side: null,
+    shares: 0,
+    cost: 0,
+  };
+  momPnl = 0;
+
   constructor() {
     this.feed = new PriceFeed(cfg.priceSource);
     this.pm = new Polymarket();
@@ -143,6 +162,7 @@ export class WebController {
     ]);
     this.upBook = a;
     this.downBook = b;
+    if (a && b) this.computeMomentum(a, b);
 
     if (this.pinned) {
       await this.refresh("UP", a);
@@ -300,6 +320,18 @@ export class WebController {
       this.status = "market çözüldü";
       return;
     }
+    const upWins = this.feed.price > this.market.strike;
+
+    // Momentum klibi (yonlu) resolution'da sonuclanir
+    if (this.mom.side) {
+      const won = (this.mom.side === "UP") === upWins;
+      const realized = (won ? this.mom.shares : 0) - this.mom.cost;
+      this.realizedPnl += realized;
+      this.momPnl += realized;
+      this.pushHistory(`MOM ${this.mom.side}`, won ? "kazandı ✓" : "kaybetti ✗", this.mom.shares, realized);
+      this.mom = { side: null, shares: 0, cost: 0 };
+    }
+
     const matched = Math.min(this.up.filled, this.down.filled);
     const upNaked = this.up.filled - matched;
     const downNaked = this.down.filled - matched;
@@ -307,7 +339,6 @@ export class WebController {
       this.status = "market çözüldü — temiz" + (matched > 0 ? " (box kilitliydi)" : "");
       return;
     }
-    const upWins = this.feed.price > this.market.strike;
     let msg = "";
     if (upNaked > 0) {
       const won = upWins;
@@ -325,6 +356,54 @@ export class WebController {
     }
     log.warn(`WEB resolution: ${msg} | net=${this.realizedPnl.toFixed(3)}`);
     this.status = `market çözüldü — ${msg}`;
+  }
+
+  /** Momentum sinyali: 20s chainlink getirisi (z-skor) + prediction-market OBI. */
+  private computeMomentum(a: Book, b: Book) {
+    const price = this.feed.price;
+    const ago = this.feed.priceAgo(20000);
+    const sigma = Math.max(this.feed.sigmaOverHorizon(20), 1e-6);
+    const rz = (price - ago) / sigma; // 20s hareketin z-skoru
+    // OBI: top-of-book size dengesizligi (UP alim baskisi - DOWN alim baskisi)
+    const obiUp = (a.bidSize - a.askSize) / Math.max(a.bidSize + a.askSize, 1);
+    const obiDown = (b.bidSize - b.askSize) / Math.max(b.bidSize + b.askSize, 1);
+    const o = (obiUp - obiDown) / 2; // [-1,1], + = yukari baski
+    let dir: "UP" | "DOWN" | null = null;
+    if (rz > 0 && o > 0) dir = "UP";
+    else if (rz < 0 && o < 0) dir = "DOWN";
+    const active =
+      dir !== null && Math.abs(rz) >= this.momRetZ && Math.abs(o) >= this.momObiTh;
+    this.momSignal = { dir, rz, o, active };
+  }
+
+  /** Momentum tarafina marketable ekstra klip (best ask'ten hemen al). */
+  private async placeMomentumClip() {
+    if (!this.momOn || !this.momSignal.active || this.mom.side || !this.market) return;
+    const dir = this.momSignal.dir!;
+    const token = dir === "UP" ? this.market.yesTokenId : this.market.noTokenId;
+    const book = dir === "UP" ? this.upBook : this.downBook;
+    if (!book) return;
+    const px = Math.min(0.98, book.bestAsk + cfg.slippage);
+    if (px * this.momShares > this.momMaxCostUsd) {
+      log.info(`MOM klip atlandi: maliyet ${(px * this.momShares).toFixed(2)} > ${this.momMaxCostUsd}`);
+      return;
+    }
+    const res = await this.pm.placeMarketable(token, "BUY", this.momShares, px);
+    if (res.ok) {
+      const filled = res.filled ?? this.momShares;
+      this.mom = { side: dir, shares: filled, cost: filled * px };
+      log.trade(
+        `MOM klip ${dir} ${filled}@${px.toFixed(3)} (rz=${this.momSignal.rz.toFixed(2)} obi=${this.momSignal.o.toFixed(2)})`
+      );
+    }
+  }
+
+  setMomentum(on: boolean, opts: { shares?: number; retZ?: number; obiTh?: number; maxCost?: number }) {
+    this.momOn = on;
+    if (opts.shares != null) this.momShares = Math.max(1, opts.shares);
+    if (opts.retZ != null) this.momRetZ = Math.max(0, opts.retZ);
+    if (opts.obiTh != null) this.momObiTh = Math.max(0, opts.obiTh);
+    if (opts.maxCost != null) this.momMaxCostUsd = Math.max(0, opts.maxCost);
   }
 
   private pushHistory(kind: string, result: string, shares: number, pnl: number) {
@@ -460,9 +539,12 @@ export class WebController {
     if (!ru.ok || !rd.ok) {
       return { ok: false, msg: `emir hatası UP:${ru.ok} DOWN:${rd.ok}` };
     }
+    // Momentum overlay: sinyal guclu ve acikse favori tarafa ekstra marketable klip
+    await this.placeMomentumClip();
+    const momTxt = this.mom.side ? ` +MOM ${this.mom.side} ${this.mom.shares}` : "";
     return {
       ok: true,
-      msg: `UP@${upPx} + DOWN@${downPx} ${sz} share (combined ${(upPx + downPx).toFixed(3)}, ${cfg.dryRun ? "DRY" : "CANLI"})`,
+      msg: `UP@${upPx} + DOWN@${downPx} ${sz} share (combined ${(upPx + downPx).toFixed(3)}${momTxt}, ${cfg.dryRun ? "DRY" : "CANLI"})`,
     };
   }
 
@@ -478,6 +560,7 @@ export class WebController {
     this.down = { price: 0, shares: 0, filled: 0 };
     this.upCost = this.downCost = 0;
     this.settled = false;
+    this.mom = { side: null, shares: 0, cost: 0 };
   }
 
   async reset(): Promise<{ ok: boolean; msg: string }> {
@@ -564,6 +647,10 @@ export class WebController {
       pinned: this.pinned,
       combined: this.pinned && this.up.filled && this.down.filled ? combined : null,
       netPnl: this.realizedPnl,
+      momOn: this.momOn,
+      momPnl: this.momPnl,
+      momSignal: this.momSignal,
+      momPos: this.mom.side ? { side: this.mom.side, shares: this.mom.shares, cost: this.mom.cost } : null,
       openRisk,
       totalPnl: this.realizedPnl + (openRisk ? openRisk.unrealized : 0),
       lockedCount: this.locked.length,

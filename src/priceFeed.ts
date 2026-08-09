@@ -161,6 +161,17 @@ export class PriceFeed {
     }
   }
 
+  /** ~ms once gozlenen fiyat (momentum getirisi icin). Veri yoksa guncel fiyat. */
+  priceAgo(ms: number): number {
+    const target = Date.now() - ms;
+    let best = this.samples[0]?.p ?? this._price;
+    for (const s of this.samples) {
+      if (s.t <= target) best = s.p;
+      else break;
+    }
+    return best || this._price;
+  }
+
   /** Fiyatin bayat olup olmadigini kontrol et (ms). */
   isStale(maxAgeMs = 3000) {
     return Date.now() - this.lastTs > maxAgeMs;
