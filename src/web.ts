@@ -336,8 +336,11 @@ async function poll(){
     if(s.market){
       $("slug").textContent = s.market.slug;
       $("strike").textContent = f(s.market.strike,2);
-      $("strikeSrc").textContent = s.market.strikeSrc==="chainlink" ? "(chainlink ✓)" : "(fallback ⚠)";
-      $("strikeSrc").style.color = s.market.strikeSrc==="chainlink" ? "var(--up)" : "var(--warn)";
+      const ss = s.market.strikeSrc;
+      $("strikeSrc").textContent = ss==="polymarket-openPrice" ? "(polymarket ✓)"
+        : ss==="chainlink-tick" ? "(chainlink~)" : "(fallback ⚠)";
+      $("strikeSrc").style.color = ss==="polymarket-openPrice" ? "var(--up)"
+        : ss==="chainlink-tick" ? "var(--acc)" : "var(--warn)";
       $("secLeft").textContent = s.market.secLeft + "s";
       $("secLeft").className = "mono " + (s.market.secLeft<20?"warn":"");
     }

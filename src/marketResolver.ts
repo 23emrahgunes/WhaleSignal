@@ -18,6 +18,38 @@ const STRIKE_KEYS = [
   "target",
 ];
 
+/**
+ * Polymarket event sayfasindan RESMI priceToBeat (openPrice) cek.
+ * Kardes repo chainlink-sentetik/pricetobeat_feed.py ile birebir:
+ * aktif pencere -> "openPrice":X,"closePrice":null. Birebir Polymarket degeri.
+ */
+export async function fetchOpenPrice(startSec: number): Promise<number> {
+  try {
+    const slug = `btc-updown-5m-${startSec}`;
+    const r = await fetch(`https://polymarket.com/event/${slug}`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return 0;
+    let html = await r.text();
+    html = html.split("\\").join(""); // escaped JSON: \" -> "
+    // Aktif pencere: openPrice + closePrice:null
+    let m = html.match(/"openPrice":([0-9.]+),"closePrice":null/);
+    if (m) return Number(m[1]);
+    // Rollover yedegi: bu pencerede KAPANAN pencerenin close'u (zincir)
+    const closedRx = new RegExp(
+      `Time":"[^"]*",` + `"openPrice":[0-9.]+,"closePrice":([0-9.]+)`,
+      "g"
+    );
+    let last: RegExpExecArray | null;
+    let lastClose = 0;
+    while ((last = closedRx.exec(html)) !== null) lastClose = Number(last[1]);
+    return lastClose || 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** manual modda .env'den market referansini dondurur. */
 export function manualMarket(): MarketRef {
   return {

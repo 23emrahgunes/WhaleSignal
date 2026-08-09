@@ -40,8 +40,8 @@ export class PriceFeed {
   private _p2bSrc = "";
   private _prevPrice = 0;
   private _prevTs = 0;
-  private readonly maxBeforeMs = 3000; // sinir oncesi son tick toleransi
-  private readonly captureAfterMs = 12000; // sinir sonrasi ilk tick toleransi (genis)
+  private readonly staleBeforeMs = 300_000; // last_before icin max eskime (oracle son round)
+  private readonly captureAfterMs = 12000; // last_before yoksa first_after toleransi
 
   constructor(public source: PriceSource = "polymarket") {
     this.url = URLS[source] ?? URLS.polymarket;
@@ -65,33 +65,30 @@ export class PriceFeed {
   }
 
   /**
-   * Chainlink price-to-beat takibi: pencere sinirindan sonraki ilk tick
-   * (first_after) = Polymarket resmi openPrice'i. Yedek: sinirdan hemen once
-   * son tick. Pencere ortasinda katilinca (ilk tick cok gec) yakalanmaz.
+   * Chainlink price-to-beat takibi. Oracle mantigi: pencere sinirindaki fiyat =
+   * sinira kadarki SON round = sinirdan hemen ONCEki tick (last_before).
+   * Bu Polymarket openPrice'i ile birebir. last_before yoksa (bot yeni basladi)
+   * sinirdan sonraki ilk tick (first_after) yedek olarak kullanilir.
    */
   private trackP2B(price: number, clTsMs: number) {
     const win = Math.floor(clTsMs / 1000 / 300) * 300;
     if (win !== this._windowTs) {
       const boundaryMs = win * 1000;
-      const afterSec = (clTsMs - boundaryMs) / 1000;
       let p2b = 0;
       let src = "";
-      if (clTsMs - boundaryMs <= this.captureAfterMs) {
-        p2b = price;
-        src = "first_after";
-      } else if (this._prevPrice > 0 && boundaryMs - this._prevTs <= this.maxBeforeMs) {
-        p2b = this._prevPrice;
+      const beforeAge = boundaryMs - this._prevTs; // son tick sinirdan ne kadar once
+      if (this._prevPrice > 0 && this._prevTs <= boundaryMs && beforeAge <= this.staleBeforeMs) {
+        p2b = this._prevPrice; // ORACLE: sinira kadarki son round
         src = "last_before";
+      } else if (clTsMs - boundaryMs <= this.captureAfterMs) {
+        p2b = price; // yedek: sinirdan sonraki ilk tick
+        src = "first_after";
       }
       this._windowTs = win;
       this._p2b = p2b;
       this._p2bSrc = src;
-      if (p2b > 0)
-        log.info(`priceToBeat yakalandi: ${p2b} (win=${win}, ${src}, +${afterSec.toFixed(1)}s)`);
-      else
-        log.warn(
-          `priceToBeat YAKALANAMADI (win=${win}, ilk tick +${afterSec.toFixed(1)}s > ${this.captureAfterMs / 1000}s) -> fallback`
-        );
+      if (p2b > 0) log.info(`priceToBeat: ${p2b} (win=${win}, ${src})`);
+      else log.warn(`priceToBeat YAKALANAMADI (win=${win}) -> resolver fallback`);
     }
     this._prevPrice = price;
     this._prevTs = clTsMs;

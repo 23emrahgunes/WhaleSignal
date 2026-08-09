@@ -1,7 +1,7 @@
 import { cfg } from "./config.js";
 import { PriceFeed } from "./priceFeed.js";
 import { Polymarket, Book } from "./polymarket.js";
-import { autoMarket, manualMarket } from "./marketResolver.js";
+import { autoMarket, manualMarket, fetchOpenPrice } from "./marketResolver.js";
 import type { MarketRef } from "./strategy.js";
 import { log } from "./logger.js";
 
@@ -36,7 +36,11 @@ export class WebController {
   realizedPnl = 0;
   status = "başlatılıyor";
   lastError = "";
-  strikeSrc = "gamma/fallback"; // strike kaynagi: chainlink | gamma/fallback
+  strikeSrc = "gamma/fallback"; // strike kaynagi
+  // Polymarket event sayfasindan cekilen resmi openPrice (priceToBeat)
+  private opWin = 0;
+  private opPrice = 0;
+  private opLastFetch = 0;
 
   // --- Otomatik mod ---
   auto = false;
@@ -84,17 +88,38 @@ export class WebController {
       return;
     }
 
-    // priceToBeat'i chainlink pencere acilisindan override et (en dogru kaynak).
-    // Pencere baslangicini SLUG'dan al (btc-updown-5m-<start>) — Gamma endDate
-    // saniye kaymis olabilir, slug ise kesin 300-sinir.
-    this.strikeSrc = "gamma/fallback";
-    if (cfg.priceSource === "polymarket") {
-      const m = /(\d{6,})$/.exec(this.market.id);
-      const start = m ? Number(m[1]) : Math.round(this.market.resolveTs - 300);
+    // priceToBeat kaynak onceligi:
+    //  1) Polymarket event sayfasi openPrice (RESMI, birebir) — throttled fetch
+    //  2) chainlink tick rekonstruksiyonu (feed) — yedek
+    //  3) resolver strike (Gamma) — son yedek
+    const mm = /(\d{6,})$/.exec(this.market.id);
+    const start = mm ? Number(mm[1]) : Math.round(this.market.resolveTs - 300);
+
+    // Event sayfasindan openPrice (3sn throttle; henuz alinmadiysa 1sn hizli)
+    const haveOp = this.opWin === start && this.opPrice > 0;
+    const throttle = haveOp ? 5000 : 1200;
+    if (Date.now() - this.opLastFetch > throttle) {
+      this.opLastFetch = Date.now();
+      fetchOpenPrice(start)
+        .then((op) => {
+          if (op > 0) {
+            this.opWin = start;
+            this.opPrice = op;
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (this.opWin === start && this.opPrice > 0) {
+      this.market.strike = this.opPrice;
+      this.strikeSrc = "polymarket-openPrice";
+    } else {
       const p2b = this.feed.priceToBeatFor(start);
       if (p2b > 0) {
         this.market.strike = p2b;
-        this.strikeSrc = "chainlink";
+        this.strikeSrc = "chainlink-tick";
+      } else {
+        this.strikeSrc = "gamma/fallback";
       }
     }
 
