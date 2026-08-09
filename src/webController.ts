@@ -56,6 +56,7 @@ export class WebController {
   autoMinSec = 20; // en gec: bundan az kalinca ACMAZ (fill zamani kalmaz)
   autoMaxSec = 45; // en erken: bundan fazla kalinca bekler (son saniyeleri kolla)
   autoMaxCombined = cfg.maxPairCost; // adaptif modda combined tavani (0.97)
+  driftAbortUsd = 8; // naked bacak aleyhine bu kadar $ drift olunca ERKEN kapat (0=kapali)
   autoReason = ""; // neden acilmadi (UI icin)
 
   // --- Momentum overlay (getiri + OBI birlesimi, marketable klip) ---
@@ -170,11 +171,23 @@ export class WebController {
       await this.refresh("DOWN", b);
       this.tryLock();
 
-      // Leg-risk: tek bacak doldu, digeri gelmedi -> flatten'da tamamla/iptal
+      // Leg-risk: tek bacak doldu, digeri gelmedi
       const matched = Math.min(this.up.filled, this.down.filled);
       const naked = this.up.filled + this.down.filled - 2 * matched;
-      if (!this.settled && naked > 0 && secLeft <= cfg.flattenSec) {
-        await this.completeOrAbort();
+      if (!this.settled && naked > 0) {
+        // Ters-drift erken kapatma: naked bacak aleyhine drift esigi asilirsa
+        // 6sn'yi (flatten) BEKLEMEDEN kapat (zarari kes).
+        const haveUpNaked = this.up.filled - matched > 0;
+        const spotAbove = this.feed.price > this.market.strike;
+        const losing = haveUpNaked ? !spotAbove : spotAbove; // UP naked -> spot altinda ise kaybeder
+        const drift = Math.abs(this.feed.price - this.market.strike);
+        const adverse = this.driftAbortUsd > 0 && losing && drift > this.driftAbortUsd;
+        if (adverse) {
+          this.status = `⚠ ters-drift ${drift.toFixed(1)}$ — naked ${haveUpNaked ? "UP" : "DOWN"} erken kapatılıyor`;
+          await this.completeOrAbort();
+        } else if (secLeft <= cfg.flattenSec) {
+          await this.completeOrAbort();
+        }
       }
 
       if (secLeft < -2) {
@@ -439,9 +452,11 @@ export class WebController {
       minSec?: number;
       maxSec?: number;
       maxCombined?: number;
+      driftAbort?: number;
     }
   ) {
     this.auto = on;
+    if (opts.driftAbort != null) this.driftAbortUsd = Math.max(0, opts.driftAbort);
     if (opts.mode) this.targetMode = opts.mode;
     if (opts.price != null) this.autoPrice = Math.min(0.99, Math.max(0.01, opts.price));
     if (opts.priceDown != null)
@@ -622,6 +637,7 @@ export class WebController {
       autoMinSec: this.autoMinSec,
       autoMaxSec: this.autoMaxSec,
       autoMaxCombined: this.autoMaxCombined,
+      driftAbortUsd: this.driftAbortUsd,
       market: this.market
         ? {
             slug: this.market.id,

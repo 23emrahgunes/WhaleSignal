@@ -129,6 +129,7 @@ async function handler(req: http.IncomingMessage, res: http.ServerResponse) {
         minSec: b.minSec != null ? Number(b.minSec) : undefined,
         maxSec: b.maxSec != null ? Number(b.maxSec) : undefined,
         maxCombined: b.maxCombined != null ? Number(b.maxCombined) : undefined,
+        driftAbort: b.driftAbort != null ? Number(b.driftAbort) : undefined,
       });
       json(res, 200, { ok: true, msg: `Oto ${b.on ? "AÇIK" : "KAPALI"}` });
       return;
@@ -312,6 +313,7 @@ const HTML = /* html */ `<!doctype html>
       <div class="controls">
         <div><label>Yakınlık ≤ $ (fixed)</label><input id="proxUsd" type="number" step="0.5" value="2"></div>
         <div><label>Max combined (adaptive)</label><input id="maxCombined" type="number" step="0.01" value="0.97"></div>
+        <div><label>Ters-drift kapat ($)</label><input id="driftAbort" type="number" step="1" value="8"></div>
         <button class="b-go" id="autoOn">Oto AÇ</button>
         <button class="b-cancel" id="autoOff">Oto KAPAT</button>
       </div>
@@ -456,13 +458,13 @@ async function postAuto(on){
   const r = await fetch("/api/auto",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({on,mode:$("mode").value,price:Number($("price").value),priceDown:Number($("priceDown").value),
       shares:Number($("shares").value),proxUsd:Number($("proxUsd").value),minSec:Number($("minSec").value),
-      maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value)})});
+      maxSec:Number($("maxSec").value),maxCombined:Number($("maxCombined").value),driftAbort:Number($("driftAbort").value)})});
   const j = await r.json(); $("autoMsg").textContent=j.msg||""; $("autoMsg").className="msg up"; poll();
 }
 $("autoOn").onclick = ()=>postAuto(true);
 $("autoOff").onclick = ()=>postAuto(false);
 // Auto parametreleri: auto ACIK'ken degistirince aninda uygula (tekrar tiklama yok)
-["mode","proxUsd","minSec","maxSec","maxCombined","price","priceDown","shares"].forEach(id=>{
+["mode","proxUsd","minSec","maxSec","maxCombined","driftAbort","price","priceDown","shares"].forEach(id=>{
   const el=$(id); if(el) el.addEventListener("change",()=>{ if(autoIsOn) postAuto(true); });
 });
 async function postMom(on){
