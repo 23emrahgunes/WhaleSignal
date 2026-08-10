@@ -31,7 +31,7 @@ type BuyQuote struct {
 }
 
 type clobBookResponse struct {
-	Asks         []struct {
+	Asks []struct {
 		Price string `json:"price"`
 		Size  string `json:"size"`
 	} `json:"asks"`
@@ -143,7 +143,10 @@ func (c *Client) fetchBuyQuote(baseURL, tokenID string, targetShares, budget, fe
 	return q, nil
 }
 
-func tokenIDForOutcome(market *Market, side string) (string, bool) {
+func TokenIDForOutcome(market *Market, side string) (string, bool) {
+	if market == nil {
+		return "", false
+	}
 	wanted := strings.ToUpper(strings.TrimSpace(side))
 	for _, token := range market.Tokens {
 		if strings.ToUpper(strings.TrimSpace(token.Outcome)) == wanted && token.TokenID != "" {
