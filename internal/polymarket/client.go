@@ -3,15 +3,15 @@ package polymarket
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+)
 
-	"pm-edge/internal/util"
-	"go.uber.org/zap"
+const (
+	defaultGammaBaseURL = "https://gamma-api.polymarket.com"
+	btc5mWindow         = 5 * time.Minute
 )
 
 type Token struct {
@@ -24,204 +24,211 @@ type Market struct {
 	ID            string    `json:"id"`
 	Question      string    `json:"question"`
 	Slug          string    `json:"slug"`
-	EndDate       string    `json:"endDate"`       // ISO format end date (e.g. 2026-12-31T00:00:00Z)
-	EndDateIso    string    `json:"endDateIso"`    // Simple date (e.g. 2026-12-31)
-	ClobTokenIds  string    `json:"clobTokenIds"`  // String representation of token IDs
-	Tokens        []Token   `json:"tokens"`        // Custom tokens populated or parsed
+	EventSlug     string    `json:"eventSlug"`
+	EndDate       string    `json:"endDate"`
+	EndDateIso    string    `json:"endDateIso"`
+	ClobTokenIds  string    `json:"clobTokenIds"`
+	Tokens        []Token   `json:"tokens"`
 	Active        bool      `json:"active"`
 	Closed        bool      `json:"closed"`
 	PriceToBeat   float64   `json:"priceToBeat"`
+	StartTime     time.Time `json:"startTime"`
 	EndTime       time.Time `json:"endTime"`
 	Outcomes      []string  `json:"outcomes"`
 	MarketStale   bool      `json:"marketStale"`
+	ResolutionURL string    `json:"resolutionUrl"`
 }
 
 type Client struct {
 	httpClient *http.Client
-	regexes    []*regexp.Regexp
+	baseURL    string
 }
 
 func NewClient() *Client {
-	patterns := []string{
-		`(?i)bitcoin\s+above\s+\$?([0-9,]+(?:\.[0-9]+)?)(?:\s+at\s+([0-9:]+))?`,
-		`(?i)btc\s+above\s+\$?([0-9,]+(?:\.[0-9]+)?)`,
-		`(?i)btc\s*>\s*\$?([0-9,]+(?:\.[0-9]+)?)`,
-		`(?i)bitcoin\s+over\s+\$?([0-9,]+(?:\.[0-9]+)?)`,
-	}
+	return NewClientWithBaseURL(defaultGammaBaseURL, &http.Client{Timeout: 10 * time.Second})
+}
 
-	compiled := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		compiled = append(compiled, regexp.MustCompile(p))
+func NewClientWithBaseURL(baseURL string, httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-
 	return &Client{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		regexes:    compiled,
+		httpClient: httpClient,
+		baseURL:    strings.TrimRight(baseURL, "/"),
 	}
 }
 
-// ParsePriceToBeat extracts the target BTC price from Polymarket questions.
-func (c *Client) ParsePriceToBeat(question string) (float64, bool) {
-	for _, re := range c.regexes {
-		matches := re.FindStringSubmatch(question)
-		if len(matches) >= 2 {
-			rawVal := matches[1]
-			// Clean $ and commas
-			cleaned := strings.ReplaceAll(rawVal, "$", "")
-			cleaned = strings.ReplaceAll(cleaned, ",", "")
-			cleaned = strings.TrimSpace(cleaned)
+// BTC5mWindowStart returns the UTC start boundary for the 5-minute market containing t.
+func BTC5mWindowStart(t time.Time) time.Time {
+	unix := t.UTC().Unix()
+	start := unix - (unix % int64(btc5mWindow/time.Second))
+	return time.Unix(start, 0).UTC()
+}
 
-			val, err := strconv.ParseFloat(cleaned, 64)
-			if err == nil {
-				return val, true
-			}
-		}
+// BTC5mEventSlug returns the canonical Polymarket event slug for a 5-minute BTC window.
+func BTC5mEventSlug(start time.Time) string {
+	return fmt.Sprintf("btc-updown-5m-%d", BTC5mWindowStart(start).Unix())
+}
+
+type gammaEvent struct {
+	ID               string        `json:"id"`
+	Slug             string        `json:"slug"`
+	Title            string        `json:"title"`
+	ResolutionSource string        `json:"resolutionSource"`
+	Active           bool          `json:"active"`
+	Closed           bool          `json:"closed"`
+	Markets          []gammaMarket `json:"markets"`
+}
+
+type gammaMarket struct {
+	ID             string `json:"id"`
+	Question       string `json:"question"`
+	Slug           string `json:"slug"`
+	EndDate        string `json:"endDate"`
+	EndDateIso     string `json:"endDateIso"`
+	EventStartTime string `json:"eventStartTime"`
+	ClobTokenIds   string `json:"clobTokenIds"`
+	Outcomes       string `json:"outcomes"`
+	OutcomePrices  string `json:"outcomePrices"`
+	Active         bool   `json:"active"`
+	Closed         bool   `json:"closed"`
+}
+
+// FetchActiveBTC5mMarket resolves the current BTC Up/Down 5-minute event by its canonical slug.
+// It deliberately does not invent a fallback market: callers must treat an error as NO_SIGNAL.
+func (c *Client) FetchActiveBTC5mMarket(now time.Time) (*Market, error) {
+	windowStart := BTC5mWindowStart(now)
+	eventSlug := BTC5mEventSlug(windowStart)
+	url := fmt.Sprintf("%s/events/slug/%s", c.baseURL, eventSlug)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
-	return 0.0, false
-}
+	req.Header.Set("Accept", "application/json")
 
-// Is5MinMarket checks if a question refers to a 5-minute interval.
-func (c *Client) Is5MinMarket(question string) bool {
-	reTime := regexp.MustCompile(`(?i)(?:at|by)\s+([0-9]{1,2}:[0-9]{2})`)
-	return reTime.MatchString(question)
-}
-
-// FetchActiveBTC5mMarket queries Gamma API and returns the closest active 5m BTC market.
-func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
-	url := "https://gamma-api.polymarket.com/markets?limit=100&active=true"
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected Gamma API status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("gamma event lookup %s returned status %d", eventSlug, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	var event gammaEvent
+	if err := json.NewDecoder(resp.Body).Decode(&event); err != nil {
+		return nil, fmt.Errorf("decode gamma event %s: %w", eventSlug, err)
+	}
+	if event.Closed || !event.Active {
+		return nil, fmt.Errorf("event %s is not active", eventSlug)
+	}
+	if len(event.Markets) == 0 {
+		return nil, fmt.Errorf("event %s has no markets", eventSlug)
 	}
 
-	var rawMarkets []struct {
-		ID           string          `json:"id"`
-		Question     string          `json:"question"`
-		Slug         string          `json:"slug"`
-		EndDate      string          `json:"endDate"`
-		EndDateIso   string          `json:"endDateIso"`
-		ClobTokenIds string          `json:"clobTokenIds"`
-		Closed       bool            `json:"closed"`
-		Active       bool            `json:"active"`
-		Outcomes     json.RawMessage `json:"outcomes"`
+	var gm *gammaMarket
+	for i := range event.Markets {
+		if event.Markets[i].Active && !event.Markets[i].Closed {
+			gm = &event.Markets[i]
+			break
+		}
+	}
+	if gm == nil {
+		return nil, fmt.Errorf("event %s has no active market", eventSlug)
 	}
 
-	if err := json.Unmarshal(body, &rawMarkets); err != nil {
-		return nil, err
-	}
-
-	var candidateMarkets []Market
-	now := time.Now().UTC()
-
-	for _, m := range rawMarkets {
-		lowerQ := strings.ToLower(m.Question)
-		if m.Closed || !m.Active {
-			continue
-		}
-		if !strings.Contains(lowerQ, "btc") && !strings.Contains(lowerQ, "bitcoin") {
-			continue
-		}
-
-		if !c.Is5MinMarket(m.Question) {
-			continue
-		}
-
-		price, ok := c.ParsePriceToBeat(m.Question)
-		if !ok {
-			continue
-		}
-
-		var endTime time.Time
-		var parseErr error
-		if m.EndDate != "" {
-			endTime, parseErr = time.Parse(time.RFC3339, m.EndDate)
-			if parseErr != nil {
-				endTime, parseErr = time.Parse("2006-01-02T15:04:05Z", m.EndDate)
-			}
-		}
-
-		if parseErr != nil || endTime.Before(now) {
-			continue
-		}
-
-		remaining := endTime.Sub(now)
-		if remaining < 5*time.Second {
-			continue
-		}
-
-		// Defensively parse Outcomes
-		var outcomes []string
-		if len(m.Outcomes) > 0 {
-			if err := json.Unmarshal(m.Outcomes, &outcomes); err != nil {
-				var str string
-				if err := json.Unmarshal(m.Outcomes, &str); err == nil {
-					_ = json.Unmarshal([]byte(str), &outcomes)
-				}
-			}
-		}
-
-		var clobTokens []Token
-		if m.ClobTokenIds != "" {
-			var ids []string
-			if err := json.Unmarshal([]byte(m.ClobTokenIds), &ids); err == nil {
-				for i, id := range ids {
-					outcome := ""
-					if i < len(outcomes) {
-						outcome = outcomes[i]
-					}
-					clobTokens = append(clobTokens, Token{
-						Outcome: outcome,
-						TokenID: id,
-					})
-				}
-			}
-		}
-
-		candidateMarkets = append(candidateMarkets, Market{
-			ID:           m.ID,
-			Question:     m.Question,
-			Slug:         m.Slug,
-			EndDate:      m.EndDate,
-			EndDateIso:   m.EndDateIso,
-			ClobTokenIds: m.ClobTokenIds,
-			Tokens:       clobTokens,
-			Active:       m.Active,
-			Closed:       m.Closed,
-			PriceToBeat:   price,
-			EndTime:      endTime,
-			Outcomes:     outcomes,
-		})
-	}
-
-	if len(candidateMarkets) == 0 {
-		return nil, fmt.Errorf("no active 5m BTC markets found")
-	}
-
-	bestIdx := 0
-	minRemaining := candidateMarkets[0].EndTime.Sub(now)
-	for i := 1; i < len(candidateMarkets); i++ {
-		rem := candidateMarkets[i].EndTime.Sub(now)
-		if rem < minRemaining {
-			minRemaining = rem
-			bestIdx = i
+	startTime := windowStart
+	if parsed, err := parseRFC3339(gm.EventStartTime); err == nil {
+		// Use Gamma's eventStartTime only when it agrees with the canonical 5-minute window.
+		if absDuration(parsed.Sub(windowStart)) <= 30*time.Second {
+			startTime = parsed
 		}
 	}
 
-	util.Logger.Debug("Selected active BTC 5m market",
-		zap.String("question", candidateMarkets[bestIdx].Question),
-		zap.Float64("priceToBeat", candidateMarkets[bestIdx].PriceToBeat),
-		zap.Time("endTime", candidateMarkets[bestIdx].EndTime),
-	)
+	endTime := windowStart.Add(btc5mWindow)
+	if parsed, err := parseRFC3339(gm.EndDate); err == nil {
+		if absDuration(parsed.Sub(endTime)) <= time.Minute {
+			endTime = parsed
+		}
+	}
 
-	return &candidateMarkets[bestIdx], nil
+	if !now.UTC().Before(endTime) {
+		return nil, fmt.Errorf("event %s has already ended", eventSlug)
+	}
+
+	outcomes := parseJSONStringSlice(gm.Outcomes)
+	ids := parseJSONStringSlice(gm.ClobTokenIds)
+	prices := parseJSONFloatSlice(gm.OutcomePrices)
+	tokens := make([]Token, 0, len(ids))
+	for i, id := range ids {
+		t := Token{TokenID: id}
+		if i < len(outcomes) {
+			t.Outcome = outcomes[i]
+		}
+		if i < len(prices) {
+			t.Price = prices[i]
+		}
+		tokens = append(tokens, t)
+	}
+
+	question := gm.Question
+	if question == "" {
+		question = event.Title
+	}
+
+	return &Market{
+		ID:            gm.ID,
+		Question:      question,
+		Slug:          gm.Slug,
+		EventSlug:     eventSlug,
+		EndDate:       gm.EndDate,
+		EndDateIso:    gm.EndDateIso,
+		ClobTokenIds:  gm.ClobTokenIds,
+		Tokens:        tokens,
+		Active:        gm.Active,
+		Closed:        gm.Closed,
+		StartTime:     startTime.UTC(),
+		EndTime:       endTime.UTC(),
+		Outcomes:      outcomes,
+		ResolutionURL: event.ResolutionSource,
+	}, nil
+}
+
+func parseJSONStringSlice(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err == nil {
+		return out
+	}
+	return nil
+}
+
+func parseJSONFloatSlice(raw string) []float64 {
+	vals := parseJSONStringSlice(raw)
+	out := make([]float64, 0, len(vals))
+	for _, v := range vals {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func parseRFC3339(s string) (time.Time, error) {
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
