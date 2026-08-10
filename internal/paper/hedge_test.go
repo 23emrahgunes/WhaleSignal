@@ -34,22 +34,22 @@ func newHedgeTestEngine(t *testing.T) (*storage.Database, *Engine, *polymarket.M
 		},
 	}
 	pe := NewEngine(db, Config{
-		Enabled:              true,
-		InitialBalance:       1000,
-		Stake:                2.5,
-		MinConfidence:        55,
-		MinSecondsToEnd:      30,
-		MaxSecondsToEnd:      240,
-		HedgeEnabled:         true,
-		HedgeWindow:          8,
-		HedgeMinVotes:        6,
-		HedgeMinConsecutive:  3,
-		HedgeScoreThreshold:  0.35,
-		HedgeMinProbability:  0.65,
-		HedgeMinEdge:         0.03,
-		HedgeMinAbsPTBZ:      0.50,
-		HedgeMinSecondsToEnd: 20,
-		HedgeMaxSecondsToEnd: 120,
+		Enabled:                  true,
+		InitialBalance:           1000,
+		Stake:                    2.5,
+		MinConfidence:            55,
+		MinSecondsToEnd:          30,
+		MaxSecondsToEnd:          240,
+		HedgeEnabled:             true,
+		HedgeWindow:              8,
+		HedgeMinVotes:            6,
+		HedgeMinConsecutive:      3,
+		HedgeScoreThreshold:      0.35,
+		HedgeMinProbability:      0.65,
+		HedgeMinEdge:             0.03,
+		HedgeMinAbsPTBZ:          0.50,
+		HedgeMinSecondsToEnd:     20,
+		HedgeMaxSecondsToEnd:     120,
 	})
 	return db, pe, market, now
 }
@@ -67,9 +67,13 @@ func openUpTrade(t *testing.T, pe *Engine, market *polymarket.Market, now time.T
 		Confidence:       60,
 		DataSource:       "CHAINLINK_RTDS+BINANCE_WS+BINANCE_WS_DEPTH20",
 	}
-	trade, opened, err := pe.MaybeOpen(res, market, now)
+	_, opened, err := pe.MaybeOpen(res, market, now)
 	if err != nil || !opened {
 		t.Fatalf("open original trade opened=%v err=%v", opened, err)
+	}
+	trade, err := pe.db.GetOpenPaperTradeByMarket(market.EventSlug)
+	if err != nil || trade == nil {
+		t.Fatalf("persisted original trade missing: %+v err=%v", trade, err)
 	}
 	return trade
 }
@@ -195,7 +199,7 @@ func TestHedgeSettlementPreservesOriginalABPnL(t *testing.T) {
 	db, pe, market, now := newHedgeTestEngine(t)
 	defer db.Close()
 	trade := openUpTrade(t, pe, market, now)
-	heddgeOpened := false
+	hedgeOpened := false
 	for i := 0; i < 8; i++ {
 		res := reverseDownResult(market, 80-float64(i), -0.70)
 		if i < 2 {
@@ -209,13 +213,13 @@ func TestHedgeSettlementPreservesOriginalABPnL(t *testing.T) {
 			t.Fatal(err)
 		}
 		if opened {
-			heddgeOpened = true
+			heedgeOpened = true
 			if i != 7 || h == nil {
 				t.Fatalf("hedge opened at wrong point i=%d h=%+v", i, h)
 			}
 		}
 	}
-	if !heddgeOpened {
+	if !hedgeOpened {
 		t.Fatal("persistent reverse regime did not create hedge before settlement")
 	}
 	settled, err := pe.SettleReady(market.EndTime.Add(time.Second), func(boundary time.Time) (float64, bool) {
