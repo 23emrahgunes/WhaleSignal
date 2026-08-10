@@ -11,8 +11,8 @@ import (
 const maxBasisSamples = 120
 
 type basisTracker struct {
-	mu      sync.Mutex
-	values  []float64 // log(Chainlink / Binance), sampled ~1 Hz
+	mu     sync.Mutex
+	values []float64 // log(Chainlink / Binance), sampled ~1 Hz
 }
 
 func (b *basisTracker) Observe(chainlinkPrice, binancePrice float64) (basisBps, basisVolPerSqrtS float64) {
@@ -71,7 +71,7 @@ func estimateMacroVolFloor(candles []binance.Candle) float64 {
 	parkinsonPerSqrtS := 0.0
 	if parkinsonN > 0 {
 		minuteVariance := parkinsonSum / (4.0 * math.Ln2 * float64(parkinsonN))
-		parkinsonPerSqrtS = math.Sqrt(math.Max(0, minuteVariance)/60.0)
+		parkinsonPerSqrtS = math.Sqrt(math.Max(0, minuteVariance) / 60.0)
 	}
 
 	// A floor should be conservative but not dominate genuinely calm periods.

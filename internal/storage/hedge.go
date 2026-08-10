@@ -7,45 +7,45 @@ import (
 )
 
 type PaperHedge struct {
-	ID                 int64   `json:"id"`
-	PaperTradeID       int64   `json:"paperTradeId"`
-	MarketSlug         string  `json:"marketSlug"`
-	OriginalSide       string  `json:"originalSide"`
-	Side               string  `json:"side"`
-	HedgeTime          string  `json:"hedgeTime"`
-	EntryPrice         float64 `json:"entryPrice"`
-	Shares             float64 `json:"shares"`
-	Notional           float64 `json:"notional"`
-	Fee                float64 `json:"fee"`
-	TotalCost          float64 `json:"totalCost"`
-	ReverseProbability float64 `json:"reverseProbability"`
-	Edge               float64 `json:"edge"`
-	Persistence        float64 `json:"persistence"`
-	SmoothedScore      float64 `json:"smoothedScore"`
-	PTBZ               float64 `json:"ptbZ"`
-	LockedPnL          float64 `json:"lockedPnl"`
-	ExpectedHoldPnL    float64 `json:"expectedHoldPnl"`
+	ID                  int64   `json:"id"`
+	PaperTradeID        int64   `json:"paperTradeId"`
+	MarketSlug          string  `json:"marketSlug"`
+	OriginalSide        string  `json:"originalSide"`
+	Side                string  `json:"side"`
+	HedgeTime           string  `json:"hedgeTime"`
+	EntryPrice          float64 `json:"entryPrice"`
+	Shares              float64 `json:"shares"`
+	Notional            float64 `json:"notional"`
+	Fee                 float64 `json:"fee"`
+	TotalCost           float64 `json:"totalCost"`
+	ReverseProbability  float64 `json:"reverseProbability"`
+	Edge                float64 `json:"edge"`
+	Persistence         float64 `json:"persistence"`
+	SmoothedScore       float64 `json:"smoothedScore"`
+	PTBZ                float64 `json:"ptbZ"`
+	LockedPnL           float64 `json:"lockedPnl"`
+	ExpectedHoldPnL     float64 `json:"expectedHoldPnl"`
 	ExpectedImprovement float64 `json:"expectedImprovement"`
-	Status             string  `json:"status"`
-	SettlementTime     string  `json:"settlementTime"`
-	Outcome            string  `json:"outcome"`
-	Won                bool    `json:"won"`
-	Payout             float64 `json:"payout"`
-	PnL                float64 `json:"pnl"`
-	CombinedPnL        float64 `json:"combinedPnl"`
+	Status              string  `json:"status"`
+	SettlementTime      string  `json:"settlementTime"`
+	Outcome             string  `json:"outcome"`
+	Won                 bool    `json:"won"`
+	Payout              float64 `json:"payout"`
+	PnL                 float64 `json:"pnl"`
+	CombinedPnL         float64 `json:"combinedPnl"`
 }
 
 type PaperHedgeStats struct {
-	TotalHedges            int     `json:"totalHedges"`
-	SettledHedges          int     `json:"settledHedges"`
-	OpenHedges             int     `json:"openHedges"`
-	OriginalPnLOnHedged    float64 `json:"originalPnlOnHedged"`
-	HedgeContribution      float64 `json:"hedgeContribution"`
-	CombinedPnL            float64 `json:"combinedPnl"`
-	SavedLoss              float64 `json:"savedLoss"`
-	Regret                 float64 `json:"regret"`
-	AverageEdge            float64 `json:"averageEdge"`
-	AveragePersistence     float64 `json:"averagePersistence"`
+	TotalHedges         int     `json:"totalHedges"`
+	SettledHedges       int     `json:"settledHedges"`
+	OpenHedges          int     `json:"openHedges"`
+	OriginalPnLOnHedged float64 `json:"originalPnlOnHedged"`
+	HedgeContribution   float64 `json:"hedgeContribution"`
+	CombinedPnL         float64 `json:"combinedPnl"`
+	SavedLoss           float64 `json:"savedLoss"`
+	Regret              float64 `json:"regret"`
+	AverageEdge         float64 `json:"averageEdge"`
+	AveragePersistence  float64 `json:"averagePersistence"`
 }
 
 func (d *Database) EnsurePaperHedgeSchema() error {

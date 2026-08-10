@@ -23,14 +23,14 @@ type Config struct {
 	TakerFeeRate  float64
 	LatencyBuffer float64
 
-	HedgeEnabled        bool
-	HedgeWindow         int
-	HedgeMinVotes       int
-	HedgeMinConsecutive int
-	HedgeScoreThreshold float64
-	HedgeMinProbability float64
-	HedgeMinEdge        float64
-	HedgeMinAbsPTBZ     float64
+	HedgeEnabled         bool
+	HedgeWindow          int
+	HedgeMinVotes        int
+	HedgeMinConsecutive  int
+	HedgeScoreThreshold  float64
+	HedgeMinProbability  float64
+	HedgeMinEdge         float64
+	HedgeMinAbsPTBZ      float64
 	HedgeMinSecondsToEnd float64
 	HedgeMaxSecondsToEnd float64
 }

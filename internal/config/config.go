@@ -22,14 +22,14 @@ type Config struct {
 	PaperTakerFeeRate    float64
 	PaperLatencyBuffer   float64
 
-	PaperHedgeEnabled        bool
-	PaperHedgeWindow         int
-	PaperHedgeMinVotes       int
-	PaperHedgeMinConsecutive int
-	PaperHedgeScoreThreshold float64
-	PaperHedgeMinProbability float64
-	PaperHedgeMinEdge        float64
-	PaperHedgeMinAbsPTBZ     float64
+	PaperHedgeEnabled         bool
+	PaperHedgeWindow          int
+	PaperHedgeMinVotes        int
+	PaperHedgeMinConsecutive  int
+	PaperHedgeScoreThreshold  float64
+	PaperHedgeMinProbability  float64
+	PaperHedgeMinEdge         float64
+	PaperHedgeMinAbsPTBZ      float64
 	PaperHedgeMinSecondsToEnd float64
 	PaperHedgeMaxSecondsToEnd float64
 }
@@ -43,26 +43,26 @@ func LoadConfig() (*Config, error) {
 		pollSec = 1
 	}
 	return &Config{
-		Port:                     port,
-		DBPath:                   dbPath,
-		PolymarketPollSec:        pollSec,
-		LogLevel:                 envString("LOG_LEVEL", "info"),
-		PaperEnabled:             envBool("PAPER_ENABLED", true),
-		PaperInitialBalance:      envFloat("PAPER_INITIAL_BALANCE", 1000),
-		PaperStake:               envFloat("PAPER_STAKE", 2.50),
-		PaperMinConfidence:       envFloat("PAPER_MIN_CONFIDENCE", 55),
-		PaperMinSecondsToEnd:     envFloat("PAPER_MIN_SECONDS_TO_END", 30),
-		PaperMaxSecondsToEnd:     envFloat("PAPER_MAX_SECONDS_TO_END", 240),
-		PaperTakerFeeRate:        envFloat("PAPER_TAKER_FEE_RATE", 0.07),
-		PaperLatencyBuffer:       envFloat("PAPER_LATENCY_BUFFER", 0.002),
-		PaperHedgeEnabled:        envBool("PAPER_HEDGE_ENABLED", true),
-		PaperHedgeWindow:         envInt("PAPER_HEDGE_WINDOW", 8),
-		PaperHedgeMinVotes:       envInt("PAPER_HEDGE_MIN_VOTES", 6),
-		PaperHedgeMinConsecutive: envInt("PAPER_HEDGE_MIN_CONSECUTIVE", 3),
-		PaperHedgeScoreThreshold: envFloat("PAPER_HEDGE_SCORE_THRESHOLD", 0.35),
-		PaperHedgeMinProbability: envFloat("PAPER_HEDGE_MIN_PROBABILITY", 0.65),
-		PaperHedgeMinEdge:        envFloat("PAPER_HEDGE_MIN_EDGE", 0.03),
-		PaperHedgeMinAbsPTBZ:     envFloat("PAPER_HEDGE_MIN_ABS_PTB_Z", 0.50),
+		Port:                      port,
+		DBPath:                    dbPath,
+		PolymarketPollSec:         pollSec,
+		LogLevel:                  envString("LOG_LEVEL", "info"),
+		PaperEnabled:              envBool("PAPER_ENABLED", true),
+		PaperInitialBalance:       envFloat("PAPER_INITIAL_BALANCE", 1000),
+		PaperStake:                envFloat("PAPER_STAKE", 2.50),
+		PaperMinConfidence:        envFloat("PAPER_MIN_CONFIDENCE", 55),
+		PaperMinSecondsToEnd:      envFloat("PAPER_MIN_SECONDS_TO_END", 30),
+		PaperMaxSecondsToEnd:      envFloat("PAPER_MAX_SECONDS_TO_END", 240),
+		PaperTakerFeeRate:         envFloat("PAPER_TAKER_FEE_RATE", 0.07),
+		PaperLatencyBuffer:        envFloat("PAPER_LATENCY_BUFFER", 0.002),
+		PaperHedgeEnabled:         envBool("PAPER_HEDGE_ENABLED", true),
+		PaperHedgeWindow:          envInt("PAPER_HEDGE_WINDOW", 8),
+		PaperHedgeMinVotes:        envInt("PAPER_HEDGE_MIN_VOTES", 6),
+		PaperHedgeMinConsecutive:  envInt("PAPER_HEDGE_MIN_CONSECUTIVE", 3),
+		PaperHedgeScoreThreshold:  envFloat("PAPER_HEDGE_SCORE_THRESHOLD", 0.35),
+		PaperHedgeMinProbability:  envFloat("PAPER_HEDGE_MIN_PROBABILITY", 0.65),
+		PaperHedgeMinEdge:         envFloat("PAPER_HEDGE_MIN_EDGE", 0.03),
+		PaperHedgeMinAbsPTBZ:      envFloat("PAPER_HEDGE_MIN_ABS_PTB_Z", 0.50),
 		PaperHedgeMinSecondsToEnd: envFloat("PAPER_HEDGE_MIN_SECONDS_TO_END", 20),
 		PaperHedgeMaxSecondsToEnd: envFloat("PAPER_HEDGE_MAX_SECONDS_TO_END", 120),
 	}, nil
