@@ -1,0 +1,44 @@
+name: One-shot UI calibration metrics
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - name: Patch dashboard and self-remove
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('web/static/index.html')
+          s = p.read_text()
+          s = s.replace('Calibrated Terminal Forecast', 'Conservative Terminal Forecast')
+          old = '''    <div class="grid5">\n      <div class="mini paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>\n      <div class="mini paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>\n      <div class="mini paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>\n      <div class="mini paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>\n      <div class="mini paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>\n    </div>'''
+          new = '''    <div class="grid5">\n      <div class="mini paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>\n      <div class="mini paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>\n      <div class="mini paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>\n      <div class="mini paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>\n      <div class="mini paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>\n    </div>\n    <div class="grid4" style="margin-top:12px">\n      <div class="mini"><span>Avg Predicted Win P</span><strong id="paperPredicted">—</strong></div>\n      <div class="mini"><span>Actual Win P</span><strong id="paperActual">—</strong></div>\n      <div class="mini"><span>Calibration Gap</span><strong id="paperCalGap">—</strong></div>\n      <div class="mini"><span>Brier Score / N</span><strong id="paperBrier">—</strong></div>\n    </div>'''
+          if old not in s:
+              raise SystemExit('paper grid anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''document.getElementById('paperOpenStake').textContent=usd(s.openStake);const body=document.getElementById('paperTradeBody');'''
+          new = '''document.getElementById('paperOpenStake').textContent=usd(s.openStake);document.getElementById('paperPredicted').textContent=pct(s.averageEntryProbability||0,1);document.getElementById('paperActual').textContent=pct(s.actualWinProbability||0,1);const gap=document.getElementById('paperCalGap');gap.textContent=pct(s.calibrationGap||0,1);gap.className=Math.abs(Number(s.calibrationGap||0))<=0.05?'positive':'negative';document.getElementById('paperBrier').textContent=`${Number(s.brierScore||0).toFixed(3)} / ${s.calibrationN||0}`;const body=document.getElementById('paperTradeBody');'''
+          if old not in s:
+              raise SystemExit('updatePaper anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          rm -f .github/workflows/oneshot-ui-calibration.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ui: show paper calibration and Brier diagnostics"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
