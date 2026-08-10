@@ -11,6 +11,13 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.db
 data/*.db-*
+logs/*.log
+logs/*.pid
+pm-edge
+pm-edge-linux-amd64
+pm-edge.pid
+pm-edge.service.local
+pm-edge.logrotate.local
 !reports/.gitkeep
 !data/history/.gitkeep
 !reports/watchlists/
