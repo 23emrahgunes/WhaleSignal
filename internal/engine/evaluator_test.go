@@ -8,36 +8,61 @@ import (
 	"pm-edge/internal/polymarket"
 )
 
-func TestEvaluator(t *testing.T) {
+func TestEvaluatorWithVerifiedInputs(t *testing.T) {
 	ev := NewEvaluator()
 	bc := binance.NewClient()
+	now := time.Now().UTC()
 
-	bids := [][]string{
-		{"99000", "2.0"},
-	}
-	asks := [][]string{
-		{"101000", "4.0"},
-	}
-	bc.UpdateDepth(bids, asks, time.Now().UTC())
-
-	bc.UpdateFromTrade(100000.0, 1.0, time.Now().UTC(), true)
-	bc.UpdateFromTrade(100100.0, 1.5, time.Now().UTC(), true)
+	bids := [][]string{{"99990", "2.0"}}
+	asks := [][]string{{"100010", "4.0"}}
+	bc.UpdateDepth(bids, asks, now)
+	bc.UpdateFromTrade(100000, 1, now, true)
 
 	market := &polymarket.Market{
-		PriceToBeat: 100200.0,
-		EndTime:     time.Now().UTC().Add(5 * time.Minute),
+		Question:    "BTC Up or Down - 5 Minutes",
+		EventSlug:   "btc-updown-5m-test",
+		PriceToBeat: 99950,
+		StartTime:   now.Add(-time.Minute),
+		EndTime:     now.Add(4 * time.Minute),
+		Active:      true,
+		Closed:      false,
 	}
 
-	res := ev.Evaluate(bc, market, time.Now().UTC().Format(time.RFC3339), 1.0)
+	res := ev.Evaluate(bc, market, 100000, true, now.Format(time.RFC3339))
 	if res == nil {
-		t.Fatal("Expected evaluation result, got nil")
+		t.Fatal("expected evaluation result, got nil")
+	}
+	if res.CurrentPrice != 100000 {
+		t.Errorf("expected Chainlink current price 100000, got %f", res.CurrentPrice)
+	}
+	if res.PriceToBeat != 99950 {
+		t.Errorf("expected Chainlink price-to-beat 99950, got %f", res.PriceToBeat)
+	}
+	if res.DataSource != "CHAINLINK_RTDS+BINANCE_WS" {
+		t.Errorf("unexpected data source: %s", res.DataSource)
+	}
+}
+
+func TestEvaluatorRejectsMissingOrStaleReference(t *testing.T) {
+	ev := NewEvaluator()
+	bc := binance.NewClient()
+	now := time.Now().UTC()
+	bc.UpdateFromTrade(100000, 1, now, true)
+	market := &polymarket.Market{
+		PriceToBeat: 99950,
+		StartTime:   now.Add(-time.Minute),
+		EndTime:     now.Add(4 * time.Minute),
+		Active:      true,
 	}
 
-	if res.CurrentPrice != 100100.0 {
-		t.Errorf("Expected current price 100100.0, got %f", res.CurrentPrice)
+	if got := ev.Evaluate(bc, nil, 100000, true, now.Format(time.RFC3339)); got != nil {
+		t.Fatal("nil market must produce NO_SIGNAL")
 	}
-
-	if res.PriceToBeat != 100200.0 {
-		t.Errorf("Expected price to beat 100200.0, got %f", res.PriceToBeat)
+	if got := ev.Evaluate(bc, market, 100000, false, now.Format(time.RFC3339)); got != nil {
+		t.Fatal("stale Chainlink reference must produce NO_SIGNAL")
+	}
+	market.PriceToBeat = 0
+	if got := ev.Evaluate(bc, market, 100000, true, now.Format(time.RFC3339)); got != nil {
+		t.Fatal("missing price-to-beat must produce NO_SIGNAL")
 	}
 }
