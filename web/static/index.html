@@ -6,12 +6,12 @@
 <title>PM-Edge Research Dashboard</title>
 <style>
 :root{--bg:#090e17;--panel:#111a2a;--panel2:#0d1523;--line:#22304a;--text:#f5f7fb;--muted:#8fa3c4;--blue:#4b9cff;--green:#13c88a;--red:#ef4d4d;--amber:#f2a93b}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1500px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.papergrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.paperstat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.paperstat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.paperstat strong{display:block;font-size:21px;margin-top:7px}.forecastgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.forecaststat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.forecaststat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.forecaststat strong{display:block;font-size:17px;margin-top:7px}.depthgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}.depthstat{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px}.depthstat span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.depthstat b{display:block;margin-top:5px;font-size:13px}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.positive{color:var(--green)}.negative{color:var(--red)}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1000px){.topgrid,.two{grid-template-columns:1fr}.papergrid,.forecastgrid,.depthgrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.papergrid,.forecastgrid,.depthgrid{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1550px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label,.mini span{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.grid5{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.mini{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:13px}.mini strong{display:block;font-size:17px}.paperstat strong{font-size:21px}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.positive{color:var(--green)}.negative{color:var(--red)}.muted{color:var(--muted)}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1050px){.topgrid,.two{grid-template-columns:1fr}.grid5,.grid4,.grid3{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.grid5,.grid4,.grid3{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
 </style>
 </head>
 <body>
-<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Robust Terminal Forecast · Binance Depth20 Microstructure · Paper Portfolio</div></header>
-<div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. Sinyaller ve paper pozisyonlar yalnızca araştırma/kalibrasyon içindir.</div>
+<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Calibrated Terminal Forecast · Binance Depth20 · CLOB Paper Execution · Shadow Hedge A/B</div></header>
+<div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. CLOB okumaları yalnızca gerçekçi paper fill/hedge simülasyonu içindir.</div>
 <div class="wrap">
   <div class="topgrid">
     <div class="card">
@@ -27,67 +27,70 @@
     </div>
     <div class="card">
       <h2>Order Flow Statistics</h2>
-      <div class="stat"><label>Bid / Ask Imbalance</label><div id="imbalance" class="value">Waiting...</div></div><br>
-      <div class="stat"><label>Rank-Weighted Imbalance</label><div id="weightedImbalance" class="value">Waiting...</div></div><br>
-      <div class="stat"><label>Total Bid / Ask Volumes (Depth20)</label><div id="volumes" class="smallvalue">Waiting...</div></div>
-      <div class="depthgrid">
-        <div class="depthstat"><span>Total Depth20 USD</span><b id="totalNotional">—</b></div>
-        <div class="depthstat"><span>Bid / Ask USD</span><b id="sideNotional">—</b></div>
-        <div class="depthstat"><span>Spread</span><b id="spread">—</b></div>
-        <div class="depthstat"><span>Bid 20 Range</span><b id="bidRange">—</b></div>
-        <div class="depthstat"><span>Ask 20 Range</span><b id="askRange">—</b></div>
-        <div class="depthstat"><span>Best Bid / Ask</span><b id="bestBook">—</b></div>
-        <div class="depthstat"><span>Worst Bid20</span><b id="worstBid">—</b></div>
-        <div class="depthstat"><span>Worst Ask20</span><b id="worstAsk">—</b></div>
-        <div class="depthstat"><span>Order-Flow Score</span><b id="orderFlowScore">—</b></div>
+      <div class="stats">
+        <div class="stat"><label>Bid / Ask Imbalance</label><div id="imbalance" class="value">—</div></div>
+        <div class="stat"><label>Rank-Weighted Imbalance</label><div id="weightedImbalance" class="value">—</div></div>
       </div>
-      <div class="source">
-        <div><span class="small">Depth Source</span><b id="depthSource">—</b></div>
-        <div><span class="small">Depth Freshness</span><b id="depthFresh"><span class="chip neutral">WAIT</span></b></div>
+      <div class="stat" style="margin-top:16px"><label>Total Bid / Ask Volumes (Depth20)</label><div id="volumes" class="smallvalue">—</div></div>
+      <div class="grid3" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+        <div class="mini"><span>Total Depth20 USD</span><strong id="totalNotional">—</strong></div>
+        <div class="mini"><span>Bid / Ask USD</span><strong id="sideNotional">—</strong></div>
+        <div class="mini"><span>Spread</span><strong id="spread">—</strong></div>
+        <div class="mini"><span>Bid 20 Range</span><strong id="bidRange">—</strong></div>
+        <div class="mini"><span>Ask 20 Range</span><strong id="askRange">—</strong></div>
+        <div class="mini"><span>Order-Flow Score</span><strong id="orderFlowScore">—</strong></div>
       </div>
+      <div class="source"><div><span class="small">Depth Source</span><b id="depthSource">—</b></div><div><span class="small">Depth Freshness</span><b id="depthFresh"><span class="chip neutral">WAIT</span></b></div></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>PTB Terminal Forecast</h2>
-    <div class="forecastgrid">
-      <div class="forecaststat"><span>Forecast @ Expiry</span><strong id="forecastPrice">—</strong></div>
-      <div class="forecaststat"><span>68% Forecast Band</span><strong id="forecast68">—</strong></div>
-      <div class="forecaststat"><span>95% Forecast Band</span><strong id="forecast95">—</strong></div>
-      <div class="forecaststat"><span>PTB Z / Model Confidence</span><strong id="forecastZ">—</strong></div>
-      <div class="forecaststat"><span>Required Move</span><strong id="requiredMove">—</strong></div>
-      <div class="forecaststat"><span>Expected Move</span><strong id="expectedMove">—</strong></div>
-      <div class="forecaststat"><span>Forecast Samples</span><strong id="forecastSamples">—</strong></div>
-      <div class="forecaststat"><span>Forecast Mean</span><strong id="forecastMean">—</strong></div>
+    <h2>PTB Terminal Forecast — Uncertainty Diagnostics</h2>
+    <div class="grid4">
+      <div class="mini"><span>Forecast @ Expiry</span><strong id="forecastPrice">—</strong></div>
+      <div class="mini"><span>68% Forecast Band</span><strong id="forecast68">—</strong></div>
+      <div class="mini"><span>95% Forecast Band</span><strong id="forecast95">—</strong></div>
+      <div class="mini"><span>PTB Z / Model Confidence</span><strong id="forecastZ">—</strong></div>
+      <div class="mini"><span>Required / Expected Move</span><strong id="moves">—</strong></div>
+      <div class="mini"><span>1σ @ Expiry</span><strong id="sigmaExpiry">—</strong></div>
+      <div class="mini"><span>Binance / Chainlink Basis</span><strong id="basis">—</strong></div>
+      <div class="mini"><span>Forecast Samples</span><strong id="forecastSamples">—</strong></div>
+      <div class="mini"><span>Micro Vol Annual</span><strong id="microVol">—</strong></div>
+      <div class="mini"><span>Macro Vol Floor Annual</span><strong id="floorVol">—</strong></div>
+      <div class="mini"><span>Basis Vol Annual</span><strong id="basisVol">—</strong></div>
+      <div class="mini"><span>Binance Price</span><strong id="binancePrice">—</strong></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Paper Portfolio</h2>
-    <div class="papergrid">
-      <div class="paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>
-      <div class="paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>
-      <div class="paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>
-      <div class="paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>
-      <div class="paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>
+    <h2>Paper Portfolio — Original Strategy A</h2>
+    <div class="grid5">
+      <div class="mini paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>
+      <div class="mini paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>
+      <div class="mini paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>
+      <div class="mini paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>
+      <div class="mini paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Shadow Hedge Portfolio B — Persistent Reverse Regime</h2>
+    <div class="grid5">
+      <div class="mini paperstat"><span>Hedges / Open</span><strong id="hedgeCount">0 / 0</strong></div>
+      <div class="mini paperstat"><span>Original PnL on Hedged</span><strong id="hedgeOriginalPnl">$0.00</strong></div>
+      <div class="mini paperstat"><span>Hedge Contribution</span><strong id="hedgeContribution">$0.00</strong></div>
+      <div class="mini paperstat"><span>Combined PnL</span><strong id="hedgeCombined">$0.00</strong></div>
+      <div class="mini paperstat"><span>Avg Edge / Persistence</span><strong id="hedgeQuality">—</strong></div>
+    </div>
+    <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Time</th><th>Market</th><th>A</th><th>Hedge</th><th>Px</th><th>Shares</th><th>P(reverse)</th><th>Edge</th><th>Persist.</th><th>EWMA</th><th>PTB Z</th><th>Locked PnL</th><th>Status</th><th>Combined</th></tr></thead><tbody id="hedgeBody"><tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr></tbody></table></div>
   </div>
 
   <div class="two">
     <div>
-      <div class="card">
-        <h2>Paper Trades</h2>
-        <div class="scroll"><table><thead><tr><th>Entry</th><th>Market</th><th>Side</th><th>Entry Px</th><th>Stake</th><th>Conf.</th><th>Status</th><th>Outcome</th><th>PnL</th></tr></thead><tbody id="paperTradeBody"><tr><td colspan="9">Henüz paper trade yok.</td></tr></tbody></table></div>
-      </div>
-      <div class="card">
-        <h2>Recent Signals (Last 20)</h2>
-        <div class="scroll"><table><thead><tr><th>Time</th><th>Current</th><th>Target</th><th>P_up</th><th>P_down</th><th>Imbalance</th><th>Bias</th><th>Confidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="8">Waiting for verified signal stream...</td></tr></tbody></table></div>
-      </div>
+      <div class="card"><h2>Paper Trades</h2><div class="scroll"><table><thead><tr><th>Entry</th><th>Market</th><th>Side</th><th>Entry Px</th><th>Cost</th><th>Conf.</th><th>Status</th><th>Outcome</th><th>PnL</th></tr></thead><tbody id="paperTradeBody"><tr><td colspan="9">Henüz paper trade yok.</td></tr></tbody></table></div></div>
+      <div class="card"><h2>Recent Signals (Last 20)</h2><div class="scroll"><table><thead><tr><th>Time</th><th>Current</th><th>Target</th><th>P_up</th><th>P_down</th><th>PTB Z</th><th>OrderFlow</th><th>Bias</th><th>Confidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="9">Waiting for verified signal stream...</td></tr></tbody></table></div></div>
     </div>
-    <div class="card">
-      <h2>Technical Indicator Scores</h2>
-      <div id="indicatorBody"><div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div></div>
-    </div>
+    <div class="card"><h2>Technical Indicator Scores</h2><div id="indicatorBody"><div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div></div></div>
   </div>
 </div>
 <div id="connection"><span class="chip neutral">CONNECTING</span></div>
@@ -98,15 +101,19 @@ const pct=(n,d=1)=>`${(Number(n||0)*100).toFixed(d)}%`;
 const pctDirect=(n,d=1)=>`${Number(n||0).toFixed(d)}%`;
 const bps=(n,d=2)=>`${Number(n||0).toFixed(d)} bps`;
 const chip=(txt,cls)=>`<span class="chip ${cls}">${txt}</span>`;
+const signClass=n=>Number(n)>=0?'positive':'negative';
 function decisionChip(d){return d==='UP'?chip('UP','up'):d==='DOWN'?chip('DOWN','down'):chip(d||'NEUTRAL','neutral')}
 function timeOnly(v){try{return new Date(v).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return v||'—'}}
 function setConnection(ok){document.getElementById('connection').innerHTML=ok?chip('LIVE','fresh'):chip('API ERROR','down')}
-
 async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${url}: ${r.status}`);return r.json()}
-
+function clearLiveWaiting(){
+  ['currentPrice','priceToBeat','timeRemaining','confidence','probabilities','forecastPrice','forecast68','forecast95','forecastZ','moves','sigmaExpiry','basis','forecastSamples','microVol','floorVol','basisVol','binancePrice','imbalance','weightedImbalance','volumes','totalNotional','sideNotional','spread','bidRange','askRange','orderFlowScore'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
+  document.getElementById('decision').innerHTML=chip('WAITING','warn');
+  document.getElementById('depthFresh').innerHTML=chip('WAIT','neutral');
+}
 async function updateLive(){
   const data=await getJSON('/api/live');
-  if(data.status){document.getElementById('decision').innerHTML=chip('WAITING','warn');return}
+  if(data.status){clearLiveWaiting();return}
   document.getElementById('currentPrice').textContent=usd(data.currentPrice);
   document.getElementById('priceToBeat').textContent=usd(data.priceToBeat);
   const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)}m ${s%60}s`;
@@ -114,13 +121,17 @@ async function updateLive(){
   document.getElementById('confidence').textContent=pctDirect(data.confidence,2);
   document.getElementById('probabilities').textContent=`${pct(data.pUp)} / ${pct(data.pDown)}`;
   document.getElementById('forecastPrice').textContent=usd(data.forecastPrice);
-  document.getElementById('forecastMean').textContent=usd(data.forecastMeanPrice);
   document.getElementById('forecast68').textContent=`${usd(data.forecastLow68)} – ${usd(data.forecastHigh68)}`;
   document.getElementById('forecast95').textContent=`${usd(data.forecastLow95)} – ${usd(data.forecastHigh95)}`;
   document.getElementById('forecastZ').textContent=`${Number(data.ptbZ||0).toFixed(2)}σ · ${pctDirect(data.forecastConfidence,1)}`;
-  document.getElementById('requiredMove').textContent=bps(data.requiredMoveBps);
-  document.getElementById('expectedMove').textContent=bps(data.expectedMoveBps);
+  document.getElementById('moves').textContent=`${bps(data.requiredMoveBps)} / ${bps(data.expectedMoveBps)}`;
+  document.getElementById('sigmaExpiry').textContent=bps(data.forecastSigmaExpiryBps);
+  document.getElementById('basis').textContent=bps(data.chainlinkBinanceBasisBps);
   document.getElementById('forecastSamples').textContent=String(data.forecastSamples||0);
+  document.getElementById('microVol').textContent=pctDirect(Number(data.microVolatilityAnnual||0)*100,1);
+  document.getElementById('floorVol').textContent=pctDirect(Number(data.volatilityFloorAnnual||0)*100,1);
+  document.getElementById('basisVol').textContent=pctDirect(Number(data.basisVolatilityAnnual||0)*100,1);
+  document.getElementById('binancePrice').textContent=usd(data.binancePrice);
   document.getElementById('imbalance').textContent=pct(data.imbalance,2);
   document.getElementById('weightedImbalance').textContent=pct(data.weightedImbalance,2);
   document.getElementById('volumes').textContent=`Bids: ${Number(data.bidVol||0).toFixed(3)} | Asks: ${Number(data.askVol||0).toFixed(3)}`;
@@ -129,35 +140,22 @@ async function updateLive(){
   document.getElementById('spread').textContent=`${usd(data.spreadUsd)} · ${Number(data.spreadBps||0).toFixed(3)} bps`;
   document.getElementById('bidRange').textContent=`${usd(data.bidRangeUsd)} · ${Number(data.bidRangeBps||0).toFixed(2)} bps`;
   document.getElementById('askRange').textContent=`${usd(data.askRangeUsd)} · ${Number(data.askRangeBps||0).toFixed(2)} bps`;
-  document.getElementById('bestBook').textContent=`${usd(data.bestBid)} / ${usd(data.bestAsk)}`;
-  document.getElementById('worstBid').textContent=usd(data.worstBid20);
-  document.getElementById('worstAsk').textContent=usd(data.worstAsk20);
   document.getElementById('orderFlowScore').textContent=pct(data.orderFlowScore,2);
   document.getElementById('depthSource').textContent=data.depthSource||'UNKNOWN';
   const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`FRESH · ${age>=0?age+' ms':'—'}`,'fresh'):chip('STALE','stale');
-  const box=document.getElementById('indicatorBody');box.innerHTML='';
-  Object.entries(data.indicators||{}).sort().forEach(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';const sign=val>0?`+${val}`:`${val}`;box.insertAdjacentHTML('beforeend',`<div class="indrow"><span>${name}</span>${chip(sign,cls)}</div>`)});
+  const box=document.getElementById('indicatorBody');box.innerHTML='';Object.entries(data.indicators||{}).sort().forEach(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';box.insertAdjacentHTML('beforeend',`<div class="indrow"><span>${name}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`)});
 }
-
 async function updateHistory(){
-  const rows=await getJSON('/api/history?limit=20');const body=document.getElementById('historyBody');
-  if(!rows||!rows.length){body.innerHTML='<tr><td colspan="8">Waiting for verified signal stream...</td></tr>';return}
-  body.innerHTML=rows.map(x=>`<tr><td>${timeOnly(x.timestamp)}</td><td>${usd(x.currentPrice)}</td><td>${usd(x.priceToBeat)}</td><td>${pct(x.pUp)}</td><td>${pct(x.pDown)}</td><td>${pct(x.imbalance)}</td><td>${decisionChip(x.decision)}</td><td>${pctDirect(x.confidence,1)}</td></tr>`).join('');
+  const rows=await getJSON('/api/history?limit=20');const body=document.getElementById('historyBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="9">Waiting for verified signal stream...</td></tr>';return}
+  body.innerHTML=rows.map(x=>`<tr><td>${timeOnly(x.timestamp)}</td><td>${usd(x.currentPrice)}</td><td>${usd(x.priceToBeat)}</td><td>${pct(x.pUp)}</td><td>${pct(x.pDown)}</td><td>${Number(x.ptbZ||0).toFixed(2)}σ</td><td>${pct(x.orderFlowScore)}</td><td>${decisionChip(x.decision)}</td><td>${pctDirect(x.confidence,1)}</td></tr>`).join('');
 }
-
 async function updatePaper(){
-  const [s,trades]=await Promise.all([getJSON('/api/paper/stats'),getJSON('/api/paper/trades?limit=50')]);
-  document.getElementById('paperBalance').textContent=usd(s.cashBalance);
-  const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=Number(s.realizedPnl)>=0?'positive':'negative';
-  document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);
-  document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;
-  document.getElementById('paperOpenStake').textContent=usd(s.openStake);
-  const body=document.getElementById('paperTradeBody');
-  if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}
-  body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');const pnlClass=Number(t.pnl)>=0?'positive':'negative';return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${pnlClass}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
+  const [s,trades]=await Promise.all([getJSON('/api/paper/stats'),getJSON('/api/paper/trades?limit=50')]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
 }
-
-async function tick(){try{await Promise.all([updateLive(),updateHistory(),updatePaper()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}}
+async function updateHedge(){
+  const [s,rows]=await Promise.all([getJSON('/api/paper/hedge/stats'),getJSON('/api/paper/hedges?limit=30')]);document.getElementById('hedgeCount').textContent=`${s.totalHedges||0} / ${s.openHedges||0}`;for(const [id,v] of [['hedgeOriginalPnl',s.originalPnlOnHedged],['hedgeContribution',s.hedgeContribution],['hedgeCombined',s.combinedPnl]]){const el=document.getElementById(id);el.textContent=usd(v);el.className=signClass(v)}document.getElementById('hedgeQuality').textContent=`${pct(s.averageEdge||0,1)} / ${pct(s.averagePersistence||0,0)}`;const body=document.getElementById('hedgeBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr>';return}body.innerHTML=rows.map(h=>`<tr><td>${timeOnly(h.hedgeTime)}</td><td>${h.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(h.originalSide)}</td><td>${decisionChip(h.side)}</td><td>${Number(h.entryPrice).toFixed(3)}</td><td>${Number(h.shares).toFixed(3)}</td><td>${pct(h.reverseProbability)}</td><td>${pct(h.edge)}</td><td>${pct(h.persistence)}</td><td>${Number(h.smoothedScore).toFixed(3)}</td><td>${Number(h.ptbZ).toFixed(2)}σ</td><td class="${signClass(h.lockedPnl)}">${usd(h.lockedPnl)}</td><td>${h.status==='OPEN'?chip('OPEN','open'):chip('SETTLED','neutral')}</td><td class="${signClass(h.combinedPnl)}">${h.status==='OPEN'?'—':usd(h.combinedPnl)}</td></tr>`).join('');
+}
+async function tick(){try{await Promise.all([updateLive(),updateHistory(),updatePaper(),updateHedge()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}}
 setInterval(tick,1000);tick();
 </script>
 </body>
