@@ -16,6 +16,7 @@ import (
 	"pm-edge/internal/chainlink"
 	"pm-edge/internal/config"
 	"pm-edge/internal/engine"
+	"pm-edge/internal/paper"
 	"pm-edge/internal/polymarket"
 	"pm-edge/internal/storage"
 	"pm-edge/internal/util"
@@ -71,7 +72,9 @@ func main() {
 	}
 	util.InitLogger(cfg.LogLevel)
 	defer func() { _ = util.Logger.Sync() }()
-	util.Logger.Info("Initializing PM-Edge TV-Direction Real-Time Research Engine", zap.Bool("mockMode", isMockMode))
+	util.Logger.Info("Initializing PM-Edge TV-Direction Real-Time Research Engine",
+		zap.Bool("mockMode", isMockMode), zap.Bool("paperEnabled", cfg.PaperEnabled),
+		zap.Float64("paperStake", cfg.PaperStake), zap.Float64("paperMinConfidence", cfg.PaperMinConfidence))
 
 	db, err := storage.NewDatabase(cfg.DBPath)
 	if err != nil {
@@ -79,10 +82,18 @@ func main() {
 	}
 	defer db.Close()
 
-	server := api.NewServer(db)
+	server := api.NewServer(db, cfg.PaperInitialBalance)
 	pmClient := polymarket.NewClient()
 	bClient := binance.NewClient()
 	clClient := chainlink.NewClient()
+	paperEngine := paper.NewEngine(db, paper.Config{
+		Enabled:         cfg.PaperEnabled && !isMockMode,
+		InitialBalance:  cfg.PaperInitialBalance,
+		Stake:           cfg.PaperStake,
+		MinConfidence:   cfg.PaperMinConfidence,
+		MinSecondsToEnd: cfg.PaperMinSecondsToEnd,
+		MaxSecondsToEnd: cfg.PaperMaxSecondsToEnd,
+	})
 
 	util.Logger.Info("Warming up Binance candlestick caches...")
 	if err := bClient.WarmupCandles(); err != nil {
@@ -93,7 +104,7 @@ func main() {
 	wsManager.Start()
 	wsManager.StartFallbackRESTPoller()
 	if isMockMode {
-		util.Logger.Info("Mock mode enabled; synthetic Binance feed will not be persisted")
+		util.Logger.Info("Mock mode enabled; synthetic Binance feed will not be persisted or paper-traded")
 		wsManager.StartMockDataInjector()
 	} else {
 		clClient.Start()
@@ -122,7 +133,7 @@ func main() {
 			if ptb <= 0 {
 				return
 			}
-			state.Set(&polymarket.Market{ID: "mock", Question: "MOCK BTC Up or Down - 5 Minutes", Slug: "mock", EventSlug: polymarket.BTC5mEventSlug(start), Active: true, PriceToBeat: ptb, PriceToBeatSource: "MOCK", StartTime: start, EndTime: start.Add(5 * time.Minute), Outcomes: []string{"Up", "Down"}})
+			state.Set(&polymarket.Market{ID: "mock", Question: "MOCK BTC Up or Down - 5 Minutes", Slug: "mock", EventSlug: polymarket.BTC5mEventSlug(start), Active: true, PriceToBeat: ptb, PriceToBeatSource: "MOCK", StartTime: start, EndTime: start.Add(5 * time.Minute), Outcomes: []string{"Up", "Down"}, Tokens: []polymarket.Token{{Outcome: "Up", Price: 0.5}, {Outcome: "Down", Price: 0.5}}})
 			return
 		}
 
@@ -132,20 +143,17 @@ func main() {
 			state.Set(nil)
 			return
 		}
-
-		// Prefer the exact RTDS boundary anchor. When the process starts midway
-		// through a window, try Polymarket's read-only reference-price endpoint.
 		snap := clClient.Snapshot(m.StartTime, now)
 		if snap.Ready && snap.PriceToBeat > 0 {
 			m.PriceToBeat = snap.PriceToBeat
 			m.PriceToBeatSource = "CHAINLINK_RTDS_BOUNDARY"
-		} else if ptb, err := pmClient.FetchPriceToBeat(m); err == nil && ptb > 0 {
+		} else if ptb, fetchErr := pmClient.FetchPriceToBeat(m); fetchErr == nil && ptb > 0 {
 			m.PriceToBeat = ptb
 			m.PriceToBeatSource = "POLYMARKET_REFERENCE_API"
 		} else {
 			m.PriceToBeat = 0
 			m.PriceToBeatSource = "UNAVAILABLE"
-			util.Logger.Warn("Price-to-beat unavailable; market kept for metadata but signal disabled", zap.String("eventSlug", m.EventSlug), zap.Error(err))
+			util.Logger.Warn("Price-to-beat unavailable; market kept for metadata but signal disabled", zap.String("eventSlug", m.EventSlug))
 		}
 		state.Set(m)
 	}
@@ -177,6 +185,15 @@ func main() {
 				return
 			case now := <-ticker.C:
 				now = now.UTC()
+				if !isMockMode && paperEngine.Enabled() {
+					settled, settleErr := paperEngine.SettleReady(now, clClient.BoundaryPrice)
+					if settleErr != nil {
+						util.Logger.Error("Paper settlement failed", zap.Error(settleErr))
+					} else if settled > 0 {
+						util.Logger.Info("Paper positions settled", zap.Int("count", settled))
+					}
+				}
+
 				m := state.Get()
 				if m == nil {
 					server.UpdateState(nil, nil)
@@ -204,8 +221,6 @@ func main() {
 					continue
 				}
 				server.UpdateState(res, m)
-
-				// Mock and any unexpectedly synthetic source are never persisted.
 				if isMockMode || strings.Contains(res.DataSource, "MOCK") {
 					continue
 				}
@@ -213,12 +228,21 @@ func main() {
 					util.Logger.Error("Failed to store signal in SQLite", zap.Error(err))
 					continue
 				}
+				if trade, opened, paperErr := paperEngine.MaybeOpen(res, m, now); paperErr != nil {
+					util.Logger.Error("Paper entry evaluation failed", zap.Error(paperErr))
+				} else if opened {
+					util.Logger.Info("PAPER POSITION OPENED",
+						zap.String("market", trade.MarketSlug), zap.String("side", trade.Side),
+						zap.Float64("entryPrice", trade.EntryPrice), zap.Float64("stake", trade.Stake),
+						zap.Float64("shares", trade.Shares), zap.Float64("confidence", trade.EntryConfidence))
+				}
 				util.Logger.Info("Evaluated directional bias score",
 					zap.String("eventSlug", m.EventSlug), zap.String("ptbSource", m.PriceToBeatSource),
 					zap.Float64("priceToBeat", res.PriceToBeat), zap.Float64("currentPrice", res.CurrentPrice),
 					zap.Float64("remaining_sec", res.SecondsRemaining), zap.Float64("pUp", res.PUp),
 					zap.Float64("finalScore", res.FinalScore), zap.String("decision", res.Decision),
-					zap.Float64("confidence", res.Confidence), zap.String("source", res.DataSource))
+					zap.Float64("confidence", res.Confidence), zap.String("source", res.DataSource),
+					zap.String("depthSource", res.DepthSource), zap.Int64("depthAgeMs", res.DepthAgeMs))
 			}
 		}
 	}()
