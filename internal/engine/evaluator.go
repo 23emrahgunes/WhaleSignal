@@ -46,42 +46,39 @@ func NewEvaluator() *Evaluator {
 	return &Evaluator{}
 }
 
-func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, nowUTC string, elapsedSec float64) *EvaluationResult {
-	currentPrice := binanceClient.GetPrice()
-	// Defensively ignore or return nil if no real price was fetched yet
-	if currentPrice == 0 {
+// Evaluate returns nil unless all decision-critical inputs are real and fresh.
+// referencePrice must be the current Chainlink BTC/USD RTDS value and
+// market.PriceToBeat must be the Chainlink opening reference captured at the
+// market's 5-minute boundary.
+func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, referencePrice float64, referenceFresh bool, nowUTC string) *EvaluationResult {
+	if market == nil || market.PriceToBeat <= 0 || referencePrice <= 0 || !referenceFresh {
+		return nil
+	}
+	if !market.Active || market.Closed {
+		return nil
+	}
+	if !binanceClient.IsPriceFresh(3 * time.Second) {
 		return nil
 	}
 
-	var secondsRemaining float64
-	var question string
-	var slug string
-	var marketEndTime string
-
-	if market != nil {
-		endTimeUTC := market.EndTime
-		nowTime, _ := timeParseRFC3339(nowUTC)
-		secondsRemaining = endTimeUTC.Sub(nowTime).Seconds()
-		question = market.Question
-		slug = market.Slug
-		marketEndTime = endTimeUTC.Format(time.RFC3339)
-	} else {
-		secondsRemaining = 150.0
-		question = "BTC above $100,000 at 15:05?"
-		slug = "btc-above-100k-1505"
-		marketEndTime = time.Now().UTC().Add(150 * time.Second).Format(time.RFC3339)
+	nowTime, err := timeParseRFC3339(nowUTC)
+	if err != nil {
+		return nil
+	}
+	secondsRemaining := market.EndTime.Sub(nowTime).Seconds()
+	if secondsRemaining <= 0 || secondsRemaining > 5*60+5 {
+		return nil
 	}
 
-	if secondsRemaining < 0 {
-		secondsRemaining = 0
-	}
+	currentPrice := referencePrice
+	priceToBeat := market.PriceToBeat
 	T := secondsRemaining / 31536000.0
 
 	logReturns := binanceClient.GetLogReturns()
 	sigmaAnnual := 0.15
-	muAnnual := 0.05
+	muAnnual := 0.0
 
-	if len(logReturns) >= 2 {
+	if len(logReturns) >= 10 {
 		sum := 0.0
 		for _, r := range logReturns {
 			sum += r
@@ -94,13 +91,9 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		}
 		variance := varianceSum / float64(len(logReturns)-1)
 
+		// LogReturns are normalized to one-second observations by binance.Client.
 		sigmaAnnual = math.Sqrt(variance * 31536000.0)
-		muAnnual = mean*31536000.0 + 0.5*sigmaAnnual*sigmaAnnual
-	}
-
-	priceToBeat := 100000.0
-	if market != nil {
-		priceToBeat = market.PriceToBeat
+		muAnnual = mean * 31536000.0
 	}
 
 	pUp, pDown := probability.CalculateProbability(currentPrice, priceToBeat, T, sigmaAnnual, muAnnual)
@@ -113,6 +106,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	spoofFilteredAskVol := 0.0
 	weightedBidVol := 0.0
 	weightedAskVol := 0.0
+	binanceSpot := binanceClient.GetPrice()
 
 	for p, size := range lastBids {
 		bidVol += size
@@ -120,7 +114,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 			continue
 		}
 		spoofFilteredBidVol += size
-		dist := math.Abs(currentPrice - p)
+		dist := math.Abs(binanceSpot - p)
 		if dist > 0 {
 			weightedBidVol += size / (dist * dist)
 		} else {
@@ -134,7 +128,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 			continue
 		}
 		spoofFilteredAskVol += size
-		dist := math.Abs(currentPrice - p)
+		dist := math.Abs(binanceSpot - p)
 		if dist > 0 {
 			weightedAskVol += size / (dist * dist)
 		} else {
@@ -143,8 +137,8 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 
 	imbalance := 0.0
-	if (bidVol + askVol) > 0 {
-		imbalance = (bidVol - askVol) / (bidVol + askVol)
+	if (spoofFilteredBidVol + spoofFilteredAskVol) > 0 {
+		imbalance = (spoofFilteredBidVol - spoofFilteredAskVol) / (spoofFilteredBidVol + spoofFilteredAskVol)
 	}
 
 	weightedImbalance := 0.0
@@ -167,7 +161,6 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 
 	probabilityScore := (pUp - 0.5) * 2.0
 	orderFlowScore := weightedImbalance
-
 	compositeScore := (0.55 * probabilityScore) + (0.30 * orderFlowScore) + (0.15 * technicalScore)
 	finalScore := compositeScore
 
@@ -180,18 +173,11 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 
 	confidence := math.Min(100.0, math.Abs(finalScore)*100.0)
 
-	marketStale := false
-	if market != nil {
-		marketStale = market.MarketStale
-	}
-
-	source := binanceClient.GetDataSource()
-
 	return &EvaluationResult{
 		Timestamp:               nowUTC,
-		Question:                question,
-		Slug:                    slug,
-		MarketEndTime:           marketEndTime,
+		Question:                market.Question,
+		Slug:                    market.EventSlug,
+		MarketEndTime:           market.EndTime.UTC().Format(time.RFC3339),
 		PriceToBeat:             priceToBeat,
 		CurrentPrice:            currentPrice,
 		SpotMinusPriceToBeat:    currentPrice - priceToBeat,
@@ -214,8 +200,8 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		Decision:                decision,
 		Confidence:              confidence,
 		Indicators:              indicators,
-		MarketStale:             marketStale,
-		DataSource:              source,
+		MarketStale:             market.MarketStale,
+		DataSource:              "CHAINLINK_RTDS+" + binanceClient.GetDataSource(),
 	}
 }
 
