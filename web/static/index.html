@@ -1,307 +1,120 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PM-Edge TV-Direction Real-Time Dashboard</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0e1118;
-            color: #e4e7eb;
-            margin: 0;
-            padding: 20px;
-        }
-        header {
-            text-align: center;
-            border-bottom: 1px solid #1f2937;
-            padding-bottom: 15px;
-            margin-bottom: 25px;
-        }
-        h1 {
-            color: #3b82f6;
-            margin: 0;
-            font-size: 28px;
-        }
-        .subtitle {
-            color: #9ca3af;
-            font-size: 14px;
-            margin: 5px 0 0 0;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 20px;
-        }
-        .card {
-            background-color: #151c2c;
-            border-radius: 8px;
-            border: 1px solid #1f2937;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .card h2 {
-            font-size: 18px;
-            margin-top: 0;
-            border-bottom: 1px solid #1f2937;
-            padding-bottom: 8px;
-            color: #60a5fa;
-        }
-        .grid-stats {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-        }
-        .stat-item {
-            display: flex;
-            flex-direction: column;
-        }
-        .stat-label {
-            color: #9ca3af;
-            font-size: 12px;
-            text-transform: uppercase;
-        }
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #ffffff;
-            margin-top: 5px;
-        }
-        .indicator-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: bold;
-            font-size: 14px;
-            text-align: center;
-        }
-        .bullish {
-            background-color: #065f46;
-            color: #34d399;
-        }
-        .bearish {
-            background-color: #7f1d1d;
-            color: #f87171;
-        }
-        .neutral {
-            background-color: #374151;
-            color: #9ca3af;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        th, td {
-            text-align: left;
-            padding: 8px;
-            border-bottom: 1px solid #1f2937;
-            font-size: 13px;
-        }
-        th {
-            color: #9ca3af;
-            font-weight: 600;
-        }
-        .warning-banner {
-            background-color: #78350f;
-            border: 1px solid #d97706;
-            border-radius: 8px;
-            padding: 15px;
-            color: #fef3c7;
-            margin-bottom: 20px;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>PM-Edge Research Dashboard</title>
+<style>
+:root{--bg:#090e17;--panel:#111a2a;--panel2:#0d1523;--line:#22304a;--text:#f5f7fb;--muted:#8fa3c4;--blue:#4b9cff;--green:#13c88a;--red:#ef4d4d;--amber:#f2a93b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1500px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.papergrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.paperstat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.paperstat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.paperstat strong{display:block;font-size:21px;margin-top:7px}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.positive{color:var(--green)}.negative{color:var(--red)}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1000px){.topgrid,.two{grid-template-columns:1fr}.papergrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.papergrid{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
+</style>
 </head>
 <body>
-
-    <header>
-        <h1>PM-Edge TV-Direction</h1>
-        <div class="subtitle">Real-time Polymarket Probability & Direction Analysis Engine</div>
-    </header>
-
-    <div class="warning-banner">
-        <strong>⚠️ PAPER-ONLY RESEARCH ENGINE:</strong> Bu sistem canlı işlem yapmaz; yalnızca araştırma, backtest ve istatistiksel analiz amaçlıdır. Finansal tavsiye değildir. Polymarket real-time directional prediction tracking system.
+<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Binance Order Flow · Paper Portfolio</div></header>
+<div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. Sinyaller ve paper pozisyonlar yalnızca araştırma/kalibrasyon içindir.</div>
+<div class="wrap">
+  <div class="topgrid">
+    <div class="card">
+      <h2>Real-Time Signals & Prediction</h2>
+      <div class="stats">
+        <div class="stat"><label>Current BTC / Chainlink</label><div id="currentPrice" class="value">Waiting...</div></div>
+        <div class="stat"><label>Price To Beat</label><div id="priceToBeat" class="value">Waiting...</div></div>
+        <div class="stat"><label>Time Remaining</label><div id="timeRemaining" class="value">Waiting...</div></div>
+        <div class="stat"><label>Final Bias</label><div id="decision" class="value"><span class="chip neutral">WAIT</span></div></div>
+        <div class="stat"><label>Confidence</label><div id="confidence" class="value">—</div></div>
+        <div class="stat"><label>Formula Probability P_UP / P_DOWN</label><div id="probabilities" class="value">—</div></div>
+      </div>
     </div>
-
-    <div class="container">
-        <!-- Main Panel -->
-        <div>
-            <div class="card">
-                <h2>Real-Time Signals & Prediction</h2>
-                <div class="grid-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Current BTC Price</span>
-                        <span id="currentPrice" class="stat-value">Loading...</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Price To Beat (Polymarket Target)</span>
-                        <span id="priceToBeat" class="stat-value">Loading...</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Time Remaining</span>
-                        <span id="timeRemaining" class="stat-value">Loading...</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Final Bias Decision</span>
-                        <span id="decision" class="stat-value"><span class="indicator-badge neutral">NEUTRAL</span></span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Confidence</span>
-                        <span id="confidence" class="stat-value">Loading...</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Formula Probability (P_up / P_down)</span>
-                        <span id="probabilities" class="stat-value">Loading...</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Recent Signals (Last 20)</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Current Price</th>
-                            <th>Target</th>
-                            <th>P_up</th>
-                            <th>P_down</th>
-                            <th>Imbalance</th>
-                            <th>Bias</th>
-                            <th>Confidence</th>
-                        </tr>
-                    </thead>
-                    <tbody id="historyTableBody">
-                        <tr>
-                            <td colspan="8" style="text-align: center;">Waiting for active signal history stream...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Sidebar Panel -->
-        <div>
-            <div class="card">
-                <h2>Order Flow Statistics</h2>
-                <div class="stat-item" style="margin-bottom: 15px;">
-                    <span class="stat-label">Bid/Ask Imbalance</span>
-                    <span id="imbalance" class="stat-value">Loading...</span>
-                </div>
-                <div class="stat-item" style="margin-bottom: 15px;">
-                    <span class="stat-label">Weighted Imbalance</span>
-                    <span id="weightedImbalance" class="stat-value">Loading...</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Total Bid / Ask Volumes (Depth20)</span>
-                    <span id="volumes" style="font-size: 16px; font-weight: bold; margin-top: 5px;">Loading...</span>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Technical Indicator Scores</h2>
-                <table id="indicatorTable">
-                    <thead>
-                        <tr>
-                            <th>Indicator</th>
-                            <th>Score</th>
-                        </tr>
-                    </thead>
-                    <tbody id="indicatorBody">
-                        <tr>
-                            <td colspan="2">No metrics generated</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    <div class="card">
+      <h2>Order Flow Statistics</h2>
+      <div class="stat"><label>Bid / Ask Imbalance</label><div id="imbalance" class="value">Waiting...</div></div><br>
+      <div class="stat"><label>Weighted Imbalance</label><div id="weightedImbalance" class="value">Waiting...</div></div><br>
+      <div class="stat"><label>Total Bid / Ask Volumes (Depth20)</label><div id="volumes" class="smallvalue">Waiting...</div></div>
+      <div class="source">
+        <div><span class="small">Depth Source</span><b id="depthSource">—</b></div>
+        <div><span class="small">Depth Freshness</span><b id="depthFresh"><span class="chip neutral">WAIT</span></b></div>
+      </div>
     </div>
+  </div>
 
-    <script>
-        async function updateDashboard() {
-            try {
-                // 1. Fetch Live Data
-                const resLive = await fetch('/api/live');
-                if (resLive.ok) {
-                    const data = await resLive.json();
-                    if (data.status === "waiting_for_data") {
-                        return;
-                    }
+  <div class="card">
+    <h2>Paper Portfolio</h2>
+    <div class="papergrid">
+      <div class="paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>
+      <div class="paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>
+      <div class="paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>
+      <div class="paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>
+      <div class="paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>
+    </div>
+  </div>
 
-                    document.getElementById('currentPrice').textContent = `$${data.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
-                    document.getElementById('priceToBeat').textContent = `$${data.priceToBeat.toLocaleString()}`;
+  <div class="two">
+    <div>
+      <div class="card">
+        <h2>Paper Trades</h2>
+        <div class="scroll"><table><thead><tr><th>Entry</th><th>Market</th><th>Side</th><th>Entry Px</th><th>Stake</th><th>Conf.</th><th>Status</th><th>Outcome</th><th>PnL</th></tr></thead><tbody id="paperTradeBody"><tr><td colspan="9">Henüz paper trade yok.</td></tr></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>Recent Signals (Last 20)</h2>
+        <div class="scroll"><table><thead><tr><th>Time</th><th>Current</th><th>Target</th><th>P_up</th><th>P_down</th><th>Imbalance</th><th>Bias</th><th>Confidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="8">Waiting for verified signal stream...</td></tr></tbody></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Technical Indicator Scores</h2>
+      <div id="indicatorBody"><div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div></div>
+    </div>
+  </div>
+</div>
+<div id="connection"><span class="chip neutral">CONNECTING</span></div>
+<script>
+const usd=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n||0));
+const pct=(n,d=1)=>`${(Number(n||0)*100).toFixed(d)}%`;
+const pctDirect=(n,d=1)=>`${Number(n||0).toFixed(d)}%`;
+const chip=(txt,cls)=>`<span class="chip ${cls}">${txt}</span>`;
+function decisionChip(d){return d==='UP'?chip('UP','up'):d==='DOWN'?chip('DOWN','down'):chip(d||'NEUTRAL','neutral')}
+function timeOnly(v){try{return new Date(v).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return v||'—'}}
+function setConnection(ok){document.getElementById('connection').innerHTML=ok?chip('LIVE','fresh'):chip('API ERROR','down')}
 
-                    const min = Math.floor(data.secondsRemaining / 60);
-                    const sec = Math.floor(data.secondsRemaining % 60);
-                    document.getElementById('timeRemaining').textContent = `${min}m ${sec}s`;
+async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${url}: ${r.status}`);return r.json()}
 
-                    let biasClass = 'neutral';
-                    if (data.decision === 'UP') biasClass = 'bullish';
-                    if (data.decision === 'DOWN') biasClass = 'bearish';
-                    document.getElementById('decision').innerHTML = `<span class="indicator-badge ${biasClass}">${data.decision}</span>`;
+async function updateLive(){
+  const data=await getJSON('/api/live');
+  if(data.status){document.getElementById('decision').innerHTML=chip('WAITING','warn');return}
+  document.getElementById('currentPrice').textContent=usd(data.currentPrice);
+  document.getElementById('priceToBeat').textContent=usd(data.priceToBeat);
+  const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)}m ${s%60}s`;
+  document.getElementById('decision').innerHTML=decisionChip(data.decision);
+  document.getElementById('confidence').textContent=pctDirect(data.confidence,2);
+  document.getElementById('probabilities').textContent=`${pct(data.pUp)} / ${pct(data.pDown)}`;
+  document.getElementById('imbalance').textContent=pct(data.imbalance,2);
+  document.getElementById('weightedImbalance').textContent=pct(data.weightedImbalance,2);
+  document.getElementById('volumes').textContent=`Bids: ${Number(data.bidVol||0).toFixed(3)} | Asks: ${Number(data.askVol||0).toFixed(3)}`;
+  document.getElementById('depthSource').textContent=data.depthSource||'UNKNOWN';
+  const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`FRESH · ${age>=0?age+' ms':'—'}`,'fresh'):chip('STALE','stale');
+  const box=document.getElementById('indicatorBody');box.innerHTML='';
+  Object.entries(data.indicators||{}).sort().forEach(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';const sign=val>0?`+${val}`:`${val}`;box.insertAdjacentHTML('beforeend',`<div class="indrow"><span>${name}</span>${chip(sign,cls)}</div>`)});
+}
 
-                    document.getElementById('confidence').textContent = `${data.confidence.toFixed(2)}%`;
-                    document.getElementById('probabilities').textContent = `${(data.pUp * 100).toFixed(1)}% / ${(data.pDown * 100).toFixed(1)}%`;
+async function updateHistory(){
+  const rows=await getJSON('/api/history?limit=20');const body=document.getElementById('historyBody');
+  if(!rows||!rows.length){body.innerHTML='<tr><td colspan="8">Waiting for verified signal stream...</td></tr>';return}
+  body.innerHTML=rows.map(x=>`<tr><td>${timeOnly(x.timestamp)}</td><td>${usd(x.currentPrice)}</td><td>${usd(x.priceToBeat)}</td><td>${pct(x.pUp)}</td><td>${pct(x.pDown)}</td><td>${pct(x.imbalance)}</td><td>${decisionChip(x.decision)}</td><td>${pctDirect(x.confidence,1)}</td></tr>`).join('');
+}
 
-                    document.getElementById('imbalance').textContent = `${(data.imbalance * 100).toFixed(2)}%`;
-                    document.getElementById('weightedImbalance').textContent = `${(data.weightedImbalance * 100).toFixed(2)}%`;
-                    document.getElementById('volumes').textContent = `Bids: ${data.bidVol.toFixed(2)} | Asks: ${data.askVol.toFixed(2)}`;
+async function updatePaper(){
+  const [s,trades]=await Promise.all([getJSON('/api/paper/stats'),getJSON('/api/paper/trades?limit=50')]);
+  document.getElementById('paperBalance').textContent=usd(s.cashBalance);
+  const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=Number(s.realizedPnl)>=0?'positive':'negative';
+  document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);
+  document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;
+  document.getElementById('paperOpenStake').textContent=usd(s.openStake);
+  const body=document.getElementById('paperTradeBody');
+  if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}
+  body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');const pnlClass=Number(t.pnl)>=0?'positive':'negative';return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${pnlClass}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
+}
 
-                    // Render indicators
-                    if (data.indicators) {
-                        const tbody = document.getElementById('indicatorBody');
-                        tbody.innerHTML = '';
-                        Object.entries(data.indicators).forEach(([name, val]) => {
-                            let badge = '<span class="indicator-badge neutral">0</span>';
-                            if (val > 0) badge = '<span class="indicator-badge bullish">+1</span>';
-                            if (val < 0) badge = '<span class="indicator-badge bearish">-1</span>';
-
-                            const tr = document.createElement('tr');
-                            tr.innerHTML = `<td>${name}</td><td>${badge}</td>`;
-                            tbody.appendChild(tr);
-                        });
-                    }
-                }
-
-                // 2. Fetch History
-                const resHist = await fetch('/api/history?limit=20');
-                if (resHist.ok) {
-                    const history = await resHist.json();
-                    const tbody = document.getElementById('historyTableBody');
-                    if (history && history.length > 0) {
-                        tbody.innerHTML = '';
-                        history.forEach(item => {
-                            let biasClass = 'neutral';
-                            if (item.decision === 'UP') biasClass = 'bullish';
-                            if (item.decision === 'DOWN') biasClass = 'bearish';
-
-                            const tr = document.createElement('tr');
-                            tr.innerHTML = `
-                                <td>${new Date(item.timestamp).toLocaleTimeString()}</td>
-                                <td>$${item.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                                <td>$${item.priceToBeat.toLocaleString()}</td>
-                                <td>${(item.pUp * 100).toFixed(1)}%</td>
-                                <td>${(item.pDown * 100).toFixed(1)}%</td>
-                                <td>${(item.imbalance * 100).toFixed(1)}%</td>
-                                <td><span class="indicator-badge ${biasClass}" style="font-size:11px; padding:2px 5px;">${item.decision}</span></td>
-                                <td>${item.confidence.toFixed(1)}%</td>
-                            `;
-                            tbody.appendChild(tr);
-                        });
-                    }
-                }
-
-            } catch (err) {
-                console.error("Dashboard poll error:", err);
-            }
-        }
-
-        setInterval(updateDashboard, 1000);
-        updateDashboard();
-    </script>
+async function tick(){try{await Promise.all([updateLive(),updateHistory(),updatePaper()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}}
+setInterval(tick,1000);tick();
+</script>
 </body>
 </html>
