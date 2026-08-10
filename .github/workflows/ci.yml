@@ -39,6 +39,15 @@ jobs:
           UNFORMATTED="$(gofmt -l cmd internal)"
           test -z "$UNFORMATTED" || { echo "$UNFORMATTED"; exit 1; }
 
+      - name: Deployment script syntax
+        shell: bash
+        run: |
+          bash -n deploy.sh
+          bash -n healthcheck.sh
+          bash -n backup.sh
+          bash -n update.sh
+          bash -n install.sh
+
       - name: Module tidy gate
         shell: bash
         run: |
@@ -64,6 +73,45 @@ jobs:
           go build -trimpath -ldflags='-s -w' -o dist/pm-edge ./cmd/pm-edge
           chmod +x dist/pm-edge
           ls -lh dist/pm-edge
+
+      - name: Runtime startup smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/pm-edge-smoke.sqlite /tmp/pm-edge-smoke.log
+          PORT=18080 DB_PATH=/tmp/pm-edge-smoke.sqlite POLYMARKET_POLL_SEC=5 LOG_LEVEL=info \
+            ./dist/pm-edge tv-direction > /tmp/pm-edge-smoke.log 2>&1 &
+          PID=$!
+          cleanup() {
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 20); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "pm-edge exited during smoke test"
+              cat /tmp/pm-edge-smoke.log
+              exit 1
+            fi
+            if curl -fsS --max-time 2 http://127.0.0.1:18080/health | grep -q 'OK'; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "health endpoint did not become ready"
+            cat /tmp/pm-edge-smoke.log
+            exit 1
+          fi
+
+          curl -fsS --max-time 2 http://127.0.0.1:18080/api/live >/tmp/pm-edge-live.json
+          test -s /tmp/pm-edge-live.json
+          echo "Runtime smoke passed"
+          tail -n 30 /tmp/pm-edge-smoke.log || true
 
       - name: Upload linux binary artifact
         uses: actions/upload-artifact@v4
