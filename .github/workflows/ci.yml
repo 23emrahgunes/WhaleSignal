@@ -6,10 +6,11 @@ on:
       - main
       - feature/tv-direction-paper-engine-1868605833685460026
       - fix/tv-direction-production-ready-20260810
+      - fix/github-vps-autodeploy-20260811
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test-build:
@@ -59,7 +60,7 @@ jobs:
           mkdir -p dist
           go build -trimpath -o dist/pm-edge-linux-amd64 ./cmd/pm-edge
           chmod +x dist/pm-edge-linux-amd64
-          sha256sum dist/pm-edge-linux-amd64 > dist/pm-edge-linux-amd64.sha256
+          (cd dist && sha256sum pm-edge-linux-amd64 > pm-edge-linux-amd64.sha256)
 
       - name: Runtime health and paper API smoke test
         shell: bash
@@ -95,7 +96,27 @@ jobs:
           curl --fail --silent --max-time 2 http://127.0.0.1:18080/api/paper/stats >/dev/null
           curl --fail --silent --max-time 2 'http://127.0.0.1:18080/api/paper/trades?limit=5' >/dev/null
 
-      - name: Upload VPS binary
+      - name: Deployment script smoke test with prebuilt
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          PORT=18081 \
+          DB_PATH="$RUNNER_TEMP/pm-edge-deploy-smoke.sqlite" \
+          PM_EDGE_PREBUILT="$GITHUB_WORKSPACE/dist/pm-edge-linux-amd64" \
+          ./deploy.sh
+          curl --fail --silent --max-time 2 http://127.0.0.1:18081/health >/dev/null
+          curl --fail --silent --max-time 2 http://127.0.0.1:18081/api/paper/stats >/dev/null
+          pid="$(cat logs/pm-edge.pid)"
+          kill -TERM "$pid" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          kill -9 "$pid" 2>/dev/null || true
+
+      - name: Upload VPS binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: pm-edge-linux-amd64
@@ -104,3 +125,46 @@ jobs:
             dist/pm-edge-linux-amd64.sha256
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish vps-latest public release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          git tag -f vps-latest "$GITHUB_SHA"
+          git push origin refs/tags/vps-latest --force
+          if gh release view vps-latest >/dev/null 2>&1; then
+            gh release upload vps-latest \
+              dist/pm-edge-linux-amd64 \
+              dist/pm-edge-linux-amd64.sha256 \
+              --clobber
+            gh release edit vps-latest \
+              --title "PM-Edge VPS Latest" \
+              --notes "CI-verified Linux amd64 binary for commit $GITHUB_SHA. Paper-only research engine."
+          else
+            gh release create vps-latest \
+              dist/pm-edge-linux-amd64 \
+              dist/pm-edge-linux-amd64.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "PM-Edge VPS Latest" \
+              --notes "CI-verified Linux amd64 binary for commit $GITHUB_SHA. Paper-only research engine." \
+              --latest=false
+          fi
+
+      - name: Verify public vps-latest download
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="https://github.com/23emrahgunes/WhaleSignal/releases/download/vps-latest"
+          curl --fail --location --silent --show-error --retry 3 \
+            -o "$RUNNER_TEMP/pm-edge-release" "$base/pm-edge-linux-amd64"
+          curl --fail --location --silent --show-error --retry 3 \
+            -o "$RUNNER_TEMP/pm-edge-release.sha256" "$base/pm-edge-linux-amd64.sha256"
+          expected="$(awk 'NR==1 {print $1}' "$RUNNER_TEMP/pm-edge-release.sha256")"
+          actual="$(sha256sum "$RUNNER_TEMP/pm-edge-release" | awk '{print $1}')"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          test "$(od -An -tx1 -N4 "$RUNNER_TEMP/pm-edge-release" | tr -d ' \n')" = "7f454c46"
