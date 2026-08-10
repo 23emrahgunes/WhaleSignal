@@ -15,6 +15,7 @@ const (
 	defaultRTDSURL = "wss://ws-live-data.polymarket.com"
 	anchorGrace    = 3 * time.Second
 	freshnessLimit = 3 * time.Second
+	readTimeout    = 15 * time.Second
 )
 
 type tick struct {
@@ -31,28 +32,22 @@ type Snapshot struct {
 }
 
 type Client struct {
-	mu          sync.RWMutex
-	current     tick
-	anchors     map[int64]tick
+	mu           sync.RWMutex
+	current      tick
+	anchors      map[int64]tick
 	lastObserved tick
-
-	url      string
-	stopChan chan struct{}
-	wg       sync.WaitGroup
-	connMu   sync.Mutex
-	conn     *websocket.Conn
+	url          string
+	stopChan     chan struct{}
+	stopOnce     sync.Once
+	wg           sync.WaitGroup
+	connMu       sync.Mutex
+	conn         *websocket.Conn
 }
 
-func NewClient() *Client {
-	return NewClientWithURL(defaultRTDSURL)
-}
+func NewClient() *Client { return NewClientWithURL(defaultRTDSURL) }
 
 func NewClientWithURL(url string) *Client {
-	return &Client{
-		anchors:  make(map[int64]tick),
-		url:      url,
-		stopChan: make(chan struct{}),
-	}
+	return &Client{anchors: make(map[int64]tick), url: url, stopChan: make(chan struct{})}
 }
 
 func (c *Client) Start() {
@@ -61,233 +56,125 @@ func (c *Client) Start() {
 }
 
 func (c *Client) Stop() {
-	select {
-	case <-c.stopChan:
-		return
-	default:
-		close(c.stopChan)
-	}
+	c.stopOnce.Do(func() { close(c.stopChan) })
 	c.connMu.Lock()
-	if c.conn != nil {
-		_ = c.conn.Close()
-	}
+	if c.conn != nil { _ = c.conn.Close() }
 	c.connMu.Unlock()
 	c.wg.Wait()
 }
 
+// Observe is also intentionally public so deterministic tests/mock feeds can
+// exercise the same boundary anchoring logic as the live RTDS stream.
 func (c *Client) Observe(price float64, ts time.Time) {
-	if price <= 0 || ts.IsZero() {
-		return
-	}
+	if price <= 0 || ts.IsZero() { return }
 	ts = ts.UTC()
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.current = tick{Price: price, Time: ts}
-
 	boundary := ts.Unix() - ts.Unix()%300
 	boundaryTime := time.Unix(boundary, 0).UTC()
 
 	if _, exists := c.anchors[boundary]; !exists {
-		// If we were already running across the boundary, choose the closer of the
-		// last pre-boundary tick and the first post-boundary tick.
 		if !c.lastObserved.Time.IsZero() && c.lastObserved.Time.Before(boundaryTime) && !ts.Before(boundaryTime) {
 			candidate := tick{Price: price, Time: ts}
-			if boundaryTime.Sub(c.lastObserved.Time) <= ts.Sub(boundaryTime) {
-				candidate = c.lastObserved
-			}
-			if absDuration(candidate.Time.Sub(boundaryTime)) <= anchorGrace {
-				c.anchors[boundary] = candidate
-			}
+			if boundaryTime.Sub(c.lastObserved.Time) <= ts.Sub(boundaryTime) { candidate = c.lastObserved }
+			if absDuration(candidate.Time.Sub(boundaryTime)) <= anchorGrace { c.anchors[boundary] = candidate }
 		} else if !ts.Before(boundaryTime) && ts.Sub(boundaryTime) <= anchorGrace {
-			// Startup very close to a boundary is safe enough to anchor. Startup in
-			// the middle of a window intentionally stays unready until the next one.
 			c.anchors[boundary] = tick{Price: price, Time: ts}
 		}
 	}
-
 	c.lastObserved = tick{Price: price, Time: ts}
-
-	// Keep only a small rolling set of anchors.
-	for key := range c.anchors {
-		if key < boundary-900 {
-			delete(c.anchors, key)
-		}
-	}
+	for key := range c.anchors { if key < boundary-900 { delete(c.anchors, key) } }
 }
 
 func (c *Client) Snapshot(windowStart, now time.Time) Snapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	start := windowStart.UTC().Unix()
-	anchor, ok := c.anchors[start]
-	fresh := !c.current.Time.IsZero() && now.UTC().Sub(c.current.Time) >= 0 && now.UTC().Sub(c.current.Time) <= freshnessLimit
-
-	return Snapshot{
-		CurrentPrice: c.current.Price,
-		PriceToBeat:  anchor.Price,
-		LastUpdate:   c.current.Time,
-		Ready:        ok && anchor.Price > 0 && c.current.Price > 0,
-		Fresh:        fresh,
-	}
+	anchor, ok := c.anchors[windowStart.UTC().Unix()]
+	age := now.UTC().Sub(c.current.Time)
+	fresh := !c.current.Time.IsZero() && age >= 0 && age <= freshnessLimit
+	return Snapshot{CurrentPrice: c.current.Price, PriceToBeat: anchor.Price, LastUpdate: c.current.Time, Ready: ok && anchor.Price > 0 && c.current.Price > 0, Fresh: fresh}
 }
 
 func (c *Client) run() {
 	defer c.wg.Done()
 	backoff := time.Second
-
 	for {
-		select {
-		case <-c.stopChan:
-			return
-		default:
-		}
-
+		select { case <-c.stopChan: return; default: }
 		conn, _, err := websocket.DefaultDialer.Dial(c.url, nil)
 		if err != nil {
 			util.Logger.Warn("Chainlink RTDS connection failed", zap.Error(err), zap.Duration("backoff", backoff))
-			if !c.sleep(backoff) {
-				return
-			}
+			if !c.sleep(backoff) { return }
 			backoff = nextBackoff(backoff)
 			continue
 		}
-
-		c.connMu.Lock()
-		c.conn = conn
-		c.connMu.Unlock()
-
+		c.connMu.Lock(); c.conn = conn; c.connMu.Unlock()
 		if err := c.subscribe(conn); err != nil {
 			_ = conn.Close()
 			util.Logger.Warn("Chainlink RTDS subscribe failed", zap.Error(err))
-			if !c.sleep(backoff) {
-				return
-			}
+			if !c.sleep(backoff) { return }
 			backoff = nextBackoff(backoff)
 			continue
 		}
-
 		util.Logger.Info("Connected to Polymarket Chainlink RTDS", zap.String("symbol", "btc/usd"))
 		backoff = time.Second
-
 		pingDone := make(chan struct{})
 		go c.pingLoop(conn, pingDone)
 		err = c.readLoop(conn)
 		close(pingDone)
 		_ = conn.Close()
-
-		c.connMu.Lock()
-		if c.conn == conn {
-			c.conn = nil
-		}
-		c.connMu.Unlock()
-
-		select {
-		case <-c.stopChan:
-			return
-		default:
-			util.Logger.Warn("Chainlink RTDS disconnected", zap.Error(err))
-		}
+		c.connMu.Lock(); if c.conn == conn { c.conn = nil }; c.connMu.Unlock()
+		select { case <-c.stopChan: return; default: util.Logger.Warn("Chainlink RTDS disconnected", zap.Error(err)) }
+		if !c.sleep(time.Second) { return }
 	}
 }
 
 func (c *Client) subscribe(conn *websocket.Conn) error {
-	msg := map[string]interface{}{
+	return conn.WriteJSON(map[string]interface{}{
 		"action": "subscribe",
-		"subscriptions": []map[string]string{
-			{
-				"topic":   "crypto_prices_chainlink",
-				"type":    "*",
-				"filters": `{"symbol":"btc/usd"}`,
-			},
-		},
-	}
-	return conn.WriteJSON(msg)
+		"subscriptions": []map[string]string{{"topic": "crypto_prices_chainlink", "type": "*", "filters": `{"symbol":"btc/usd"}`}},
+	})
 }
 
 type rtdsMessage struct {
-	Topic   string          `json:"topic"`
-	Type    string          `json:"type"`
+	Topic string `json:"topic"`
+	Type string `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
-
-type pricePayload struct {
-	Symbol    string  `json:"symbol"`
-	Timestamp int64   `json:"timestamp"`
-	Value     float64 `json:"value"`
-}
+type pricePayload struct { Symbol string `json:"symbol"`; Timestamp int64 `json:"timestamp"`; Value float64 `json:"value"` }
 
 func (c *Client) readLoop(conn *websocket.Conn) error {
 	for {
+		// Freshness already fails closed; the deadline additionally forces a
+		// reconnect so a silently stalled socket can recover on its own.
+		_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			return err
-		}
-
+		if err != nil { return err }
 		var msg rtdsMessage
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			continue
-		}
-		if msg.Topic != "crypto_prices_chainlink" || msg.Type != "update" {
-			continue
-		}
-
+		if err := json.Unmarshal(raw, &msg); err != nil || msg.Topic != "crypto_prices_chainlink" || msg.Type != "update" { continue }
 		var payload pricePayload
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			continue
-		}
-		if payload.Symbol != "btc/usd" || payload.Value <= 0 || payload.Timestamp <= 0 {
-			continue
-		}
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil { continue }
+		if payload.Symbol != "btc/usd" || payload.Value <= 0 || payload.Timestamp <= 0 { continue }
 		c.Observe(payload.Value, time.UnixMilli(payload.Timestamp).UTC())
 	}
 }
 
 func (c *Client) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	ticker := time.NewTicker(5 * time.Second); defer ticker.Stop()
 	for {
 		select {
-		case <-done:
-			return
-		case <-c.stopChan:
-			return
+		case <-done: return
+		case <-c.stopChan: return
 		case <-ticker.C:
 			c.connMu.Lock()
-			if c.conn == conn {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte("PING"))
-			}
+			if c.conn == conn { _ = conn.WriteMessage(websocket.TextMessage, []byte("PING")) }
 			c.connMu.Unlock()
 		}
 	}
 }
 
-func (c *Client) sleep(d time.Duration) bool {
-	select {
-	case <-c.stopChan:
-		return false
-	case <-time.After(d):
-		return true
-	}
-}
-
-func nextBackoff(d time.Duration) time.Duration {
-	d = time.Duration(float64(d) * 1.5)
-	if d > 30*time.Second {
-		return 30 * time.Second
-	}
-	return d
-}
-
-func absDuration(d time.Duration) time.Duration {
-	if d < 0 {
-		return -d
-	}
-	return d
-}
-
-func (s Snapshot) String() string {
-	return fmt.Sprintf("current=%.2f ptb=%.2f ready=%t fresh=%t", s.CurrentPrice, s.PriceToBeat, s.Ready, s.Fresh)
-}
+func (c *Client) sleep(d time.Duration) bool { select { case <-c.stopChan: return false; case <-time.After(d): return true } }
+func nextBackoff(d time.Duration) time.Duration { d=time.Duration(float64(d)*1.5); if d>30*time.Second{return 30*time.Second}; return d }
+func absDuration(d time.Duration) time.Duration { if d<0{return -d}; return d }
+func (s Snapshot) String() string { return fmt.Sprintf("current=%.2f ptb=%.2f ready=%t fresh=%t",s.CurrentPrice,s.PriceToBeat,s.Ready,s.Fresh) }
