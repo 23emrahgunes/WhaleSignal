@@ -2,6 +2,7 @@ package paper
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -18,21 +19,88 @@ type Config struct {
 	MinConfidence   float64
 	MinSecondsToEnd float64
 	MaxSecondsToEnd float64
+
+	TakerFeeRate  float64
+	LatencyBuffer float64
+
+	HedgeEnabled         bool
+	HedgeWindow          int
+	HedgeMinVotes        int
+	HedgeMinConsecutive  int
+	HedgeScoreThreshold  float64
+	HedgeMinProbability  float64
+	HedgeMinEdge         float64
+	HedgeMinAbsPTBZ      float64
+	HedgeMinSecondsToEnd float64
+	HedgeMaxSecondsToEnd float64
+}
+
+type regimeSample struct {
+	Decision string
+	Score    float64
 }
 
 type Engine struct {
-	db  *storage.Database
-	cfg Config
-	mu  sync.Mutex
+	db      *storage.Database
+	cfg     Config
+	mu      sync.Mutex
+	regimes map[string][]regimeSample
 }
 
+type BudgetQuoteFunc func(tokenID string, budget float64) (polymarket.BuyQuote, error)
+type ShareQuoteFunc func(tokenID string, shares float64) (polymarket.BuyQuote, error)
+
 func NewEngine(db *storage.Database, cfg Config) *Engine {
-	return &Engine{db: db, cfg: cfg}
+	if cfg.TakerFeeRate <= 0 {
+		cfg.TakerFeeRate = 0.07
+	}
+	if cfg.LatencyBuffer < 0 {
+		cfg.LatencyBuffer = 0
+	}
+	if cfg.HedgeWindow <= 0 {
+		cfg.HedgeWindow = 8
+	}
+	if cfg.HedgeMinVotes <= 0 || cfg.HedgeMinVotes > cfg.HedgeWindow {
+		cfg.HedgeMinVotes = int(math.Ceil(float64(cfg.HedgeWindow) * 0.75))
+	}
+	if cfg.HedgeMinConsecutive <= 0 {
+		cfg.HedgeMinConsecutive = 3
+	}
+	if cfg.HedgeScoreThreshold <= 0 {
+		cfg.HedgeScoreThreshold = 0.35
+	}
+	if cfg.HedgeMinProbability <= 0 {
+		cfg.HedgeMinProbability = 0.65
+	}
+	if cfg.HedgeMinEdge <= 0 {
+		cfg.HedgeMinEdge = 0.03
+	}
+	if cfg.HedgeMinAbsPTBZ <= 0 {
+		cfg.HedgeMinAbsPTBZ = 0.50
+	}
+	if cfg.HedgeMinSecondsToEnd <= 0 {
+		cfg.HedgeMinSecondsToEnd = 20
+	}
+	if cfg.HedgeMaxSecondsToEnd <= 0 {
+		cfg.HedgeMaxSecondsToEnd = 120
+	}
+	return &Engine{db: db, cfg: cfg, regimes: make(map[string][]regimeSample)}
 }
 
 func (e *Engine) Enabled() bool { return e != nil && e.cfg.Enabled }
 
+// MaybeOpen preserves the legacy midpoint-based path for deterministic unit
+// tests and tooling. Production should call MaybeOpenWithQuote so paper fills
+// use the real CLOB ask/VWAP, taker fee and min-order-size constraints.
 func (e *Engine) MaybeOpen(res *engine.EvaluationResult, market *polymarket.Market, now time.Time) (*storage.PaperTrade, bool, error) {
+	return e.maybeOpen(res, market, now, nil)
+}
+
+func (e *Engine) MaybeOpenWithQuote(res *engine.EvaluationResult, market *polymarket.Market, now time.Time, quote BudgetQuoteFunc) (*storage.PaperTrade, bool, error) {
+	return e.maybeOpen(res, market, now, quote)
+}
+
+func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Market, now time.Time, quote BudgetQuoteFunc) (*storage.PaperTrade, bool, error) {
 	if !e.Enabled() || res == nil || market == nil {
 		return nil, false, nil
 	}
@@ -55,10 +123,6 @@ func (e *Engine) MaybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 		return nil, false, nil
 	}
 
-	entryPrice, ok := outcomePrice(market, res.Decision)
-	if !ok || entryPrice <= 0 || entryPrice >= 1 {
-		return nil, false, nil
-	}
 	stats, err := e.db.GetPaperStats(e.cfg.InitialBalance)
 	if err != nil {
 		return nil, false, err
@@ -66,6 +130,32 @@ func (e *Engine) MaybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	if stats.CashBalance+1e-9 < e.cfg.Stake {
 		return nil, false, nil
 	}
+
+	entryPrice := 0.0
+	stake := e.cfg.Stake
+	shares := 0.0
+	if quote != nil {
+		tokenID, ok := polymarket.TokenIDForOutcome(market, res.Decision)
+		if !ok {
+			return nil, false, nil
+		}
+		q, err := quote(tokenID, e.cfg.Stake)
+		if err != nil {
+			return nil, false, err
+		}
+		entryPrice, stake, shares = q.AveragePrice, q.TotalCost, q.Shares
+	} else {
+		var ok bool
+		entryPrice, ok = outcomePrice(market, res.Decision)
+		if !ok || entryPrice <= 0 || entryPrice >= 1 {
+			return nil, false, nil
+		}
+		shares = e.cfg.Stake / entryPrice
+	}
+	if entryPrice <= 0 || entryPrice >= 1 || stake <= 0 || shares <= 0 {
+		return nil, false, nil
+	}
+
 	entryProbability := res.PDown
 	if res.Decision == "UP" {
 		entryProbability = res.PUp
@@ -80,8 +170,8 @@ func (e *Engine) MaybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 		EntryFinalScore:     res.FinalScore,
 		EntryProbability:    entryProbability,
 		EntryPrice:          entryPrice,
-		Stake:               e.cfg.Stake,
-		Shares:              e.cfg.Stake / entryPrice,
+		Stake:               stake,
+		Shares:              shares,
 		PriceToBeat:         res.PriceToBeat,
 		EntryReferencePrice: res.CurrentPrice,
 		Status:              "OPEN",
@@ -91,11 +181,163 @@ func (e *Engine) MaybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	if err != nil || !created {
 		return trade, false, err
 	}
+	// Hedge evidence must start after the original position exists. Pre-entry
+	// signal noise is not allowed to satisfy the reverse-regime gate.
+	delete(e.regimes, market.EventSlug)
 	return trade, true, nil
 }
 
-// SettleReady closes any OPEN position once Chainlink has captured the exact
-// five-minute end-boundary price. The BTC 5m rule is UP on equality or above.
+// MaybeHedge evaluates a full-share shadow hedge. It never uses a single last
+// signal. A hedge requires an opposite persistent regime, hysteresis, terminal
+// probability confirmation, PTB z-score confirmation and positive cost-adjusted
+// edge after CLOB VWAP + taker fee + latency buffer.
+func (e *Engine) MaybeHedge(res *engine.EvaluationResult, market *polymarket.Market, now time.Time, quote ShareQuoteFunc) (*storage.PaperHedge, bool, error) {
+	if !e.Enabled() || !e.cfg.HedgeEnabled || res == nil || market == nil || quote == nil {
+		return nil, false, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	openTrade, err := e.db.GetOpenPaperTradeByMarket(market.EventSlug)
+	if err != nil || openTrade == nil {
+		return nil, false, err
+	}
+	e.observeRegime(market.EventSlug, res)
+	if existing, err := e.db.GetPaperHedgeByTradeID(openTrade.ID); err != nil {
+		return nil, false, err
+	} else if existing != nil {
+		return existing, false, nil
+	}
+	if res.SecondsRemaining < e.cfg.HedgeMinSecondsToEnd || res.SecondsRemaining > e.cfg.HedgeMaxSecondsToEnd {
+		return nil, false, nil
+	}
+
+	reverseSide := "DOWN"
+	reverseProbability := res.PDown
+	if openTrade.Side == "DOWN" {
+		reverseSide = "UP"
+		reverseProbability = res.PUp
+	}
+	if res.Decision != reverseSide || reverseProbability < e.cfg.HedgeMinProbability {
+		return nil, false, nil
+	}
+	if reverseSide == "DOWN" {
+		if res.PTBZ > -e.cfg.HedgeMinAbsPTBZ {
+			return nil, false, nil
+		}
+	} else if res.PTBZ < e.cfg.HedgeMinAbsPTBZ {
+		return nil, false, nil
+	}
+
+	persistence, consecutive, smoothedScore, ready := e.regimeMetrics(market.EventSlug, reverseSide)
+	if !ready || consecutive < e.cfg.HedgeMinConsecutive {
+		return nil, false, nil
+	}
+	minPersistence := float64(e.cfg.HedgeMinVotes) / float64(e.cfg.HedgeWindow)
+	if persistence+1e-12 < minPersistence {
+		return nil, false, nil
+	}
+	if reverseSide == "DOWN" && smoothedScore > -e.cfg.HedgeScoreThreshold {
+		return nil, false, nil
+	}
+	if reverseSide == "UP" && smoothedScore < e.cfg.HedgeScoreThreshold {
+		return nil, false, nil
+	}
+
+	tokenID, ok := polymarket.TokenIDForOutcome(market, reverseSide)
+	if !ok {
+		return nil, false, nil
+	}
+	q, err := quote(tokenID, openTrade.Shares)
+	if err != nil {
+		return nil, false, err
+	}
+	if q.Shares+1e-9 < openTrade.Shares || q.TotalCost <= 0 {
+		return nil, false, nil
+	}
+	effectiveCostPerShare := q.TotalCost / q.Shares
+	edge := reverseProbability - effectiveCostPerShare
+	if edge < e.cfg.HedgeMinEdge {
+		return nil, false, nil
+	}
+
+	lockedPnL := openTrade.Shares - openTrade.Stake - q.TotalCost
+	originalWinProbability := 1.0 - reverseProbability
+	expectedHoldPnL := originalWinProbability*openTrade.Shares - openTrade.Stake
+	expectedImprovement := lockedPnL - expectedHoldPnL
+	if expectedImprovement <= 0 {
+		return nil, false, nil
+	}
+
+	h := &storage.PaperHedge{
+		PaperTradeID:        openTrade.ID,
+		MarketSlug:          market.EventSlug,
+		OriginalSide:        openTrade.Side,
+		Side:                reverseSide,
+		HedgeTime:           now.UTC().Format(time.RFC3339Nano),
+		EntryPrice:          q.AveragePrice,
+		Shares:              q.Shares,
+		Notional:            q.Notional,
+		Fee:                 q.Fee,
+		TotalCost:           q.TotalCost,
+		ReverseProbability:  reverseProbability,
+		Edge:                edge,
+		Persistence:         persistence,
+		SmoothedScore:       smoothedScore,
+		PTBZ:                res.PTBZ,
+		LockedPnL:           lockedPnL,
+		ExpectedHoldPnL:     expectedHoldPnL,
+		ExpectedImprovement: expectedImprovement,
+		Status:              "OPEN",
+	}
+	created, err := e.db.CreatePaperHedge(h)
+	if err != nil || !created {
+		return h, false, err
+	}
+	return h, true, nil
+}
+
+func (e *Engine) observeRegime(slug string, res *engine.EvaluationResult) {
+	decision := res.Decision
+	if decision != "UP" && decision != "DOWN" {
+		decision = "NEUTRAL"
+	}
+	rows := append(e.regimes[slug], regimeSample{Decision: decision, Score: res.FinalScore})
+	if len(rows) > e.cfg.HedgeWindow {
+		rows = rows[len(rows)-e.cfg.HedgeWindow:]
+	}
+	e.regimes[slug] = rows
+}
+
+func (e *Engine) regimeMetrics(slug, reverseSide string) (persistence float64, consecutive int, smoothedScore float64, ready bool) {
+	rows := e.regimes[slug]
+	if len(rows) < e.cfg.HedgeWindow {
+		return 0, 0, 0, false
+	}
+	votes := 0
+	for _, row := range rows {
+		if row.Decision == reverseSide {
+			votes++
+		}
+	}
+	persistence = float64(votes) / float64(len(rows))
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].Decision != reverseSide {
+			break
+		}
+		consecutive++
+	}
+	const alpha = 0.35
+	smoothedScore = rows[0].Score
+	for i := 1; i < len(rows); i++ {
+		smoothedScore = alpha*rows[i].Score + (1-alpha)*smoothedScore
+	}
+	return persistence, consecutive, smoothedScore, true
+}
+
+// SettleReady closes OPEN original positions and any attached shadow hedge at
+// the exact Chainlink five-minute boundary. Original PnL remains untouched so
+// A/B comparison (hold vs hedge) is measurable.
 func (e *Engine) SettleReady(now time.Time, boundaryPrice func(time.Time) (float64, bool)) (int, error) {
 	if !e.Enabled() || boundaryPrice == nil {
 		return 0, nil
@@ -129,9 +371,25 @@ func (e *Engine) SettleReady(now time.Time, boundaryPrice func(time.Time) (float
 			payout = trade.Shares
 		}
 		pnl := payout - trade.Stake
-		if err := e.db.SettlePaperTrade(trade.ID, now.UTC().Format(time.RFC3339Nano), closePrice, outcome, won, payout, pnl); err != nil {
+		settlementTime := now.UTC().Format(time.RFC3339Nano)
+		if err := e.db.SettlePaperTrade(trade.ID, settlementTime, closePrice, outcome, won, payout, pnl); err != nil {
 			return settled, err
 		}
+
+		if h, err := e.db.GetPaperHedgeByTradeID(trade.ID); err != nil {
+			return settled, err
+		} else if h != nil && h.Status == "OPEN" {
+			hPayout := 0.0
+			if outcome == h.Side {
+				hPayout = h.Shares
+			}
+			hPnL := hPayout - h.TotalCost
+			combined := pnl + hPnL
+			if err := e.db.SettlePaperHedge(trade.ID, settlementTime, outcome, hPayout, hPnL, combined); err != nil {
+				return settled, err
+			}
+		}
+		delete(e.regimes, trade.MarketSlug)
 		settled++
 	}
 	return settled, nil

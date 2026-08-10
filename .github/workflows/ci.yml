@@ -95,6 +95,8 @@ jobs:
           curl --fail --silent --max-time 2 http://127.0.0.1:18080/api/live >/dev/null
           curl --fail --silent --max-time 2 http://127.0.0.1:18080/api/paper/stats >/dev/null
           curl --fail --silent --max-time 2 'http://127.0.0.1:18080/api/paper/trades?limit=5' >/dev/null
+          curl --fail --silent --max-time 2 http://127.0.0.1:18080/api/paper/hedge/stats >/dev/null
+          curl --fail --silent --max-time 2 'http://127.0.0.1:18080/api/paper/hedges?limit=5' >/dev/null
 
       - name: Deployment script smoke test with prebuilt
         shell: bash
@@ -106,6 +108,7 @@ jobs:
           ./deploy.sh
           curl --fail --silent --max-time 2 http://127.0.0.1:18081/health >/dev/null
           curl --fail --silent --max-time 2 http://127.0.0.1:18081/api/paper/stats >/dev/null
+          curl --fail --silent --max-time 2 http://127.0.0.1:18081/api/paper/hedge/stats >/dev/null
           pid="$(cat logs/pm-edge.pid)"
           kill -TERM "$pid" 2>/dev/null || true
           for _ in $(seq 1 10); do
