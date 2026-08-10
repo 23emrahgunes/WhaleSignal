@@ -127,7 +127,8 @@ function markLiveWaiting(){
 }
 async function updateLive(){
   const data=await getJSON('/api/live');
-  if(data.status){markLiveWaiting();return}\n  hasLiveSnapshot=true;
+  if(data.status){markLiveWaiting();return}
+  hasLiveSnapshot=true;
   document.getElementById('currentPrice').textContent=usd(data.currentPrice);
   document.getElementById('priceToBeat').textContent=usd(data.priceToBeat);
   const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)}m ${s%60}s`;
