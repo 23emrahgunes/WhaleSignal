@@ -20,6 +20,18 @@ type EvaluationResult struct {
 	SecondsRemaining     float64        `json:"secondsRemaining"`
 	PUp                  float64        `json:"pUp"`
 	PDown                float64        `json:"pDown"`
+	ForecastReady        bool           `json:"forecastReady"`
+	ForecastSamples      int            `json:"forecastSamples"`
+	ForecastPrice        float64        `json:"forecastPrice"`
+	ForecastMeanPrice    float64        `json:"forecastMeanPrice"`
+	ForecastLow68        float64        `json:"forecastLow68"`
+	ForecastHigh68       float64        `json:"forecastHigh68"`
+	ForecastLow95        float64        `json:"forecastLow95"`
+	ForecastHigh95       float64        `json:"forecastHigh95"`
+	PTBZ                 float64        `json:"ptbZ"`
+	RequiredMoveBps      float64        `json:"requiredMoveBps"`
+	ExpectedMoveBps      float64        `json:"expectedMoveBps"`
+	ForecastConfidence   float64        `json:"forecastConfidence"`
 	BidVol               float64        `json:"bidVol"`
 	AskVol               float64        `json:"askVol"`
 	SpoofFilteredBidVol  float64        `json:"spoofFilteredBidVol"`
@@ -47,9 +59,8 @@ type Evaluator struct{}
 
 func NewEvaluator() *Evaluator { return &Evaluator{} }
 
-// Evaluate fails closed unless the reference price, Binance price and Depth20
-// orderbook are all fresh. A missing orderbook must never be represented as a
-// real 0.00% imbalance.
+// Evaluate fails closed unless the reference price, Binance price, Depth20
+// orderbook and terminal forecast inputs are all fresh enough for research use.
 func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, referencePrice float64, referenceFresh bool, nowUTC string) *EvaluationResult {
 	if market == nil || market.PriceToBeat <= 0 || referencePrice <= 0 || !referenceFresh {
 		return nil
@@ -72,26 +83,14 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 
 	currentPrice := referencePrice
 	priceToBeat := market.PriceToBeat
-	T := secondsRemaining / 31536000.0
 	logReturns := binanceClient.GetLogReturns()
-	sigmaAnnual := 0.15
-	muAnnual := 0.0
-	if len(logReturns) >= 10 {
-		sum := 0.0
-		for _, r := range logReturns {
-			sum += r
-		}
-		mean := sum / float64(len(logReturns))
-		varianceSum := 0.0
-		for _, r := range logReturns {
-			varianceSum += (r - mean) * (r - mean)
-		}
-		variance := varianceSum / float64(len(logReturns)-1)
-		sigmaAnnual = math.Sqrt(variance * 31536000.0)
-		muAnnual = mean * 31536000.0
+	forecast := probability.EstimateTerminalForecast(currentPrice, priceToBeat, secondsRemaining, logReturns)
+	if !forecast.Ready {
+		return nil
 	}
+	pUp := forecast.PAbove
+	pDown := forecast.PBelow
 
-	pUp, pDown := probability.CalculateProbability(currentPrice, priceToBeat, T, sigmaAnnual, muAnnual)
 	lastBids, lastAsks := binanceClient.GetLastBidsAndAsks()
 	if len(lastBids) == 0 || len(lastAsks) == 0 {
 		return nil
@@ -181,6 +180,18 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		SecondsRemaining:     secondsRemaining,
 		PUp:                  pUp,
 		PDown:                pDown,
+		ForecastReady:        forecast.Ready,
+		ForecastSamples:      forecast.Samples,
+		ForecastPrice:        forecast.ForecastMedian,
+		ForecastMeanPrice:    forecast.ForecastMean,
+		ForecastLow68:        forecast.Lower68,
+		ForecastHigh68:       forecast.Upper68,
+		ForecastLow95:        forecast.Lower95,
+		ForecastHigh95:       forecast.Upper95,
+		PTBZ:                 forecast.TargetZ,
+		RequiredMoveBps:      forecast.RequiredMoveBps,
+		ExpectedMoveBps:      forecast.ExpectedMoveBps,
+		ForecastConfidence:   forecast.Confidence,
 		BidVol:               bidVol,
 		AskVol:               askVol,
 		SpoofFilteredBidVol:  spoofFilteredBidVol,
@@ -190,8 +201,8 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		ProbabilityScore:     probabilityScore,
 		OrderFlowScore:       orderFlowScore,
 		TechnicalScore:       technicalScore,
-		Volatility:           sigmaAnnual,
-		Drift:                muAnnual,
+		Volatility:           forecast.VolatilityAnnual,
+		Drift:                forecast.DriftAnnual,
 		CompositeScore:       compositeScore,
 		FinalScore:           finalScore,
 		Decision:             decision,
