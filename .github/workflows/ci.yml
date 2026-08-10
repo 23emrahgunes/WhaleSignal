@@ -30,15 +30,14 @@ jobs:
       - name: Go version
         run: go version
 
-      - name: Format gate
+      - name: Canonicalize Go formatting
+        run: gofmt -w cmd internal
+
+      - name: Format verification
         shell: bash
         run: |
           UNFORMATTED="$(gofmt -l cmd internal)"
-          if [ -n "$UNFORMATTED" ]; then
-            echo "Unformatted files:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
+          test -z "$UNFORMATTED" || { echo "$UNFORMATTED"; exit 1; }
 
       - name: Module tidy gate
         shell: bash
@@ -74,18 +73,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Refresh tracked VPS binary after all gates pass
+      - name: Publish verified formatting and VPS binary
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/')
         shell: bash
         run: |
           cp dist/pm-edge pm-edge
           chmod +x pm-edge
-          if git diff --quiet -- pm-edge; then
-            echo "Tracked binary is already current."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pm-edge
-          git commit -m "build: refresh verified linux amd64 binary [skip ci]"
+          git add cmd internal pm-edge
+          if git diff --cached --quiet; then
+            echo "Verified source and binary are already current."
+            exit 0
+          fi
+          git commit -m "build: publish verified Go source and linux binary [skip ci]"
           git push origin "HEAD:${GITHUB_REF_NAME}"
