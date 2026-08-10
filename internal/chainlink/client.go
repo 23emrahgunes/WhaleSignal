@@ -16,6 +16,7 @@ const (
 	anchorGrace    = 3 * time.Second
 	freshnessLimit = 3 * time.Second
 	readTimeout    = 15 * time.Second
+	anchorRetention = 24 * time.Hour
 )
 
 type tick struct {
@@ -65,7 +66,7 @@ func (c *Client) Stop() {
 	c.wg.Wait()
 }
 
-// Observe is also intentionally public so deterministic tests/mock feeds can
+// Observe is intentionally public so deterministic tests/mock feeds can
 // exercise the same boundary anchoring logic as the live RTDS stream.
 func (c *Client) Observe(price float64, ts time.Time) {
 	if price <= 0 || ts.IsZero() {
@@ -93,8 +94,10 @@ func (c *Client) Observe(price float64, ts time.Time) {
 		}
 	}
 	c.lastObserved = tick{Price: price, Time: ts}
+
+	retentionCutoff := ts.Add(-anchorRetention).Unix()
 	for key := range c.anchors {
-		if key < boundary-900 {
+		if key < retentionCutoff {
 			delete(c.anchors, key)
 		}
 	}
@@ -107,6 +110,16 @@ func (c *Client) Snapshot(windowStart, now time.Time) Snapshot {
 	age := now.UTC().Sub(c.current.Time)
 	fresh := !c.current.Time.IsZero() && age >= 0 && age <= freshnessLimit
 	return Snapshot{CurrentPrice: c.current.Price, PriceToBeat: anchor.Price, LastUpdate: c.current.Time, Ready: ok && anchor.Price > 0 && c.current.Price > 0, Fresh: fresh}
+}
+
+// BoundaryPrice returns the settlement-aligned Chainlink price captured around
+// an exact 5-minute boundary. BTC 5m paper positions use the end boundary as
+// their closing value and the start boundary as Price To Beat.
+func (c *Client) BoundaryPrice(boundary time.Time) (float64, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	anchor, ok := c.anchors[boundary.UTC().Unix()]
+	return anchor.Price, ok && anchor.Price > 0
 }
 
 func (c *Client) run() {
@@ -175,6 +188,7 @@ type rtdsMessage struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
+
 type pricePayload struct {
 	Symbol    string  `json:"symbol"`
 	Timestamp int64   `json:"timestamp"`
@@ -183,8 +197,6 @@ type pricePayload struct {
 
 func (c *Client) readLoop(conn *websocket.Conn) error {
 	for {
-		// Freshness already fails closed; the deadline additionally forces a
-		// reconnect so a silently stalled socket can recover on its own.
 		_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -232,6 +244,7 @@ func (c *Client) sleep(d time.Duration) bool {
 		return true
 	}
 }
+
 func nextBackoff(d time.Duration) time.Duration {
 	d = time.Duration(float64(d) * 1.5)
 	if d > 30*time.Second {
@@ -239,12 +252,14 @@ func nextBackoff(d time.Duration) time.Duration {
 	}
 	return d
 }
+
 func absDuration(d time.Duration) time.Duration {
 	if d < 0 {
 		return -d
 	}
 	return d
 }
+
 func (s Snapshot) String() string {
 	return fmt.Sprintf("current=%.2f ptb=%.2f ready=%t fresh=%t", s.CurrentPrice, s.PriceToBeat, s.Ready, s.Fresh)
 }
