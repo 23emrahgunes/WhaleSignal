@@ -1,0 +1,48 @@
+name: One-shot paper calibration stats
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Add calibration metrics and self-remove
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/storage/sqlite.go')
+          s = p.read_text()
+          old = '''type PaperStats struct {\n\tInitialBalance float64 `json:"initialBalance"`\n\tCashBalance    float64 `json:"cashBalance"`\n\tEquity         float64 `json:"equity"`\n\tRealizedPnL    float64 `json:"realizedPnl"`\n\tOpenStake      float64 `json:"openStake"`\n\tTotalTrades    int     `json:"totalTrades"`\n\tSettledTrades  int     `json:"settledTrades"`\n\tOpenTrades     int     `json:"openTrades"`\n\tWins           int     `json:"wins"`\n\tLosses         int     `json:"losses"`\n\tWinRate        float64 `json:"winRate"`\n}'''
+          new = '''type PaperStats struct {\n\tInitialBalance              float64 `json:"initialBalance"`\n\tCashBalance                 float64 `json:"cashBalance"`\n\tEquity                      float64 `json:"equity"`\n\tRealizedPnL                 float64 `json:"realizedPnl"`\n\tOpenStake                   float64 `json:"openStake"`\n\tTotalTrades                 int     `json:"totalTrades"`\n\tSettledTrades               int     `json:"settledTrades"`\n\tOpenTrades                  int     `json:"openTrades"`\n\tWins                        int     `json:"wins"`\n\tLosses                      int     `json:"losses"`\n\tWinRate                     float64 `json:"winRate"`\n\tCalibrationN                int     `json:"calibrationN"`\n\tAverageEntryProbability     float64 `json:"averageEntryProbability"`\n\tActualWinProbability        float64 `json:"actualWinProbability"`\n\tCalibrationGap              float64 `json:"calibrationGap"`\n\tBrierScore                  float64 `json:"brierScore"`\n\tExpectedWins                float64 `json:"expectedWins"`\n}'''
+          if old not in s:
+              raise SystemExit('PaperStats anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {\n\tstats := PaperStats{InitialBalance: initialBalance}\n\tvar realizedPnL, openStake float64\n\tvar total, settled, open, wins int\n\terr := d.db.QueryRow(`SELECT\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' THEN pnl ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='OPEN' THEN stake ELSE 0 END), 0),\n\t\tCOUNT(*),\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' THEN 1 ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0)\n\t\tFROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins)\n\tif err != nil {\n\t\treturn stats, err\n\t}\n\tstats.RealizedPnL = realizedPnL\n\tstats.OpenStake = openStake\n\tstats.TotalTrades = total\n\tstats.SettledTrades = settled\n\tstats.OpenTrades = open\n\tstats.Wins = wins\n\tstats.Losses = settled - wins\n\tstats.CashBalance = initialBalance + realizedPnL - openStake\n\tstats.Equity = initialBalance + realizedPnL\n\tif settled > 0 {\n\t\tstats.WinRate = float64(wins) * 100 / float64(settled)\n\t}\n\treturn stats, nil\n}'''
+          new = '''func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {\n\tstats := PaperStats{InitialBalance: initialBalance}\n\tvar realizedPnL, openStake float64\n\tvar total, settled, open, wins int\n\tvar avgEntryProbability, brierScore, expectedWins float64\n\terr := d.db.QueryRow(`SELECT\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' THEN pnl ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='OPEN' THEN stake ELSE 0 END), 0),\n\t\tCOUNT(*),\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' THEN 1 ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0),\n\t\tCOALESCE(AVG(CASE WHEN status='SETTLED' THEN entry_probability END), 0),\n\t\tCOALESCE(AVG(CASE WHEN status='SETTLED' THEN (entry_probability-won)*(entry_probability-won) END), 0),\n\t\tCOALESCE(SUM(CASE WHEN status='SETTLED' THEN entry_probability ELSE 0 END), 0)\n\t\tFROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins, &avgEntryProbability, &brierScore, &expectedWins)\n\tif err != nil {\n\t\treturn stats, err\n\t}\n\tstats.RealizedPnL = realizedPnL\n\tstats.OpenStake = openStake\n\tstats.TotalTrades = total\n\tstats.SettledTrades = settled\n\tstats.OpenTrades = open\n\tstats.Wins = wins\n\tstats.Losses = settled - wins\n\tstats.CashBalance = initialBalance + realizedPnL - openStake\n\tstats.Equity = initialBalance + realizedPnL\n\tstats.CalibrationN = settled\n\tstats.AverageEntryProbability = avgEntryProbability\n\tstats.BrierScore = brierScore\n\tstats.ExpectedWins = expectedWins\n\tif settled > 0 {\n\t\tstats.WinRate = float64(wins) * 100 / float64(settled)\n\t\tstats.ActualWinProbability = float64(wins) / float64(settled)\n\t\tstats.CalibrationGap = stats.ActualWinProbability - avgEntryProbability\n\t}\n\treturn stats, nil\n}'''
+          if old not in s:
+              raise SystemExit('GetPaperStats anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          gofmt -w internal/storage/sqlite.go
+          rm -f .github/workflows/oneshot-paper-calibration-stats.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "stats: add paper probability calibration metrics"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
