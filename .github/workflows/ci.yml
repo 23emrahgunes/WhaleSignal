@@ -8,16 +8,18 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -57,16 +59,33 @@ jobs:
         env:
           GOOS: linux
           GOARCH: amd64
+          CGO_ENABLED: '0'
         run: |
           mkdir -p dist
           go build -trimpath -ldflags='-s -w' -o dist/pm-edge ./cmd/pm-edge
           chmod +x dist/pm-edge
           ls -lh dist/pm-edge
 
-      - name: Upload linux binary
+      - name: Upload linux binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: pm-edge-linux-amd64
           path: dist/pm-edge
           if-no-files-found: error
           retention-days: 14
+
+      - name: Refresh tracked VPS binary after all gates pass
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/')
+        shell: bash
+        run: |
+          cp dist/pm-edge pm-edge
+          chmod +x pm-edge
+          if git diff --quiet -- pm-edge; then
+            echo "Tracked binary is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pm-edge
+          git commit -m "build: refresh verified linux amd64 binary [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
