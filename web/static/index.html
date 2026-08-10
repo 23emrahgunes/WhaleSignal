@@ -6,11 +6,11 @@
 <title>PM-Edge Research Dashboard</title>
 <style>
 :root{--bg:#090e17;--panel:#111a2a;--panel2:#0d1523;--line:#22304a;--text:#f5f7fb;--muted:#8fa3c4;--blue:#4b9cff;--green:#13c88a;--red:#ef4d4d;--amber:#f2a93b}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1500px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.papergrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.paperstat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.paperstat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.paperstat strong{display:block;font-size:21px;margin-top:7px}.forecastgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.forecaststat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.forecaststat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.forecaststat strong{display:block;font-size:17px;margin-top:7px}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.positive{color:var(--green)}.negative{color:var(--red)}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1000px){.topgrid,.two{grid-template-columns:1fr}.papergrid,.forecastgrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.papergrid,.forecastgrid{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1500px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.papergrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.paperstat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.paperstat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.paperstat strong{display:block;font-size:21px;margin-top:7px}.forecastgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.forecaststat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px}.forecaststat span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.forecaststat strong{display:block;font-size:17px;margin-top:7px}.depthgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}.depthstat{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px}.depthstat span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.depthstat b{display:block;margin-top:5px;font-size:13px}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.positive{color:var(--green)}.negative{color:var(--red)}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1000px){.topgrid,.two{grid-template-columns:1fr}.papergrid,.forecastgrid,.depthgrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.papergrid,.forecastgrid,.depthgrid{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
 </style>
 </head>
 <body>
-<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Robust Terminal Forecast · Binance Order Flow · Paper Portfolio</div></header>
+<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Robust Terminal Forecast · Binance Depth20 Microstructure · Paper Portfolio</div></header>
 <div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. Sinyaller ve paper pozisyonlar yalnızca araştırma/kalibrasyon içindir.</div>
 <div class="wrap">
   <div class="topgrid">
@@ -28,8 +28,19 @@
     <div class="card">
       <h2>Order Flow Statistics</h2>
       <div class="stat"><label>Bid / Ask Imbalance</label><div id="imbalance" class="value">Waiting...</div></div><br>
-      <div class="stat"><label>Weighted Imbalance</label><div id="weightedImbalance" class="value">Waiting...</div></div><br>
+      <div class="stat"><label>Rank-Weighted Imbalance</label><div id="weightedImbalance" class="value">Waiting...</div></div><br>
       <div class="stat"><label>Total Bid / Ask Volumes (Depth20)</label><div id="volumes" class="smallvalue">Waiting...</div></div>
+      <div class="depthgrid">
+        <div class="depthstat"><span>Total Depth20 USD</span><b id="totalNotional">—</b></div>
+        <div class="depthstat"><span>Bid / Ask USD</span><b id="sideNotional">—</b></div>
+        <div class="depthstat"><span>Spread</span><b id="spread">—</b></div>
+        <div class="depthstat"><span>Bid 20 Range</span><b id="bidRange">—</b></div>
+        <div class="depthstat"><span>Ask 20 Range</span><b id="askRange">—</b></div>
+        <div class="depthstat"><span>Best Bid / Ask</span><b id="bestBook">—</b></div>
+        <div class="depthstat"><span>Worst Bid20</span><b id="worstBid">—</b></div>
+        <div class="depthstat"><span>Worst Ask20</span><b id="worstAsk">—</b></div>
+        <div class="depthstat"><span>Order-Flow Score</span><b id="orderFlowScore">—</b></div>
+      </div>
       <div class="source">
         <div><span class="small">Depth Source</span><b id="depthSource">—</b></div>
         <div><span class="small">Depth Freshness</span><b id="depthFresh"><span class="chip neutral">WAIT</span></b></div>
@@ -82,6 +93,7 @@
 <div id="connection"><span class="chip neutral">CONNECTING</span></div>
 <script>
 const usd=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n||0));
+const usdCompact=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',notation:'compact',maximumFractionDigits:2}).format(Number(n||0));
 const pct=(n,d=1)=>`${(Number(n||0)*100).toFixed(d)}%`;
 const pctDirect=(n,d=1)=>`${Number(n||0).toFixed(d)}%`;
 const bps=(n,d=2)=>`${Number(n||0).toFixed(d)} bps`;
@@ -112,6 +124,15 @@ async function updateLive(){
   document.getElementById('imbalance').textContent=pct(data.imbalance,2);
   document.getElementById('weightedImbalance').textContent=pct(data.weightedImbalance,2);
   document.getElementById('volumes').textContent=`Bids: ${Number(data.bidVol||0).toFixed(3)} | Asks: ${Number(data.askVol||0).toFixed(3)}`;
+  document.getElementById('totalNotional').textContent=usdCompact(data.totalDepthNotionalUsd);
+  document.getElementById('sideNotional').textContent=`${usdCompact(data.bidNotionalUsd)} / ${usdCompact(data.askNotionalUsd)}`;
+  document.getElementById('spread').textContent=`${usd(data.spreadUsd)} · ${Number(data.spreadBps||0).toFixed(3)} bps`;
+  document.getElementById('bidRange').textContent=`${usd(data.bidRangeUsd)} · ${Number(data.bidRangeBps||0).toFixed(2)} bps`;
+  document.getElementById('askRange').textContent=`${usd(data.askRangeUsd)} · ${Number(data.askRangeBps||0).toFixed(2)} bps`;
+  document.getElementById('bestBook').textContent=`${usd(data.bestBid)} / ${usd(data.bestAsk)}`;
+  document.getElementById('worstBid').textContent=usd(data.worstBid20);
+  document.getElementById('worstAsk').textContent=usd(data.worstAsk20);
+  document.getElementById('orderFlowScore').textContent=pct(data.orderFlowScore,2);
   document.getElementById('depthSource').textContent=data.depthSource||'UNKNOWN';
   const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`FRESH · ${age>=0?age+' ms':'—'}`,'fresh'):chip('STALE','stale');
   const box=document.getElementById('indicatorBody');box.innerHTML='';
