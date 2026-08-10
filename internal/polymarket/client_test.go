@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -14,10 +15,9 @@ func TestBTC5mWindowAndSlug(t *testing.T) {
 	if start.Unix()%300 != 0 {
 		t.Fatalf("window start is not aligned: %v", start)
 	}
-	want := "btc-updown-5m-" + time.Unix(start.Unix(), 0).Format("__never__")
-	_ = want // explicit slug assertion below avoids locale/time formatting concerns
-	if got := BTC5mEventSlug(tm); got != "btc-updown-5m-"+formatInt(start.Unix()) {
-		t.Fatalf("unexpected slug: %s", got)
+	want := "btc-updown-5m-" + strconv.FormatInt(start.Unix(), 10)
+	if got := BTC5mEventSlug(tm); got != want {
+		t.Fatalf("unexpected slug: got %s want %s", got, want)
 	}
 }
 
@@ -41,17 +41,16 @@ func TestFetchActiveBTC5mMarket(t *testing.T) {
 			"closed":           false,
 			"markets": []map[string]interface{}{
 				{
-					"id":             "market-1",
-					"question":       "BTC Up or Down - 5 Minutes",
-					"slug":           eventSlug,
-					"eventStartTime": start.Format(time.RFC3339),
-					"endDate":        start.Add(5 * time.Minute).Format(time.RFC3339),
-					"endDateIso":     start.Add(5 * time.Minute).Format(time.RFC3339),
-					"clobTokenIds":   `["111","222"]`,
-					"outcomes":       `["Up","Down"]`,
-					"outcomePrices":  `["0.52","0.48"]`,
-					"active":         true,
-					"closed":         false,
+					"id":            "market-1",
+					"question":      "BTC Up or Down - 5 Minutes",
+					"slug":          eventSlug,
+					"endDate":       start.Add(5 * time.Minute).Format(time.RFC3339),
+					"endDateIso":    start.Add(5 * time.Minute).Format(time.RFC3339),
+					"clobTokenIds":  `["111","222"]`,
+					"outcomes":      `["Up","Down"]`,
+					"outcomePrices": `["0.52","0.48"]`,
+					"active":        true,
+					"closed":        false,
 				},
 			},
 		})
@@ -59,15 +58,15 @@ func TestFetchActiveBTC5mMarket(t *testing.T) {
 	defer server.Close()
 
 	client := NewClientWithBaseURL(server.URL, server.Client())
-	market, err := client.FetchActiveBTC5mMarket(now)
+	market, err := client.FetchActiveBTC5mMarketAt(now)
 	if err != nil {
-		t.Fatalf("FetchActiveBTC5mMarket failed: %v", err)
+		t.Fatalf("FetchActiveBTC5mMarketAt failed: %v", err)
 	}
 	if market.EventSlug != eventSlug {
 		t.Fatalf("expected event slug %q, got %q", eventSlug, market.EventSlug)
 	}
 	if !market.StartTime.Equal(start) {
-		t.Fatalf("expected start %v, got %v", start, market.StartTime)
+		t.Fatalf("expected canonical start %v, got %v", start, market.StartTime)
 	}
 	if !market.EndTime.Equal(start.Add(5 * time.Minute)) {
 		t.Fatalf("unexpected end time: %v", market.EndTime)
@@ -85,30 +84,29 @@ func TestFetchActiveBTC5mMarketNoFallbackOn404(t *testing.T) {
 	defer server.Close()
 	client := NewClientWithBaseURL(server.URL, server.Client())
 
-	_, err := client.FetchActiveBTC5mMarket(time.Now().UTC())
+	_, err := client.FetchActiveBTC5mMarketAt(time.Now().UTC())
 	if err == nil {
 		t.Fatal("expected error; fake fallback markets are forbidden")
 	}
 }
 
-func formatInt(v int64) string {
-	if v == 0 {
-		return "0"
+func TestFetchPriceToBeatParsesReadOnlyReference(t *testing.T) {
+	priceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("symbol") != "BTC" || r.URL.Query().Get("variant") != "fiveminute" {
+			t.Fatalf("unexpected reference query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"openPrice": "100123.45"})
+	}))
+	defer priceServer.Close()
+
+	client := NewClientWithBaseURLs("http://gamma.invalid", priceServer.URL, priceServer.Client())
+	start := time.Unix(1_800_000_000, 0).UTC()
+	market := &Market{StartTime: start, EndTime: start.Add(5 * time.Minute)}
+	got, err := client.FetchPriceToBeat(market)
+	if err != nil {
+		t.Fatalf("FetchPriceToBeat failed: %v", err)
 	}
-	neg := v < 0
-	if neg {
-		v = -v
+	if got != 100123.45 {
+		t.Fatalf("unexpected reference price: %f", got)
 	}
-	buf := make([]byte, 0, 20)
-	for v > 0 {
-		buf = append(buf, byte('0'+v%10))
-		v /= 10
-	}
-	if neg {
-		buf = append(buf, '-')
-	}
-	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
-		buf[i], buf[j] = buf[j], buf[i]
-	}
-	return string(buf)
 }
