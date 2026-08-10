@@ -23,29 +23,29 @@ type ForecastContext struct {
 // TerminalForecast is a short-horizon, research-only terminal price distribution.
 // LogReturns are expected to be approximately one-second log returns.
 type TerminalForecast struct {
-	Ready                    bool
-	Samples                  int
-	HorizonSeconds           float64
-	DriftPerSecond           float64
-	VolatilityPerSqrtS       float64
-	MicroVolatilityAnnual    float64
-	VolatilityFloorAnnual    float64
-	BasisVolatilityAnnual    float64
-	DriftAnnual              float64
-	VolatilityAnnual         float64
-	ForecastMedian           float64
-	ForecastMean             float64
-	Lower68                  float64
-	Upper68                  float64
-	Lower95                  float64
-	Upper95                  float64
-	RequiredMoveBps          float64
-	ExpectedMoveBps          float64
-	SigmaAtExpiryBps         float64
-	TargetZ                  float64
-	PAbove                   float64
-	PBelow                   float64
-	Confidence               float64
+	Ready                 bool
+	Samples               int
+	HorizonSeconds        float64
+	DriftPerSecond        float64
+	VolatilityPerSqrtS    float64
+	MicroVolatilityAnnual float64
+	VolatilityFloorAnnual float64
+	BasisVolatilityAnnual float64
+	DriftAnnual           float64
+	VolatilityAnnual      float64
+	ForecastMedian        float64
+	ForecastMean          float64
+	Lower68               float64
+	Upper68               float64
+	Lower95               float64
+	Upper95               float64
+	RequiredMoveBps       float64
+	ExpectedMoveBps       float64
+	SigmaAtExpiryBps      float64
+	TargetZ               float64
+	PAbove                float64
+	PBelow                float64
+	Confidence            float64
 }
 
 func NormalCDF(x float64) float64 {
