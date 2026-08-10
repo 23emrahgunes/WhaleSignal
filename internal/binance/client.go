@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"pm-edge/internal/util"
 	"go.uber.org/zap"
+	"pm-edge/internal/util"
 )
 
 type Candle struct {
@@ -356,6 +356,7 @@ func (c *Client) getMedianDepthSizeLocked(isBid bool) float64 {
 			if s > 0 {
 				list = append(list, s)
 			}
+		}
 	}
 	if len(list) == 0 {
 		return 0
