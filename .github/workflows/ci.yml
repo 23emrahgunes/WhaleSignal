@@ -35,6 +35,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify deployment shell syntax
+        run: bash -n deploy.sh healthcheck.sh backup.sh update.sh install.sh
+
       - name: Download modules
         run: go mod download
 
@@ -57,6 +60,41 @@ jobs:
           go build -trimpath -o dist/pm-edge-linux-amd64 ./cmd/pm-edge
           chmod +x dist/pm-edge-linux-amd64
           sha256sum dist/pm-edge-linux-amd64 > dist/pm-edge-linux-amd64.sha256
+
+      - name: Runtime health smoke test
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          PORT=18080 DB_PATH="$RUNNER_TEMP/pm-edge-smoke.sqlite" LOG_LEVEL=error \
+            ./dist/pm-edge-linux-amd64 tv-direction --mock >"$RUNNER_TEMP/pm-edge-smoke.log" 2>&1 &
+          pid=$!
+          cleanup() {
+            kill -TERM "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          healthy=0
+          for _ in $(seq 1 15); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "pm-edge exited during smoke test"
+              cat "$RUNNER_TEMP/pm-edge-smoke.log"
+              exit 1
+            fi
+            if curl --fail --silent --max-time 2 http://127.0.0.1:18080/health >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$healthy" -ne 1 ]; then
+            echo "health endpoint did not become ready"
+            cat "$RUNNER_TEMP/pm-edge-smoke.log"
+            exit 1
+          fi
+
+          curl --fail --silent --max-time 2 http://127.0.0.1:18080/api/live >/dev/null
 
       - name: Upload VPS binary
         uses: actions/upload-artifact@v4
