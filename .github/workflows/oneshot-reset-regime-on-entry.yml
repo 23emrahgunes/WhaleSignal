@@ -1,0 +1,48 @@
+name: One-shot reset hedge regime on entry
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Patch regime lifecycle and self-remove
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/paper/engine.go')
+          s = p.read_text()
+          old = '''\tcreated, err := e.db.CreatePaperTrade(trade)\n\tif err != nil || !created {\n\t\treturn trade, false, err\n\t}\n\treturn trade, true, nil'''
+          new = '''\tcreated, err := e.db.CreatePaperTrade(trade)\n\tif err != nil || !created {\n\t\treturn trade, false, err\n\t}\n\t// Hedge evidence must start after the original position exists. Pre-entry\n\t// signal noise is not allowed to satisfy the reverse-regime gate.\n\tdelete(e.regimes, market.EventSlug)\n\treturn trade, true, nil'''
+          if old not in s:
+              raise SystemExit('entry reset anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''\te.observeRegime(market.EventSlug, res)\n\topenTrade, err := e.db.GetOpenPaperTradeByMarket(market.EventSlug)\n\tif err != nil || openTrade == nil {\n\t\treturn nil, false, err\n\t}'''
+          new = '''\topenTrade, err := e.db.GetOpenPaperTradeByMarket(market.EventSlug)\n\tif err != nil || openTrade == nil {\n\t\treturn nil, false, err\n\t}\n\te.observeRegime(market.EventSlug, res)'''
+          if old not in s:
+              raise SystemExit('hedge observation anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          gofmt -w internal/paper/engine.go
+          rm -f .github/workflows/oneshot-reset-regime-on-entry.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: reset hedge regime at original entry"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
