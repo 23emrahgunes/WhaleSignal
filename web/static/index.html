@@ -112,14 +112,22 @@ function decisionChip(d){return d==='UP'?chip('UP','up'):d==='DOWN'?chip('DOWN',
 function timeOnly(v){try{return new Date(v).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return v||'—'}}
 function setConnection(ok){document.getElementById('connection').innerHTML=ok?chip('LIVE','fresh'):chip('API ERROR','down')}
 async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${url}: ${r.status}`);return r.json()}
-function clearLiveWaiting(){
-  ['currentPrice','priceToBeat','timeRemaining','confidence','probabilities','forecastPrice','forecast68','forecast95','forecastZ','moves','sigmaExpiry','basis','forecastSamples','microVol','floorVol','basisVol','binancePrice','imbalance','weightedImbalance','volumes','totalNotional','sideNotional','spread','bidRange','askRange','orderFlowScore'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—'});
+let hasLiveSnapshot=false;
+let liveBusy=false;
+let slowBusy=false;
+let indicatorHTML='';
+function markLiveWaiting(){
   document.getElementById('decision').innerHTML=chip('WAITING','warn');
   document.getElementById('depthFresh').innerHTML=chip('WAIT','neutral');
+  if(!hasLiveSnapshot){
+    document.getElementById('currentPrice').textContent='Waiting...';
+    document.getElementById('priceToBeat').textContent='Waiting...';
+    document.getElementById('timeRemaining').textContent='Waiting...';
+  }
 }
 async function updateLive(){
   const data=await getJSON('/api/live');
-  if(data.status){clearLiveWaiting();return}
+  if(data.status){markLiveWaiting();return}\n  hasLiveSnapshot=true;
   document.getElementById('currentPrice').textContent=usd(data.currentPrice);
   document.getElementById('priceToBeat').textContent=usd(data.priceToBeat);
   const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)}m ${s%60}s`;
@@ -149,7 +157,7 @@ async function updateLive(){
   document.getElementById('orderFlowScore').textContent=pct(data.orderFlowScore,2);
   document.getElementById('depthSource').textContent=data.depthSource||'UNKNOWN';
   const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`FRESH · ${age>=0?age+' ms':'—'}`,'fresh'):chip('STALE','stale');
-  const box=document.getElementById('indicatorBody');box.innerHTML='';Object.entries(data.indicators||{}).sort().forEach(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';box.insertAdjacentHTML('beforeend',`<div class="indrow"><span>${name}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`)});
+  const box=document.getElementById('indicatorBody');const nextIndicatorHTML=Object.entries(data.indicators||{}).sort().map(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';return `<div class="indrow"><span>${name}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`}).join('');if(nextIndicatorHTML!==indicatorHTML){box.innerHTML=nextIndicatorHTML||'<div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div>';indicatorHTML=nextIndicatorHTML;}
 }
 async function updateHistory(){
   const rows=await getJSON('/api/history?limit=20');const body=document.getElementById('historyBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="9">Waiting for verified signal stream...</td></tr>';return}
@@ -161,8 +169,11 @@ async function updatePaper(){
 async function updateHedge(){
   const [s,rows]=await Promise.all([getJSON('/api/paper/hedge/stats'),getJSON('/api/paper/hedges?limit=30')]);document.getElementById('hedgeCount').textContent=`${s.totalHedges||0} / ${s.openHedges||0}`;for(const [id,v] of [['hedgeOriginalPnl',s.originalPnlOnHedged],['hedgeContribution',s.hedgeContribution],['hedgeCombined',s.combinedPnl]]){const el=document.getElementById(id);el.textContent=usd(v);el.className=signClass(v)}document.getElementById('hedgeQuality').textContent=`${pct(s.averageEdge||0,1)} / ${pct(s.averagePersistence||0,0)}`;const body=document.getElementById('hedgeBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr>';return}body.innerHTML=rows.map(h=>`<tr><td>${timeOnly(h.hedgeTime)}</td><td>${h.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(h.originalSide)}</td><td>${decisionChip(h.side)}</td><td>${Number(h.entryPrice).toFixed(3)}</td><td>${Number(h.shares).toFixed(3)}</td><td>${pct(h.reverseProbability)}</td><td>${pct(h.edge)}</td><td>${pct(h.persistence)}</td><td>${Number(h.smoothedScore).toFixed(3)}</td><td>${Number(h.ptbZ).toFixed(2)}σ</td><td class="${signClass(h.lockedPnl)}">${usd(h.lockedPnl)}</td><td>${h.status==='OPEN'?chip('OPEN','open'):chip('SETTLED','neutral')}</td><td class="${signClass(h.combinedPnl)}">${h.status==='OPEN'?'—':usd(h.combinedPnl)}</td></tr>`).join('');
 }
-async function tick(){try{await Promise.all([updateLive(),updateHistory(),updatePaper(),updateHedge()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}}
-setInterval(tick,1000);tick();
+async function tickLive(){if(liveBusy)return;liveBusy=true;try{await updateLive();setConnection(true)}catch(e){console.error(e);setConnection(false)}finally{liveBusy=false}}
+async function tickSlow(){if(slowBusy)return;slowBusy=true;try{await Promise.all([updateHistory(),updatePaper(),updateHedge()])}catch(e){console.error(e)}finally{slowBusy=false}}
+setInterval(tickLive,1000);
+setInterval(tickSlow,5000);
+tickLive();tickSlow();
 </script>
 </body>
 </html>
