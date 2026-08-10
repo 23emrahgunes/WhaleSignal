@@ -9,7 +9,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test-build:
@@ -24,21 +24,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Apply gofmt
-        run: gofmt -w .
-
-      - name: Commit formatting once
-        if: github.event_name == 'push' && github.ref_name == 'fix/tv-direction-production-ready-20260810'
-        shell: bash
-        run: |
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -u
-            git commit -m "style: gofmt production-ready fixes"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
 
       - name: Verify formatting
         shell: bash
