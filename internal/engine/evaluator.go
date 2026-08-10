@@ -10,34 +10,34 @@ import (
 )
 
 type EvaluationResult struct {
-	Timestamp               string         `json:"timestamp"`
-	Question                string         `json:"question"`
-	Slug                    string         `json:"slug"`
-	MarketEndTime           string         `json:"marketEndTime"`
-	PriceToBeat             float64        `json:"priceToBeat"`
-	CurrentPrice            float64        `json:"currentPrice"`
-	SpotMinusPriceToBeat    float64        `json:"spotMinusPriceToBeat"`
-	SecondsRemaining        float64        `json:"secondsRemaining"`
-	PUp                     float64        `json:"pUp"`
-	PDown                   float64        `json:"pDown"`
-	BidVol                  float64        `json:"bidVol"`
-	AskVol                  float64        `json:"askVol"`
-	SpoofFilteredBidVol     float64        `json:"spoofFilteredBidVol"`
-	SpoofFilteredAskVol     float64        `json:"spoofFilteredAskVol"`
-	Imbalance               float64        `json:"imbalance"`
-	WeightedImbalance       float64        `json:"weightedImbalance"`
-	ProbabilityScore        float64        `json:"probabilityScore"`
-	OrderFlowScore          float64        `json:"orderFlowScore"`
-	TechnicalScore          float64        `json:"technicalScore"`
-	Volatility              float64        `json:"volatility"`
-	Drift                   float64        `json:"drift"`
-	CompositeScore          float64        `json:"compositeScore"`
-	FinalScore              float64        `json:"finalScore"`
-	Decision                string         `json:"decision"`
-	Confidence              float64        `json:"confidence"`
-	Indicators              map[string]int `json:"indicators"`
-	MarketStale             bool           `json:"marketStale"`
-	DataSource              string         `json:"dataSource"`
+	Timestamp            string         `json:"timestamp"`
+	Question             string         `json:"question"`
+	Slug                 string         `json:"slug"`
+	MarketEndTime        string         `json:"marketEndTime"`
+	PriceToBeat          float64        `json:"priceToBeat"`
+	CurrentPrice         float64        `json:"currentPrice"`
+	SpotMinusPriceToBeat float64        `json:"spotMinusPriceToBeat"`
+	SecondsRemaining     float64        `json:"secondsRemaining"`
+	PUp                  float64        `json:"pUp"`
+	PDown                float64        `json:"pDown"`
+	BidVol               float64        `json:"bidVol"`
+	AskVol               float64        `json:"askVol"`
+	SpoofFilteredBidVol  float64        `json:"spoofFilteredBidVol"`
+	SpoofFilteredAskVol  float64        `json:"spoofFilteredAskVol"`
+	Imbalance            float64        `json:"imbalance"`
+	WeightedImbalance    float64        `json:"weightedImbalance"`
+	ProbabilityScore     float64        `json:"probabilityScore"`
+	OrderFlowScore       float64        `json:"orderFlowScore"`
+	TechnicalScore       float64        `json:"technicalScore"`
+	Volatility           float64        `json:"volatility"`
+	Drift                float64        `json:"drift"`
+	CompositeScore       float64        `json:"compositeScore"`
+	FinalScore           float64        `json:"finalScore"`
+	Decision             string         `json:"decision"`
+	Confidence           float64        `json:"confidence"`
+	Indicators           map[string]int `json:"indicators"`
+	MarketStale          bool           `json:"marketStale"`
+	DataSource           string         `json:"dataSource"`
 }
 
 type Evaluator struct{}
@@ -174,34 +174,34 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	confidence := math.Min(100.0, math.Abs(finalScore)*100.0)
 
 	return &EvaluationResult{
-		Timestamp:               nowUTC,
-		Question:                market.Question,
-		Slug:                    market.EventSlug,
-		MarketEndTime:           market.EndTime.UTC().Format(time.RFC3339),
-		PriceToBeat:             priceToBeat,
-		CurrentPrice:            currentPrice,
-		SpotMinusPriceToBeat:    currentPrice - priceToBeat,
-		SecondsRemaining:        secondsRemaining,
-		PUp:                     pUp,
-		PDown:                   pDown,
-		BidVol:                  bidVol,
-		AskVol:                  askVol,
-		SpoofFilteredBidVol:     spoofFilteredBidVol,
-		SpoofFilteredAskVol:     spoofFilteredAskVol,
-		Imbalance:               imbalance,
-		WeightedImbalance:       weightedImbalance,
-		ProbabilityScore:        probabilityScore,
-		OrderFlowScore:          orderFlowScore,
-		TechnicalScore:          technicalScore,
-		Volatility:              sigmaAnnual,
-		Drift:                   muAnnual,
-		CompositeScore:          compositeScore,
-		FinalScore:              finalScore,
-		Decision:                decision,
-		Confidence:              confidence,
-		Indicators:              indicators,
-		MarketStale:             market.MarketStale,
-		DataSource:              "CHAINLINK_RTDS+" + binanceClient.GetDataSource(),
+		Timestamp:            nowUTC,
+		Question:             market.Question,
+		Slug:                 market.EventSlug,
+		MarketEndTime:        market.EndTime.UTC().Format(time.RFC3339),
+		PriceToBeat:          priceToBeat,
+		CurrentPrice:         currentPrice,
+		SpotMinusPriceToBeat: currentPrice - priceToBeat,
+		SecondsRemaining:     secondsRemaining,
+		PUp:                  pUp,
+		PDown:                pDown,
+		BidVol:               bidVol,
+		AskVol:               askVol,
+		SpoofFilteredBidVol:  spoofFilteredBidVol,
+		SpoofFilteredAskVol:  spoofFilteredAskVol,
+		Imbalance:            imbalance,
+		WeightedImbalance:    weightedImbalance,
+		ProbabilityScore:     probabilityScore,
+		OrderFlowScore:       orderFlowScore,
+		TechnicalScore:       technicalScore,
+		Volatility:           sigmaAnnual,
+		Drift:                muAnnual,
+		CompositeScore:       compositeScore,
+		FinalScore:           finalScore,
+		Decision:             decision,
+		Confidence:           confidence,
+		Indicators:           indicators,
+		MarketStale:          market.MarketStale,
+		DataSource:           "CHAINLINK_RTDS+" + binanceClient.GetDataSource(),
 	}
 }
 
