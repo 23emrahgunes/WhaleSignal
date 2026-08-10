@@ -1,0 +1,32 @@
+name: One-shot fix hedge var
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fix exact variable typo and self-remove
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sed -i 's/hedegeOpened/hedgeOpened/g; s/heedgeOpened/hedgeOpened/g' internal/paper/hedge_test.go
+          gofmt -w internal/paper/hedge_test.go
+          rm -f .github/workflows/oneshot-fix-hedge-var.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test: fix hedge-opened assertion variable"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
