@@ -111,7 +111,7 @@ func main() {
 	pollMarket := func() {
 		now := time.Now().UTC()
 		wantedStart := polymarket.BTC5mWindowStart(now)
-		market, err := pmClient.FetchActiveBTC5mMarket(now)
+		market, err := pmClient.FetchActiveBTC5mMarketAt(now)
 		if err != nil {
 			cached := getMarketCopy()
 			if cached != nil && cached.StartTime.Equal(wantedStart) && now.Before(cached.EndTime) {
