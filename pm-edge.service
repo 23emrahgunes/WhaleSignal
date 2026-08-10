@@ -1,0 +1,17 @@
+[Unit]
+Description=PM-Edge TV-Direction Real-Time Research Engine
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/app
+ExecStart=/app/pm-edge tv-direction
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+StandardOutput=append:/app/logs/run_output.log
+StandardError=append:/app/logs/run_output.log
+Environment=PORT=8080 DB_PATH=data/tv_direction.sqlite LOG_LEVEL=info
+
+[Install]
+WantedBy=multi-user.target

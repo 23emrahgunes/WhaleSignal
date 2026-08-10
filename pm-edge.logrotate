@@ -1,0 +1,9 @@
+/app/logs/run_output.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

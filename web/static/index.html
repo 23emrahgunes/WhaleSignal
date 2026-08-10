@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PM-Edge TV-Direction Real-Time Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0e1118;
+            color: #e4e7eb;
+            margin: 0;
+            padding: 20px;
+        }
+        header {
+            text-align: center;
+            border-bottom: 1px solid #1f2937;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+        h1 {
+            color: #3b82f6;
+            margin: 0;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #9ca3af;
+            font-size: 14px;
+            margin: 5px 0 0 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .card {
+            background-color: #151c2c;
+            border-radius: 8px;
+            border: 1px solid #1f2937;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            font-size: 18px;
+            margin-top: 0;
+            border-bottom: 1px solid #1f2937;
+            padding-bottom: 8px;
+            color: #60a5fa;
+        }
+        .grid-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-label {
+            color: #9ca3af;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffffff;
+            margin-top: 5px;
+        }
+        .indicator-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+        }
+        .bullish {
+            background-color: #065f46;
+            color: #34d399;
+        }
+        .bearish {
+            background-color: #7f1d1d;
+            color: #f87171;
+        }
+        .neutral {
+            background-color: #374151;
+            color: #9ca3af;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #1f2937;
+            font-size: 13px;
+        }
+        th {
+            color: #9ca3af;
+            font-weight: 600;
+        }
+        .warning-banner {
+            background-color: #78350f;
+            border: 1px solid #d97706;
+            border-radius: 8px;
+            padding: 15px;
+            color: #fef3c7;
+            margin-bottom: 20px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>PM-Edge TV-Direction</h1>
+        <div class="subtitle">Real-time Polymarket Probability & Direction Analysis Engine</div>
+    </header>
+
+    <div class="warning-banner">
+        <strong>⚠️ PAPER-ONLY RESEARCH ENGINE:</strong> Bu sistem canlı işlem yapmaz; yalnızca araştırma, backtest ve istatistiksel analiz amaçlıdır. Finansal tavsiye değildir. Polymarket real-time directional prediction tracking system.
+    </div>
+
+    <div class="container">
+        <!-- Main Panel -->
+        <div>
+            <div class="card">
+                <h2>Real-Time Signals & Prediction</h2>
+                <div class="grid-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Current BTC Price</span>
+                        <span id="currentPrice" class="stat-value">Loading...</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Price To Beat (Polymarket Target)</span>
+                        <span id="priceToBeat" class="stat-value">Loading...</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Time Remaining</span>
+                        <span id="timeRemaining" class="stat-value">Loading...</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Final Bias Decision</span>
+                        <span id="decision" class="stat-value"><span class="indicator-badge neutral">NEUTRAL</span></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Confidence</span>
+                        <span id="confidence" class="stat-value">Loading...</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Formula Probability (P_up / P_down)</span>
+                        <span id="probabilities" class="stat-value">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Recent Signals (Last 20)</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Current Price</th>
+                            <th>Target</th>
+                            <th>P_up</th>
+                            <th>P_down</th>
+                            <th>Imbalance</th>
+                            <th>Bias</th>
+                            <th>Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align: center;">Waiting for active signal history stream...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sidebar Panel -->
+        <div>
+            <div class="card">
+                <h2>Order Flow Statistics</h2>
+                <div class="stat-item" style="margin-bottom: 15px;">
+                    <span class="stat-label">Bid/Ask Imbalance</span>
+                    <span id="imbalance" class="stat-value">Loading...</span>
+                </div>
+                <div class="stat-item" style="margin-bottom: 15px;">
+                    <span class="stat-label">Weighted Imbalance</span>
+                    <span id="weightedImbalance" class="stat-value">Loading...</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Total Bid / Ask Volumes (Depth20)</span>
+                    <span id="volumes" style="font-size: 16px; font-weight: bold; margin-top: 5px;">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Technical Indicator Scores</h2>
+                <table id="indicatorTable">
+                    <thead>
+                        <tr>
+                            <th>Indicator</th>
+                            <th>Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="indicatorBody">
+                        <tr>
+                            <td colspan="2">No metrics generated</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function updateDashboard() {
+            try {
+                // 1. Fetch Live Data
+                const resLive = await fetch('/api/live');
+                if (resLive.ok) {
+                    const data = await resLive.json();
+                    if (data.status === "waiting_for_data") {
+                        return;
+                    }
+
+                    document.getElementById('currentPrice').textContent = `$${data.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+                    document.getElementById('priceToBeat').textContent = `$${data.priceToBeat.toLocaleString()}`;
+
+                    const min = Math.floor(data.secondsRemaining / 60);
+                    const sec = Math.floor(data.secondsRemaining % 60);
+                    document.getElementById('timeRemaining').textContent = `${min}m ${sec}s`;
+
+                    let biasClass = 'neutral';
+                    if (data.decision === 'UP') biasClass = 'bullish';
+                    if (data.decision === 'DOWN') biasClass = 'bearish';
+                    document.getElementById('decision').innerHTML = `<span class="indicator-badge ${biasClass}">${data.decision}</span>`;
+
+                    document.getElementById('confidence').textContent = `${data.confidence.toFixed(2)}%`;
+                    document.getElementById('probabilities').textContent = `${(data.pUp * 100).toFixed(1)}% / ${(data.pDown * 100).toFixed(1)}%`;
+
+                    document.getElementById('imbalance').textContent = `${(data.imbalance * 100).toFixed(2)}%`;
+                    document.getElementById('weightedImbalance').textContent = `${(data.weightedImbalance * 100).toFixed(2)}%`;
+                    document.getElementById('volumes').textContent = `Bids: ${data.bidVol.toFixed(2)} | Asks: ${data.askVol.toFixed(2)}`;
+
+                    // Render indicators
+                    if (data.indicators) {
+                        const tbody = document.getElementById('indicatorBody');
+                        tbody.innerHTML = '';
+                        Object.entries(data.indicators).forEach(([name, val]) => {
+                            let badge = '<span class="indicator-badge neutral">0</span>';
+                            if (val > 0) badge = '<span class="indicator-badge bullish">+1</span>';
+                            if (val < 0) badge = '<span class="indicator-badge bearish">-1</span>';
+
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `<td>${name}</td><td>${badge}</td>`;
+                            tbody.appendChild(tr);
+                        });
+                    }
+                }
+
+                // 2. Fetch History
+                const resHist = await fetch('/api/history?limit=20');
+                if (resHist.ok) {
+                    const history = await resHist.json();
+                    const tbody = document.getElementById('historyTableBody');
+                    if (history && history.length > 0) {
+                        tbody.innerHTML = '';
+                        history.forEach(item => {
+                            let biasClass = 'neutral';
+                            if (item.decision === 'UP') biasClass = 'bullish';
+                            if (item.decision === 'DOWN') biasClass = 'bearish';
+
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td>${new Date(item.timestamp).toLocaleTimeString()}</td>
+                                <td>$${item.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                                <td>$${item.priceToBeat.toLocaleString()}</td>
+                                <td>${(item.pUp * 100).toFixed(1)}%</td>
+                                <td>${(item.pDown * 100).toFixed(1)}%</td>
+                                <td>${(item.imbalance * 100).toFixed(1)}%</td>
+                                <td><span class="indicator-badge ${biasClass}" style="font-size:11px; padding:2px 5px;">${item.decision}</span></td>
+                                <td>${item.confidence.toFixed(1)}%</td>
+                            `;
+                            tbody.appendChild(tr);
+                        });
+                    }
+                }
+
+            } catch (err) {
+                console.error("Dashboard poll error:", err);
+            }
+        }
+
+        setInterval(updateDashboard, 1000);
+        updateDashboard();
+    </script>
+</body>
+</html>
