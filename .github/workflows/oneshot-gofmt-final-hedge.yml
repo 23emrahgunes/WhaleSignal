@@ -1,0 +1,30 @@
+name: One-shot gofmt final hedge
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format and remove workflow
+        run: |
+          set -Eeuo pipefail
+          gofmt -w internal/paper/hedge_test.go
+          rm -f .github/workflows/oneshot-gofmt-final-hedge.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style: gofmt persisted-id hedge test"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
