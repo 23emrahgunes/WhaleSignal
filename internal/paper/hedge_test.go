@@ -144,7 +144,6 @@ func TestHedgeRequiresPersistentReverseRegimeAndPositiveEdge(t *testing.T) {
 	db, pe, market, now := newHedgeTestEngine(t)
 	defer db.Close()
 	trade := openUpTrade(t, pe, market, now)
-
 	for i := 0; i < 8; i++ {
 		res := reverseDownResult(market, 80-float64(i), -0.70)
 		if i < 2 {
@@ -213,7 +212,7 @@ func TestHedgeSettlementPreservesOriginalABPnL(t *testing.T) {
 			t.Fatal(err)
 		}
 		if opened {
-			hegeOpened = true
+			hedegeOpened = true
 			if i != 7 || h == nil {
 				t.Fatalf("hedge opened at wrong point i=%d h=%+v", i, h)
 			}
