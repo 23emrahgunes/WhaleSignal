@@ -1,137 +1,119 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-echo "========================================================="
-echo "   PM-Edge TV-Direction Research Engine Auto-Deployer    "
-echo "========================================================="
-
-# Get active script's physical path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# --- 1. Automatic Go Environment Optimization & Fix ---
-echo "Checking and configuring Go environment..."
+PORT="${PORT:-8080}"
+PREBUILT="${PM_EDGE_PREBUILT:-$SCRIPT_DIR/pm-edge-linux-amd64}"
+TARGET="$SCRIPT_DIR/pm-edge"
+TMP_TARGET="$SCRIPT_DIR/.pm-edge.new"
 
-# If ~/go exists and contains bin/go (extracted as root distribution directly in ~)
-if [ -d "$HOME/go" ] && [ -f "$HOME/go/bin/go" ]; then
-    echo "Relocating Go installation to ~/.go to avoid GOPATH/GOROOT conflicts..."
-    # Clean up ~/.go if it already exists to avoid conflict
-    rm -rf "$HOME/.go"
-    mv "$HOME/go" "$HOME/.go"
-fi
+echo "========================================================="
+echo " PM-Edge TV-Direction Paper Research Engine Deployment"
+echo "========================================================="
 
-# Define our preferred paths
-export GOROOT="$HOME/.go"
-export GOPATH="$HOME/go"
-export PATH="$GOROOT/bin:$GOPATH/bin:$PATH"
-
-# Ensure GOPATH workspace directories exist
-mkdir -p "$GOPATH/src" "$GOPATH/bin" "$GOPATH/pkg"
-
-# Programmatically fix ~/.bashrc without needing manual text editors (nano/vim)
-BASHRC="$HOME/.bashrc"
-if [ -f "$BASHRC" ]; then
-    echo "Optimizing ~/.bashrc PATH variables..."
-    # Create clean backup of bashrc
-    cp "$BASHRC" "$BASHRC.bak"
-
-    # 1. Strip out the warning-prone simple path line if exists
-    grep -v 'export PATH=\$PATH:\$HOME/go/bin' "$BASHRC" > "$BASHRC.tmp" || true
-    # 2. Strip any previously added GOROOT/GOPATH lines from this script to avoid duplication
-    grep -v 'export GOROOT=' "$BASHRC.tmp" > "$BASHRC.tmp2" || true
-    grep -v 'export GOPATH=' "$BASHRC.tmp2" > "$BASHRC.tmp3" || true
-    # Move back
-    mv "$BASHRC.tmp3" "$BASHRC"
-    rm -f "$BASHRC.tmp" "$BASHRC.tmp2"
-
-    # 3. Append the correct path configuration clean and safe
-    echo 'export GOROOT=$HOME/.go' >> "$BASHRC"
-    echo 'export GOPATH=$HOME/go' >> "$BASHRC"
-    echo 'export PATH=$GOROOT/bin:$GOPATH/bin:$PATH' >> "$BASHRC"
-    echo "Updated ~/.bashrc automatically with conflict-free paths."
-fi
-
-# Check if Go is accessible now
-if ! command -v go >/dev/null 2>&1; then
-    echo "Error: Go is still not found in current path."
-    echo "Expected location: $GOROOT/bin/go"
-    exit 1
-else
-    echo "Success: $(go version) found and configured!"
-fi
-
-# --- 2. Terminate Old Instance ---
-echo "Checking for any running pm-edge instance..."
-PID=$(pgrep -f "pm-edge tv-direction" || true)
-if [ -n "$PID" ]; then
-    echo "Stopping existing pm-edge process (PID: $PID)..."
-    kill "$PID" 2>/dev/null || true
-    sleep 2
-    # Force kill if still alive
-    kill -9 "$PID" 2>/dev/null || true
-fi
-
-# Also check if something is listening on port 8080 (the default port for our web UI)
-PORT_PID=$(lsof -t -i :8080 2>/dev/null || true)
-if [ -n "$PORT_PID" ]; then
-    echo "Stopping process listening on port 8080 (PID: $PORT_PID)..."
-    kill -9 "$PORT_PID" 2>/dev/null || true
-fi
-
-# --- 3. Directory Setup ---
-echo "Setting up workspace directories..."
 mkdir -p logs data reports backup
-
-# --- 4. Environment Configuration Setup ---
-if [ ! -f .env ]; then
-    echo ".env not found. Copying default configuration from .env.example..."
+if [ ! -f .env ] && [ -f .env.example ]; then
     cp .env.example .env
 fi
 
-# --- 5. Compile Project ---
-echo "Tidying Go module dependencies..."
-go mod tidy
+stop_old_instance() {
+    local pids
+    pids="$(pgrep -f '(^|/)pm-edge tv-direction' || true)"
+    if [ -n "$pids" ]; then
+        echo "Stopping previous pm-edge process(es): $pids"
+        kill $pids 2>/dev/null || true
+        sleep 2
+        pids="$(pgrep -f '(^|/)pm-edge tv-direction' || true)"
+        if [ -n "$pids" ]; then
+            kill -9 $pids 2>/dev/null || true
+        fi
+    fi
+}
 
-echo "Formatting source files..."
-gofmt -w -s .
+build_or_install_binary() {
+    rm -f "$TMP_TARGET"
 
-echo "Compiling the PM-Edge binary..."
-go build -o pm-edge ./cmd/pm-edge
+    if [ -f "$PREBUILT" ]; then
+        echo "Using prebuilt Linux amd64 binary: $PREBUILT"
+        cp "$PREBUILT" "$TMP_TARGET"
+        chmod +x "$TMP_TARGET"
+    else
+        if ! command -v go >/dev/null 2>&1; then
+            cat >&2 <<'EOF'
+ERROR: No prebuilt binary was found and Go is not available.
+Download the GitHub Actions artifact named 'pm-edge-linux-amd64', extract it
+into this repository directory, then run ./deploy.sh again.
+EOF
+            exit 1
+        fi
 
-echo "Compilation successful!"
+        echo "No prebuilt binary found; building in low-memory mode with $(go version)."
+        if [ "$(go env GOROOT)" = "$(go env GOPATH)" ]; then
+            echo "ERROR: GOROOT and GOPATH must not point to the same directory." >&2
+            exit 1
+        fi
 
-# --- 6. Update Systemd/Logrotate with Absolute Paths ---
-# If the user has sudo we can update system services, otherwise we advise running as userland nohup
-echo "Generating customized service configurations for user..."
-sed "s|/app|$SCRIPT_DIR|g" pm-edge.service > pm-edge.service.local
-sed "s|/app|$SCRIPT_DIR|g" pm-edge.logrotate > pm-edge.logrotate.local
+        # modernc.org/sqlite is memory-heavy to compile. Serial compilation and
+        # aggressive GC make this the safest fallback on small VPS instances.
+        if ! GOMAXPROCS="${GOMAXPROCS:-1}" GOGC="${GOGC:-20}" \
+            go build -p=1 -trimpath -o "$TMP_TARGET" ./cmd/pm-edge; then
+            cat >&2 <<'EOF'
+ERROR: Local compilation failed. On ~1 GB VPS hosts this is commonly an OOM.
+Use the CI-built 'pm-edge-linux-amd64' artifact instead of compiling locally.
+EOF
+            rm -f "$TMP_TARGET"
+            exit 1
+        fi
+    fi
 
-# --- 7. Launch in Background (Paper-Only Engine) ---
-echo "Starting PM-Edge Research Engine in paper-trading background mode..."
-nohup ./pm-edge tv-direction > logs/run_output.log 2>&1 &
+    mv -f "$TMP_TARGET" "$TARGET"
+    chmod +x "$TARGET"
+}
 
-# Wait 3 seconds to check if it crashed on boot
-sleep 3
-NEW_PID=$(pgrep -f "pm-edge tv-direction" || true)
+stop_old_instance
+build_or_install_binary
 
-if [ -z "$NEW_PID" ]; then
-    echo "❌ Error: pm-edge failed to start. Last 15 lines of log output:"
-    tail -n 15 logs/run_output.log
-    exit 1
-else
-    echo "✅ PM-Edge successfully started with PID: $NEW_PID!"
-    echo "========================================================="
-    echo "🎉 DEPLOYMENT SUCCESSFUL!"
-    echo "========================================================="
-    echo "Web Dashboard: http://YOUR_VPS_IP:8080"
-    echo ""
-    echo "Useful Commands:"
-    echo "👉 View Live Logs:      tail -f logs/run_output.log"
-    echo "👉 Check Status:        ./healthcheck.sh"
-    echo "👉 Stop Application:    pkill -f \"pm-edge tv-direction\""
-    echo "========================================================="
-    echo "💡 Note: If you want to use systemd instead of background nohup,"
-    echo "   we have customized a config for you here:"
-    echo "   $SCRIPT_DIR/pm-edge.service.local"
-    echo "========================================================="
+# Generate user-local service/logrotate templates without requiring sudo.
+if [ -f pm-edge.service ]; then
+    sed "s|/app|$SCRIPT_DIR|g" pm-edge.service > pm-edge.service.local
 fi
+if [ -f pm-edge.logrotate ]; then
+    sed "s|/app|$SCRIPT_DIR|g" pm-edge.logrotate > pm-edge.logrotate.local
+fi
+
+: > logs/run_output.log
+nohup "$TARGET" tv-direction >> logs/run_output.log 2>&1 &
+NEW_PID=$!
+echo "$NEW_PID" > logs/pm-edge.pid
+
+healthy=0
+for _ in $(seq 1 10); do
+    if ! kill -0 "$NEW_PID" 2>/dev/null; then
+        break
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        if curl --fail --silent --max-time 2 "http://127.0.0.1:${PORT}/health" >/dev/null; then
+            healthy=1
+            break
+        fi
+    else
+        # Without curl, staying alive for the grace period is the best local check.
+        healthy=1
+        break
+    fi
+    sleep 1
+done
+
+if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pm-edge did not become healthy. Last log lines:" >&2
+    tail -n 40 logs/run_output.log >&2 || true
+    kill "$NEW_PID" 2>/dev/null || true
+    exit 1
+fi
+
+echo "Deployment successful. PID: $NEW_PID"
+echo "Health: http://127.0.0.1:${PORT}/health"
+echo "Logs:   tail -f $SCRIPT_DIR/logs/run_output.log"
+echo "Stop:   kill $NEW_PID"
