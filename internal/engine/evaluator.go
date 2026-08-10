@@ -10,46 +10,71 @@ import (
 )
 
 type EvaluationResult struct {
-	Timestamp            string         `json:"timestamp"`
-	Question             string         `json:"question"`
-	Slug                 string         `json:"slug"`
-	MarketEndTime        string         `json:"marketEndTime"`
-	PriceToBeat          float64        `json:"priceToBeat"`
-	CurrentPrice         float64        `json:"currentPrice"`
-	SpotMinusPriceToBeat float64        `json:"spotMinusPriceToBeat"`
-	SecondsRemaining     float64        `json:"secondsRemaining"`
-	PUp                  float64        `json:"pUp"`
-	PDown                float64        `json:"pDown"`
-	BidVol               float64        `json:"bidVol"`
-	AskVol               float64        `json:"askVol"`
-	SpoofFilteredBidVol  float64        `json:"spoofFilteredBidVol"`
-	SpoofFilteredAskVol  float64        `json:"spoofFilteredAskVol"`
-	Imbalance            float64        `json:"imbalance"`
-	WeightedImbalance    float64        `json:"weightedImbalance"`
-	ProbabilityScore     float64        `json:"probabilityScore"`
-	OrderFlowScore       float64        `json:"orderFlowScore"`
-	TechnicalScore       float64        `json:"technicalScore"`
-	Volatility           float64        `json:"volatility"`
-	Drift                float64        `json:"drift"`
-	CompositeScore       float64        `json:"compositeScore"`
-	FinalScore           float64        `json:"finalScore"`
-	Decision             string         `json:"decision"`
-	Confidence           float64        `json:"confidence"`
-	Indicators           map[string]int `json:"indicators"`
-	MarketStale          bool           `json:"marketStale"`
-	DataSource           string         `json:"dataSource"`
-	DepthSource          string         `json:"depthSource"`
-	DepthFresh           bool           `json:"depthFresh"`
-	DepthAgeMs           int64          `json:"depthAgeMs"`
+	Timestamp             string         `json:"timestamp"`
+	Question              string         `json:"question"`
+	Slug                  string         `json:"slug"`
+	MarketEndTime         string         `json:"marketEndTime"`
+	PriceToBeat           float64        `json:"priceToBeat"`
+	CurrentPrice          float64        `json:"currentPrice"`
+	SpotMinusPriceToBeat  float64        `json:"spotMinusPriceToBeat"`
+	SecondsRemaining      float64        `json:"secondsRemaining"`
+	PUp                   float64        `json:"pUp"`
+	PDown                 float64        `json:"pDown"`
+	ForecastReady         bool           `json:"forecastReady"`
+	ForecastSamples       int            `json:"forecastSamples"`
+	ForecastPrice         float64        `json:"forecastPrice"`
+	ForecastMeanPrice     float64        `json:"forecastMeanPrice"`
+	ForecastLow68         float64        `json:"forecastLow68"`
+	ForecastHigh68        float64        `json:"forecastHigh68"`
+	ForecastLow95         float64        `json:"forecastLow95"`
+	ForecastHigh95        float64        `json:"forecastHigh95"`
+	PTBZ                  float64        `json:"ptbZ"`
+	RequiredMoveBps       float64        `json:"requiredMoveBps"`
+	ExpectedMoveBps       float64        `json:"expectedMoveBps"`
+	ForecastConfidence    float64        `json:"forecastConfidence"`
+	BidVol                float64        `json:"bidVol"`
+	AskVol                float64        `json:"askVol"`
+	SpoofFilteredBidVol   float64        `json:"spoofFilteredBidVol"`
+	SpoofFilteredAskVol   float64        `json:"spoofFilteredAskVol"`
+	BidNotionalUSD        float64        `json:"bidNotionalUsd"`
+	AskNotionalUSD        float64        `json:"askNotionalUsd"`
+	TotalDepthNotionalUSD float64        `json:"totalDepthNotionalUsd"`
+	BestBid               float64        `json:"bestBid"`
+	BestAsk               float64        `json:"bestAsk"`
+	WorstBid20            float64        `json:"worstBid20"`
+	WorstAsk20            float64        `json:"worstAsk20"`
+	DepthMidPrice         float64        `json:"depthMidPrice"`
+	SpreadUSD             float64        `json:"spreadUsd"`
+	SpreadBps             float64        `json:"spreadBps"`
+	BidRangeUSD           float64        `json:"bidRangeUsd"`
+	AskRangeUSD           float64        `json:"askRangeUsd"`
+	BidRangeBps           float64        `json:"bidRangeBps"`
+	AskRangeBps           float64        `json:"askRangeBps"`
+	Imbalance             float64        `json:"imbalance"`
+	WeightedImbalance     float64        `json:"weightedImbalance"`
+	ProbabilityScore      float64        `json:"probabilityScore"`
+	OrderFlowScore        float64        `json:"orderFlowScore"`
+	TechnicalScore        float64        `json:"technicalScore"`
+	Volatility            float64        `json:"volatility"`
+	Drift                 float64        `json:"drift"`
+	CompositeScore        float64        `json:"compositeScore"`
+	FinalScore            float64        `json:"finalScore"`
+	Decision              string         `json:"decision"`
+	Confidence            float64        `json:"confidence"`
+	Indicators            map[string]int `json:"indicators"`
+	MarketStale           bool           `json:"marketStale"`
+	DataSource            string         `json:"dataSource"`
+	DepthSource           string         `json:"depthSource"`
+	DepthFresh            bool           `json:"depthFresh"`
+	DepthAgeMs            int64          `json:"depthAgeMs"`
 }
 
 type Evaluator struct{}
 
 func NewEvaluator() *Evaluator { return &Evaluator{} }
 
-// Evaluate fails closed unless the reference price, Binance price and Depth20
-// orderbook are all fresh. A missing orderbook must never be represented as a
-// real 0.00% imbalance.
+// Evaluate fails closed unless the Chainlink reference, Binance spot, Depth20
+// orderbook and terminal-forecast inputs are all fresh enough for research use.
 func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, referencePrice float64, referenceFresh bool, nowUTC string) *EvaluationResult {
 	if market == nil || market.PriceToBeat <= 0 || referencePrice <= 0 || !referenceFresh {
 		return nil
@@ -72,72 +97,25 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 
 	currentPrice := referencePrice
 	priceToBeat := market.PriceToBeat
-	T := secondsRemaining / 31536000.0
-	logReturns := binanceClient.GetLogReturns()
-	sigmaAnnual := 0.15
-	muAnnual := 0.0
-	if len(logReturns) >= 10 {
-		sum := 0.0
-		for _, r := range logReturns {
-			sum += r
-		}
-		mean := sum / float64(len(logReturns))
-		varianceSum := 0.0
-		for _, r := range logReturns {
-			varianceSum += (r - mean) * (r - mean)
-		}
-		variance := varianceSum / float64(len(logReturns)-1)
-		sigmaAnnual = math.Sqrt(variance * 31536000.0)
-		muAnnual = mean * 31536000.0
+	forecast := probability.EstimateTerminalForecast(
+		currentPrice,
+		priceToBeat,
+		secondsRemaining,
+		binanceClient.GetLogReturns(),
+	)
+	if !forecast.Ready {
+		return nil
 	}
+	pUp := forecast.PAbove
+	pDown := forecast.PBelow
 
-	pUp, pDown := probability.CalculateProbability(currentPrice, priceToBeat, T, sigmaAnnual, muAnnual)
 	lastBids, lastAsks := binanceClient.GetLastBidsAndAsks()
 	if len(lastBids) == 0 || len(lastAsks) == 0 {
 		return nil
 	}
-
-	bidVol := 0.0
-	askVol := 0.0
-	spoofFilteredBidVol := 0.0
-	spoofFilteredAskVol := 0.0
-	weightedBidVol := 0.0
-	weightedAskVol := 0.0
-	binanceSpot := binanceClient.GetPrice()
-	for p, size := range lastBids {
-		bidVol += size
-		if binanceClient.IsSpoofing(p, size, true) {
-			continue
-		}
-		spoofFilteredBidVol += size
-		dist := math.Abs(binanceSpot - p)
-		if dist > 0 {
-			weightedBidVol += size / (dist * dist)
-		} else {
-			weightedBidVol += size
-		}
-	}
-	for p, size := range lastAsks {
-		askVol += size
-		if binanceClient.IsSpoofing(p, size, false) {
-			continue
-		}
-		spoofFilteredAskVol += size
-		dist := math.Abs(binanceSpot - p)
-		if dist > 0 {
-			weightedAskVol += size / (dist * dist)
-		} else {
-			weightedAskVol += size
-		}
-	}
-
-	imbalance := 0.0
-	if spoofFilteredBidVol+spoofFilteredAskVol > 0 {
-		imbalance = (spoofFilteredBidVol - spoofFilteredAskVol) / (spoofFilteredBidVol + spoofFilteredAskVol)
-	}
-	weightedImbalance := 0.0
-	if weightedBidVol+weightedAskVol > 0 {
-		weightedImbalance = (weightedBidVol - weightedAskVol) / (weightedBidVol + weightedAskVol)
+	depth := CalculateDepthMetrics(lastBids, lastAsks, binanceClient.IsSpoofing)
+	if depth.BestBid <= 0 || depth.BestAsk <= 0 || depth.FilteredBidVol+depth.FilteredAskVol <= 0 {
+		return nil
 	}
 
 	candles1m := binanceClient.GetCandles("1m")
@@ -153,7 +131,13 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 
 	probabilityScore := (pUp - 0.5) * 2.0
-	orderFlowScore := weightedImbalance
+	orderFlowScore := depth.WeightedImbalance
+	// A single microstructure feature must not overwhelm terminal probability.
+	if orderFlowScore > 0.80 {
+		orderFlowScore = 0.80
+	} else if orderFlowScore < -0.80 {
+		orderFlowScore = -0.80
+	}
 	compositeScore := (0.55 * probabilityScore) + (0.30 * orderFlowScore) + (0.15 * technicalScore)
 	finalScore := compositeScore
 	decision := "NEUTRAL"
@@ -163,6 +147,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		decision = "DOWN"
 	}
 	confidence := math.Min(100.0, math.Abs(finalScore)*100.0)
+
 	depthAge := binanceClient.DepthAge(nowTime)
 	depthAgeMs := int64(-1)
 	if depthAge >= 0 {
@@ -171,37 +156,63 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	depthSource := binanceClient.GetDepthDataSource()
 
 	return &EvaluationResult{
-		Timestamp:            nowUTC,
-		Question:             market.Question,
-		Slug:                 market.EventSlug,
-		MarketEndTime:        market.EndTime.UTC().Format(time.RFC3339),
-		PriceToBeat:          priceToBeat,
-		CurrentPrice:         currentPrice,
-		SpotMinusPriceToBeat: currentPrice - priceToBeat,
-		SecondsRemaining:     secondsRemaining,
-		PUp:                  pUp,
-		PDown:                pDown,
-		BidVol:               bidVol,
-		AskVol:               askVol,
-		SpoofFilteredBidVol:  spoofFilteredBidVol,
-		SpoofFilteredAskVol:  spoofFilteredAskVol,
-		Imbalance:            imbalance,
-		WeightedImbalance:    weightedImbalance,
-		ProbabilityScore:     probabilityScore,
-		OrderFlowScore:       orderFlowScore,
-		TechnicalScore:       technicalScore,
-		Volatility:           sigmaAnnual,
-		Drift:                muAnnual,
-		CompositeScore:       compositeScore,
-		FinalScore:           finalScore,
-		Decision:             decision,
-		Confidence:           confidence,
-		Indicators:           indicators,
-		MarketStale:          market.MarketStale,
-		DataSource:           "CHAINLINK_RTDS+" + binanceClient.GetDataSource() + "+" + depthSource,
-		DepthSource:          depthSource,
-		DepthFresh:           true,
-		DepthAgeMs:           depthAgeMs,
+		Timestamp:             nowUTC,
+		Question:              market.Question,
+		Slug:                  market.EventSlug,
+		MarketEndTime:         market.EndTime.UTC().Format(time.RFC3339),
+		PriceToBeat:           priceToBeat,
+		CurrentPrice:          currentPrice,
+		SpotMinusPriceToBeat:  currentPrice - priceToBeat,
+		SecondsRemaining:      secondsRemaining,
+		PUp:                   pUp,
+		PDown:                 pDown,
+		ForecastReady:         forecast.Ready,
+		ForecastSamples:       forecast.Samples,
+		ForecastPrice:         forecast.ForecastMedian,
+		ForecastMeanPrice:     forecast.ForecastMean,
+		ForecastLow68:         forecast.Lower68,
+		ForecastHigh68:        forecast.Upper68,
+		ForecastLow95:         forecast.Lower95,
+		ForecastHigh95:        forecast.Upper95,
+		PTBZ:                  forecast.TargetZ,
+		RequiredMoveBps:       forecast.RequiredMoveBps,
+		ExpectedMoveBps:       forecast.ExpectedMoveBps,
+		ForecastConfidence:    forecast.Confidence,
+		BidVol:                depth.BidVol,
+		AskVol:                depth.AskVol,
+		SpoofFilteredBidVol:   depth.FilteredBidVol,
+		SpoofFilteredAskVol:   depth.FilteredAskVol,
+		BidNotionalUSD:        depth.BidNotionalUSD,
+		AskNotionalUSD:        depth.AskNotionalUSD,
+		TotalDepthNotionalUSD: depth.TotalNotionalUSD,
+		BestBid:               depth.BestBid,
+		BestAsk:               depth.BestAsk,
+		WorstBid20:            depth.WorstBid,
+		WorstAsk20:            depth.WorstAsk,
+		DepthMidPrice:         depth.MidPrice,
+		SpreadUSD:             depth.SpreadUSD,
+		SpreadBps:             depth.SpreadBps,
+		BidRangeUSD:           depth.BidRangeUSD,
+		AskRangeUSD:           depth.AskRangeUSD,
+		BidRangeBps:           depth.BidRangeBps,
+		AskRangeBps:           depth.AskRangeBps,
+		Imbalance:             depth.Imbalance,
+		WeightedImbalance:     depth.WeightedImbalance,
+		ProbabilityScore:      probabilityScore,
+		OrderFlowScore:        orderFlowScore,
+		TechnicalScore:        technicalScore,
+		Volatility:            forecast.VolatilityAnnual,
+		Drift:                 forecast.DriftAnnual,
+		CompositeScore:        compositeScore,
+		FinalScore:            finalScore,
+		Decision:              decision,
+		Confidence:            confidence,
+		Indicators:            indicators,
+		MarketStale:           market.MarketStale,
+		DataSource:            "CHAINLINK_RTDS+" + binanceClient.GetDataSource() + "+" + depthSource,
+		DepthSource:           depthSource,
+		DepthFresh:            true,
+		DepthAgeMs:            depthAgeMs,
 	}
 }
 

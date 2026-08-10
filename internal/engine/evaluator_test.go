@@ -12,7 +12,13 @@ func readyInputs() (*binance.Client, *polymarket.Market, time.Time) {
 	now := time.Now().UTC()
 	bc := binance.NewClient()
 	bc.UpdateDepth([][]string{{"99990", "2.0"}}, [][]string{{"100010", "4.0"}}, now)
-	bc.UpdateFromTrade(100000, 1, now, true)
+	for i := 20; i >= 0; i-- {
+		price := 100000.0 + float64(20-i)*0.2
+		if i%2 == 0 {
+			price -= 0.05
+		}
+		bc.UpdateFromTrade(price, 1, now.Add(-time.Duration(i)*time.Second), true)
+	}
 	m := &polymarket.Market{Question: "Bitcoin Up or Down - 5 Minutes", EventSlug: "btc-updown-5m-test", Active: true, StartTime: now.Add(-time.Minute), EndTime: now.Add(4 * time.Minute), PriceToBeat: 99950}
 	return bc, m, now
 }
@@ -32,6 +38,15 @@ func TestEvaluatorUsesCanonicalReferencePrice(t *testing.T) {
 	}
 	if res.Slug != market.EventSlug {
 		t.Fatalf("slug got %q want %q", res.Slug, market.EventSlug)
+	}
+	if !res.ForecastReady || res.ForecastSamples < 10 {
+		t.Fatalf("terminal forecast not ready: %+v", res)
+	}
+	if res.ForecastPrice <= 0 || res.ForecastLow68 <= 0 || res.ForecastHigh68 <= res.ForecastLow68 {
+		t.Fatalf("invalid terminal forecast fields: %+v", res)
+	}
+	if res.PUp != 0 && (res.PUp < 0 || res.PUp > 1) {
+		t.Fatalf("invalid PUp %f", res.PUp)
 	}
 }
 
@@ -66,5 +81,16 @@ func TestEvaluatorRejectsExpiredMarket(t *testing.T) {
 	m.EndTime = now.Add(-time.Second)
 	if got := ev.Evaluate(bc, m, 100000, true, now.Format(time.RFC3339Nano)); got != nil {
 		t.Fatal("expired market must produce NO_SIGNAL")
+	}
+}
+
+func TestEvaluatorRejectsForecastWithoutEnoughReturns(t *testing.T) {
+	now := time.Now().UTC()
+	bc := binance.NewClient()
+	bc.UpdateDepth([][]string{{"99990", "2.0"}}, [][]string{{"100010", "4.0"}}, now)
+	bc.UpdateFromTrade(100000, 1, now, true)
+	m := &polymarket.Market{Question: "Bitcoin Up or Down - 5 Minutes", EventSlug: "btc-updown-5m-test", Active: true, EndTime: now.Add(2 * time.Minute), PriceToBeat: 100010}
+	if got := NewEvaluator().Evaluate(bc, m, 100000, true, now.Format(time.RFC3339Nano)); got != nil {
+		t.Fatal("insufficient one-second return history must fail closed")
 	}
 }
