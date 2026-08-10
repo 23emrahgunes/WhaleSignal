@@ -181,6 +181,9 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	if err != nil || !created {
 		return trade, false, err
 	}
+	// Hedge evidence must start after the original position exists. Pre-entry
+	// signal noise is not allowed to satisfy the reverse-regime gate.
+	delete(e.regimes, market.EventSlug)
 	return trade, true, nil
 }
 
@@ -195,11 +198,11 @@ func (e *Engine) MaybeHedge(res *engine.EvaluationResult, market *polymarket.Mar
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.observeRegime(market.EventSlug, res)
 	openTrade, err := e.db.GetOpenPaperTradeByMarket(market.EventSlug)
 	if err != nil || openTrade == nil {
 		return nil, false, err
 	}
+	e.observeRegime(market.EventSlug, res)
 	if existing, err := e.db.GetPaperHedgeByTradeID(openTrade.ID); err != nil {
 		return nil, false, err
 	} else if existing != nil {
