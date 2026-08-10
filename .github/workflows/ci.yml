@@ -113,6 +113,28 @@ jobs:
           echo "Runtime smoke passed"
           tail -n 30 /tmp/pm-edge-smoke.log || true
 
+      - name: VPS deploy script smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dist/pm-edge pm-edge
+          chmod +x pm-edge deploy.sh
+          rm -f /tmp/pm-edge-deploy.sqlite
+
+          cleanup_deploy() {
+            if [ -f pm-edge.pid ]; then
+              PID="$(cat pm-edge.pid)"
+              kill "$PID" 2>/dev/null || true
+              wait "$PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_deploy EXIT
+
+          PORT=18081 DB_PATH=/tmp/pm-edge-deploy.sqlite POLYMARKET_POLL_SEC=5 LOG_LEVEL=info ./deploy.sh
+          curl -fsS --max-time 2 http://127.0.0.1:18081/health | grep -q 'OK'
+          kill -0 "$(cat pm-edge.pid)"
+          echo "VPS deploy script smoke passed"
+
       - name: Upload linux binary artifact
         uses: actions/upload-artifact@v4
         with:
