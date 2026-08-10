@@ -13,7 +13,15 @@ import (
 	"pm-edge/internal/util"
 )
 
-const binanceWSStaleAfter = 3 * time.Second
+const (
+	binanceWSStaleAfter    = 3 * time.Second
+	binanceDepthStaleAfter = 3 * time.Second
+)
+
+var binanceWSURLs = []string{
+	"wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms",
+	"wss://stream.binance.com:443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms",
+}
 
 type WSManager struct {
 	client     *Client
@@ -49,21 +57,21 @@ func (w *WSManager) Stop() {
 
 func (w *WSManager) run() {
 	defer w.wg.Done()
-	url := "wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms"
 	backoff := time.Second
-
+	urlIndex := 0
 	for {
 		select {
 		case <-w.stopChan:
 			return
 		default:
 		}
-
+		url := binanceWSURLs[urlIndex%len(binanceWSURLs)]
+		urlIndex++
 		util.Logger.Info("Connecting to Binance WS streams...", zap.String("url", url))
 		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 		if err != nil {
 			w.client.SetWSState(false, true)
-			util.Logger.Warn("Binance WS connection failed", zap.Error(err), zap.Duration("backoff", backoff))
+			util.Logger.Warn("Binance WS connection failed; REST price/depth fallback remains active", zap.Error(err), zap.Duration("backoff", backoff))
 			if !w.sleepWithContext(backoff) {
 				return
 			}
@@ -76,7 +84,7 @@ func (w *WSManager) run() {
 		w.wsConn = conn
 		w.mu.Unlock()
 		w.client.SetWSState(true, false)
-		util.Logger.Info("Connected to Binance WebSocket stream")
+		util.Logger.Info("Connected to Binance WebSocket stream", zap.String("url", url))
 
 		err = w.readLoop(conn)
 		w.client.SetWSState(false, true)
@@ -86,12 +94,11 @@ func (w *WSManager) run() {
 		}
 		w.mu.Unlock()
 		_ = conn.Close()
-
 		select {
 		case <-w.stopChan:
 			return
 		default:
-			util.Logger.Warn("Binance WebSocket connection lost", zap.Error(err))
+			util.Logger.Warn("Binance WebSocket connection lost; REST fallback remains active", zap.Error(err))
 		}
 		if !w.sleepWithContext(time.Second) {
 			return
@@ -134,19 +141,15 @@ type DepthEvent struct {
 
 func (w *WSManager) readLoop(conn *websocket.Conn) error {
 	for {
-		// A TCP connection can remain open while data silently stops. Force a
-		// reconnect when no message arrives so REST can take over immediately.
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return err
 		}
-
 		var payload CombinedStreamPayload
 		if err := json.Unmarshal(msg, &payload); err != nil {
 			continue
 		}
-
 		switch payload.Stream {
 		case "btcusdt@trade":
 			var ev TradeEvent
@@ -161,14 +164,16 @@ func (w *WSManager) readLoop(conn *websocket.Conn) error {
 		case "btcusdt@depth20@100ms":
 			var ev DepthEvent
 			if err := json.Unmarshal(payload.Data, &ev); err == nil {
-				w.client.UpdateDepth(ev.Bids, ev.Asks, time.Now().UTC())
+				w.client.UpdateDepthWithSource(ev.Bids, ev.Asks, time.Now().UTC(), "BINANCE_WS_DEPTH20")
 			}
 		}
 	}
 }
 
-// StartFallbackRESTPoller also acts as a freshness watchdog. It polls REST when
-// WS is disconnected OR when the last live price is stale despite an open WS.
+// StartFallbackRESTPoller keeps BOTH the last trade price and Depth20 state
+// fresh. Previously only ticker price had a REST fallback, so a blocked Binance
+// websocket produced permanently empty bids/asks and a misleading 0.00% order
+// flow panel.
 func (w *WSManager) StartFallbackRESTPoller() {
 	if w.IsMockMode {
 		return
@@ -183,15 +188,23 @@ func (w *WSManager) StartFallbackRESTPoller() {
 			case <-w.stopChan:
 				return
 			case now := <-ticker.C:
-				if !w.client.ShouldRESTFallback(now.UTC(), binanceWSStaleAfter) {
-					continue
+				now = now.UTC()
+				if w.client.ShouldRESTFallback(now, binanceWSStaleAfter) {
+					price, err := w.client.FetchTickerPriceREST()
+					if err != nil {
+						util.Logger.Warn("Binance fallback ticker REST poll failed", zap.Error(err))
+					} else {
+						w.client.UpdateFromTrade(price, 0, now, false)
+					}
 				}
-				price, err := w.client.FetchTickerPriceREST()
-				if err != nil {
-					util.Logger.Warn("Binance fallback REST poller failed", zap.Error(err))
-					continue
+				if !w.client.IsDepthFreshAt(now, binanceDepthStaleAfter) {
+					bids, asks, err := w.client.FetchDepthREST()
+					if err != nil {
+						util.Logger.Warn("Binance fallback depth REST poll failed", zap.Error(err))
+					} else {
+						w.client.UpdateDepthWithSource(bids, asks, now, "BINANCE_REST_DEPTH20")
+					}
 				}
-				w.client.UpdateFromTrade(price, 0, now.UTC(), false)
 			}
 		}
 	}()
@@ -216,7 +229,7 @@ func (w *WSManager) StartMockDataInjector() {
 				w.client.SetDataSource("MOCK")
 				bids := [][]string{{fmt.Sprintf("%f", p-10), "5.5"}, {fmt.Sprintf("%f", p-20), "10.0"}}
 				asks := [][]string{{fmt.Sprintf("%f", p+10), "4.8"}, {fmt.Sprintf("%f", p+20), "12.0"}}
-				w.client.UpdateDepth(bids, asks, now.UTC())
+				w.client.UpdateDepthWithSource(bids, asks, now.UTC(), "MOCK_DEPTH")
 			}
 		}
 	}()
