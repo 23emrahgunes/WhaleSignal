@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"pm-edge/internal/util"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"pm-edge/internal/util"
 )
 
 type WSManager struct {

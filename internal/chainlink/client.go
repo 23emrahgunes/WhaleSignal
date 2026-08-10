@@ -31,9 +31,9 @@ type Snapshot struct {
 }
 
 type Client struct {
-	mu          sync.RWMutex
-	current     tick
-	anchors     map[int64]tick
+	mu           sync.RWMutex
+	current      tick
+	anchors      map[int64]tick
 	lastObserved tick
 
 	url      string
