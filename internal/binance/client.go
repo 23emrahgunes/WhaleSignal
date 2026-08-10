@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"pm-edge/internal/util"
 	"go.uber.org/zap"
+	"pm-edge/internal/util"
 )
 
 type Candle struct {
@@ -50,64 +50,66 @@ type Client struct {
 	httpClient *http.Client
 	mu         sync.RWMutex
 
-	// Candlesticks (In-memory)
 	Candles1m []Candle
 	Candles5m []Candle
 
-	// Current Price and returns
 	CurrentPrice float64
-	LogReturns   []float64 // last 60 seconds returns
+	LogReturns   []float64
 
-	// Order book mapping for Bid/Ask metrics
+	returnSampleTime  time.Time
+	returnSamplePrice float64
+
 	LastBids map[float64]float64
 	LastAsks map[float64]float64
 
-	// Spoofing analysis
 	Snapshots []DepthSnapshot
 	SeenBids  map[float64]*SeenOrder
 	SeenAsks  map[float64]*SeenOrder
 
-	// Reconnection states, flags, data source tracking
-	IsWsConnected bool
-	WSFallback    bool
-	DataSource    string // "BINANCE_WS", "BINANCE_REST", "MOCK"
+	isWsConnected bool
+	wsFallback    bool
+	DataSource    string
+	DepthSource   string
 
 	LastPriceUpdateTime time.Time
+	LastDepthUpdateTime time.Time
 }
 
 func NewClient() *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		LogReturns: make([]float64, 0, 60),
-		LastBids:   make(map[float64]float64),
-		LastAsks:   make(map[float64]float64),
-		SeenBids:   make(map[float64]*SeenOrder),
-		SeenAsks:   make(map[float64]*SeenOrder),
-		Snapshots:  make([]DepthSnapshot, 0, 10),
-		DataSource: "MOCK", // default initial source before real ticks arrive
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		LogReturns:  make([]float64, 0, 60),
+		LastBids:    make(map[float64]float64),
+		LastAsks:    make(map[float64]float64),
+		SeenBids:    make(map[float64]*SeenOrder),
+		SeenAsks:    make(map[float64]*SeenOrder),
+		Snapshots:   make([]DepthSnapshot, 0, 10),
+		DataSource:  "UNINITIALIZED",
+		DepthSource: "UNINITIALIZED",
+		wsFallback:  true,
 	}
 }
 
-// WarmupCandles loads last 200 bars for 1m and 5m klines from Binance REST.
 func (c *Client) WarmupCandles() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	candles1, err := c.fetchKlines("1m", 200)
+	candles1m, err := c.fetchKlines("1m", 200)
 	if err != nil {
 		return fmt.Errorf("1m klines warmup failed: %w", err)
 	}
-	c.Candles1m = candles1
-
-	candles5, err := c.fetchKlines("5m", 200)
+	candles5m, err := c.fetchKlines("5m", 200)
 	if err != nil {
 		return fmt.Errorf("5m klines warmup failed: %w", err)
 	}
-	c.Candles5m = candles5
 
-	if len(candles1) > 0 {
-		c.CurrentPrice = candles1[len(candles1)-1].Close
-		c.LastPriceUpdateTime = time.Now().UTC()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Candles1m = candles1m
+	c.Candles5m = candles5m
+	if len(candles1m) > 0 {
+		c.CurrentPrice = candles1m[len(candles1m)-1].Close
+		now := time.Now().UTC()
+		c.LastPriceUpdateTime = now
+		c.returnSampleTime = now.Truncate(time.Second)
+		c.returnSamplePrice = c.CurrentPrice
 		c.DataSource = "BINANCE_REST"
 	}
 
@@ -120,58 +122,52 @@ func (c *Client) WarmupCandles() error {
 }
 
 func (c *Client) fetchKlines(interval string, limit int) ([]Candle, error) {
-	url := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=%s&limit=%d", interval, limit)
-	resp, err := c.httpClient.Get(url)
+	endpoint := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=%s&limit=%d", interval, limit)
+	resp, err := c.httpClient.Get(endpoint)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http status error: %d", resp.StatusCode)
 	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-
 	var data [][]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
 	}
-
 	candles := make([]Candle, 0, len(data))
 	for _, raw := range data {
 		if len(raw) < 6 {
 			continue
 		}
-		openTimeMs, _ := raw[0].(float64)
-		openPrice, _ := strconv.ParseFloat(raw[1].(string), 64)
-		highPrice, _ := strconv.ParseFloat(raw[2].(string), 64)
-		lowPrice, _ := strconv.ParseFloat(raw[3].(string), 64)
-		closePrice, _ := strconv.ParseFloat(raw[4].(string), 64)
-		vol, _ := strconv.ParseFloat(raw[5].(string), 64)
-
-		candles = append(candles, Candle{
-			StartTime: time.UnixMilli(int64(openTimeMs)).UTC(),
-			Open:      openPrice,
-			High:      highPrice,
-			Low:       lowPrice,
-			Close:     closePrice,
-			Volume:    vol,
-		})
+		openTimeMs, ok := raw[0].(float64)
+		if !ok {
+			continue
+		}
+		openPrice, err1 := strconv.ParseFloat(fmt.Sprint(raw[1]), 64)
+		highPrice, err2 := strconv.ParseFloat(fmt.Sprint(raw[2]), 64)
+		lowPrice, err3 := strconv.ParseFloat(fmt.Sprint(raw[3]), 64)
+		closePrice, err4 := strconv.ParseFloat(fmt.Sprint(raw[4]), 64)
+		volume, err5 := strconv.ParseFloat(fmt.Sprint(raw[5]), 64)
+		if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
+			continue
+		}
+		candles = append(candles, Candle{StartTime: time.UnixMilli(int64(openTimeMs)).UTC(), Open: openPrice, High: highPrice, Low: lowPrice, Close: closePrice, Volume: volume})
 	}
-
 	return candles, nil
 }
 
-// UpdateFromTrade updates real-time BTC price and processes returning log-returns.
-func (c *Client) UpdateFromTrade(price float64, size float64, t time.Time, isWS bool) {
+func (c *Client) UpdateFromTrade(price float64, size float64, eventTime time.Time, isWS bool) {
+	if price <= 0 {
+		return
+	}
+	eventTime = eventTime.UTC()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	oldPrice := c.CurrentPrice
 	c.CurrentPrice = price
 	c.LastPriceUpdateTime = time.Now().UTC()
 	if isWS {
@@ -179,228 +175,202 @@ func (c *Client) UpdateFromTrade(price float64, size float64, t time.Time, isWS 
 	} else {
 		c.DataSource = "BINANCE_REST"
 	}
-
-	if oldPrice > 0 {
-		ret := math.Log(price / oldPrice)
-		if len(c.LogReturns) >= 60 {
-			c.LogReturns = c.LogReturns[1:]
+	second := eventTime.Truncate(time.Second)
+	switch {
+	case c.returnSampleTime.IsZero() || c.returnSamplePrice <= 0:
+		c.returnSampleTime = second
+		c.returnSamplePrice = price
+	case second.Equal(c.returnSampleTime):
+		c.returnSamplePrice = price
+	case second.After(c.returnSampleTime):
+		deltaSeconds := second.Sub(c.returnSampleTime).Seconds()
+		if deltaSeconds > 0 {
+			oneSecondReturn := math.Log(price/c.returnSamplePrice) / deltaSeconds
+			if len(c.LogReturns) >= 60 {
+				c.LogReturns = c.LogReturns[1:]
+			}
+			c.LogReturns = append(c.LogReturns, oneSecondReturn)
 		}
-		c.LogReturns = append(c.LogReturns, ret)
+		c.returnSampleTime = second
+		c.returnSamplePrice = price
 	}
-
-	// Update the latest candle
-	c.aggregateCandle(price, size, t, "1m")
-	c.aggregateCandle(price, size, t, "5m")
+	c.aggregateCandle(price, size, eventTime, "1m")
+	c.aggregateCandle(price, size, eventTime, "5m")
 }
 
-func (c *Client) aggregateCandle(price float64, size float64, t time.Time, interval string) {
-	var list *[]Candle
+func (c *Client) aggregateCandle(price float64, size float64, eventTime time.Time, interval string) {
+	var candles *[]Candle
 	var duration time.Duration
 	if interval == "1m" {
-		list = &c.Candles1m
+		candles = &c.Candles1m
 		duration = time.Minute
 	} else {
-		list = &c.Candles5m
+		candles = &c.Candles5m
 		duration = 5 * time.Minute
 	}
-
-	if len(*list) == 0 {
+	if len(*candles) == 0 {
 		return
 	}
-
-	roundedTime := t.Truncate(duration)
-	lastIdx := len(*list) - 1
-	lastCandle := (*list)[lastIdx]
-
-	if roundedTime.Equal(lastCandle.StartTime) {
-		if price > lastCandle.High {
-			(*list)[lastIdx].High = price
+	bucket := eventTime.Truncate(duration)
+	lastIndex := len(*candles) - 1
+	last := (*candles)[lastIndex]
+	if bucket.Equal(last.StartTime) {
+		if price > last.High {
+			(*candles)[lastIndex].High = price
 		}
-		if price < lastCandle.Low {
-			(*list)[lastIdx].Low = price
+		if price < last.Low {
+			(*candles)[lastIndex].Low = price
 		}
-		(*list)[lastIdx].Close = price
-		(*list)[lastIdx].Volume += size
-	} else if roundedTime.After(lastCandle.StartTime) {
-		newCandle := Candle{
-			StartTime: roundedTime,
-			Open:      price,
-			High:      price,
-			Low:       price,
-			Close:     price,
-			Volume:    size,
-		}
-		*list = append(*list, newCandle)
-		if len(*list) > 300 {
-			*list = (*list)[1:]
+		(*candles)[lastIndex].Close = price
+		(*candles)[lastIndex].Volume += size
+		return
+	}
+	if bucket.After(last.StartTime) {
+		*candles = append(*candles, Candle{StartTime: bucket, Open: price, High: price, Low: price, Close: price, Volume: size})
+		if len(*candles) > 300 {
+			*candles = (*candles)[1:]
 		}
 	}
 }
 
-// UpdateDepth updates the real-time order flow and implements the spoof filter logic.
-func (c *Client) UpdateDepth(bidsRaw [][]string, asksRaw [][]string, t time.Time) {
+func (c *Client) UpdateDepth(bidsRaw [][]string, asksRaw [][]string, timestamp time.Time) {
+	c.UpdateDepthWithSource(bidsRaw, asksRaw, timestamp, "BINANCE_DEPTH")
+}
+
+func (c *Client) UpdateDepthWithSource(bidsRaw [][]string, asksRaw [][]string, timestamp time.Time, source string) {
+	timestamp = timestamp.UTC()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	bids := parseLevels(bidsRaw)
 	asks := parseLevels(asksRaw)
-
+	if len(bids) == 0 || len(asks) == 0 {
+		return
+	}
 	c.LastBids = bids
 	c.LastAsks = asks
-
-	snap := DepthSnapshot{
-		Timestamp: t,
-		Bids:      bids,
-		Asks:      asks,
+	c.LastDepthUpdateTime = time.Now().UTC()
+	if source != "" {
+		c.DepthSource = source
 	}
 	if len(c.Snapshots) >= 10 {
 		c.Snapshots = c.Snapshots[1:]
 	}
-	c.Snapshots = append(c.Snapshots, snap)
-
-	c.trackOrderLife(bids, t, true)
-	c.trackOrderLife(asks, t, false)
+	c.Snapshots = append(c.Snapshots, DepthSnapshot{Timestamp: timestamp, Bids: cloneDepth(bids), Asks: cloneDepth(asks)})
+	c.trackOrderLife(bids, timestamp, true)
+	c.trackOrderLife(asks, timestamp, false)
 }
 
 func parseLevels(raw [][]string) map[float64]float64 {
-	m := make(map[float64]float64)
-	for _, r := range raw {
-		if len(r) < 2 {
+	levels := make(map[float64]float64)
+	for _, row := range raw {
+		if len(row) < 2 {
 			continue
 		}
-		p, _ := strconv.ParseFloat(r[0], 64)
-		s, _ := strconv.ParseFloat(r[1], 64)
-		m[p] = s
+		price, errPrice := strconv.ParseFloat(row[0], 64)
+		size, errSize := strconv.ParseFloat(row[1], 64)
+		if errPrice != nil || errSize != nil || price <= 0 || size <= 0 {
+			continue
+		}
+		levels[price] = size
 	}
-	return m
+	return levels
 }
 
-func (c *Client) trackOrderLife(current map[float64]float64, t time.Time, isBid bool) {
-	seenMap := c.SeenBids
+func cloneDepth(src map[float64]float64) map[float64]float64 {
+	dst := make(map[float64]float64, len(src))
+	for price, size := range src {
+		dst[price] = size
+	}
+	return dst
+}
+
+func (c *Client) trackOrderLife(current map[float64]float64, timestamp time.Time, isBid bool) {
+	seen := c.SeenBids
 	if !isBid {
-		seenMap = c.SeenAsks
+		seen = c.SeenAsks
 	}
-
-	for p, size := range current {
-		if size == 0 {
-			if ord, ok := seenMap[p]; ok {
-				ord.LastSeen = t
-			}
+	for price, size := range current {
+		if order, ok := seen[price]; ok {
+			order.LastSeen = timestamp
+			order.Size = size
 		} else {
-			if ord, ok := seenMap[p]; ok {
-				ord.LastSeen = t
-				ord.Size = size
-			} else {
-				seenMap[p] = &SeenOrder{
-					FirstSeen: t,
-					LastSeen:  t,
-					Size:      size,
-				}
-			}
+			seen[price] = &SeenOrder{FirstSeen: timestamp, LastSeen: timestamp, Size: size}
 		}
 	}
-
-	for p, ord := range seenMap {
-		if t.Sub(ord.LastSeen) > 10*time.Second {
-			delete(seenMap, p)
+	for price, order := range seen {
+		if _, stillPresent := current[price]; !stillPresent && timestamp.Sub(order.LastSeen) > 10*time.Second {
+			delete(seen, price)
 		}
 	}
 }
 
-// IsSpoofing candidate checker
 func (c *Client) IsSpoofing(price float64, size float64, isBid bool) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	seenMap := c.SeenBids
+	seen := c.SeenBids
 	if !isBid {
-		seenMap = c.SeenAsks
+		seen = c.SeenAsks
 	}
-
-	order, ok := seenMap[price]
+	order, ok := seen[price]
 	if !ok {
 		return false
 	}
-
-	duration := order.LastSeen.Sub(order.FirstSeen)
-	if duration > time.Second {
+	if order.LastSeen.Sub(order.FirstSeen) >= time.Second {
 		return false
 	}
-
-	var currentSize float64
-	if isBid {
-		currentSize = c.LastBids[price]
-	} else {
-		currentSize = c.LastAsks[price]
-	}
-
-	if currentSize > 0 {
-		return false
-	}
-
-	medianSize := c.getMedianDepthSize(isBid)
+	medianSize := c.getMedianDepthSizeLocked(isBid)
 	threshold := math.Max(2.0, medianSize*3.0)
-
 	return size >= threshold
 }
 
 func (c *Client) getMedianDepthSize(isBid bool) float64 {
-	var list []float64
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.getMedianDepthSizeLocked(isBid)
+}
+
+func (c *Client) getMedianDepthSizeLocked(isBid bool) float64 {
+	var source map[float64]float64
 	if isBid {
-		for _, s := range c.LastBids {
-			if s > 0 {
-				list = append(list, s)
-			}
-		}
+		source = c.LastBids
 	} else {
-		for _, s := range c.LastAsks {
-			if s > 0 {
-				list = append(list, s)
-			}
+		source = c.LastAsks
+	}
+	values := make([]float64, 0, len(source))
+	for _, size := range source {
+		if size > 0 {
+			values = append(values, size)
 		}
 	}
-
-	if len(list) == 0 {
-		return 0.0
+	if len(values) == 0 {
+		return 0
 	}
-
-	sort.Float64s(list)
-	n := len(list)
-	if n%2 == 1 {
-		return list[n/2]
+	sort.Float64s(values)
+	middle := len(values) / 2
+	if len(values)%2 == 1 {
+		return values[middle]
 	}
-	return (list[n/2-1] + list[n/2]) / 2.0
+	return (values[middle-1] + values[middle]) / 2
 }
 
 func (c *Client) GetLastBidsAndAsks() (map[float64]float64, map[float64]float64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	bidsCopy := make(map[float64]float64, len(c.LastBids))
-	for k, v := range c.LastBids {
-		bidsCopy[k] = v
-	}
-
-	asksCopy := make(map[float64]float64, len(c.LastAsks))
-	for k, v := range c.LastAsks {
-		asksCopy[k] = v
-	}
-
-	return bidsCopy, asksCopy
+	return cloneDepth(c.LastBids), cloneDepth(c.LastAsks)
 }
 
 func (c *Client) GetCandles(interval string) []Candle {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
+	var source []Candle
 	if interval == "1m" {
-		ret := make([]Candle, len(c.Candles1m))
-		copy(ret, c.Candles1m)
-		return ret
+		source = c.Candles1m
+	} else {
+		source = c.Candles5m
 	}
-	ret := make([]Candle, len(c.Candles5m))
-	copy(ret, c.Candles5m)
-	return ret
+	result := make([]Candle, len(source))
+	copy(result, source)
+	return result
 }
 
 func (c *Client) GetPrice() float64 {
@@ -412,9 +382,9 @@ func (c *Client) GetPrice() float64 {
 func (c *Client) GetLogReturns() []float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	ret := make([]float64, len(c.LogReturns))
-	copy(ret, c.LogReturns)
-	return ret
+	result := make([]float64, len(c.LogReturns))
+	copy(result, c.LogReturns)
+	return result
 }
 
 func (c *Client) GetDataSource() string {
@@ -423,24 +393,108 @@ func (c *Client) GetDataSource() string {
 	return c.DataSource
 }
 
-// FetchTickerPriceREST fallbacks on REST if WebSocket fails
+func (c *Client) GetDepthDataSource() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.DepthSource
+}
+
+func (c *Client) IsPriceFresh(maxAge time.Duration) bool {
+	return c.IsPriceFreshAt(time.Now().UTC(), maxAge)
+}
+
+func (c *Client) IsPriceFreshAt(now time.Time, maxAge time.Duration) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.LastPriceUpdateTime.IsZero() {
+		return false
+	}
+	age := now.UTC().Sub(c.LastPriceUpdateTime)
+	return age >= 0 && age <= maxAge
+}
+
+func (c *Client) IsDepthFresh(maxAge time.Duration) bool {
+	return c.IsDepthFreshAt(time.Now().UTC(), maxAge)
+}
+
+func (c *Client) IsDepthFreshAt(now time.Time, maxAge time.Duration) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.LastDepthUpdateTime.IsZero() || len(c.LastBids) == 0 || len(c.LastAsks) == 0 {
+		return false
+	}
+	age := now.UTC().Sub(c.LastDepthUpdateTime)
+	return age >= 0 && age <= maxAge
+}
+
+func (c *Client) DepthAge(now time.Time) time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.LastDepthUpdateTime.IsZero() {
+		return -1
+	}
+	return now.UTC().Sub(c.LastDepthUpdateTime)
+}
+
+func (c *Client) SetWSState(connected bool, fallback bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.isWsConnected = connected
+	c.wsFallback = fallback
+}
+
+func (c *Client) GetWSState() (bool, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.isWsConnected, c.wsFallback
+}
+
+func (c *Client) ShouldRESTFallback(now time.Time, staleAfter time.Duration) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.wsFallback || !c.isWsConnected || c.LastPriceUpdateTime.IsZero() {
+		return true
+	}
+	age := now.UTC().Sub(c.LastPriceUpdateTime)
+	return age < 0 || age > staleAfter
+}
+
 func (c *Client) FetchTickerPriceREST() (float64, error) {
 	resp, err := c.httpClient.Get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
-
-	var data struct {
+	var payload struct {
 		Price string `json:"price"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return 0, err
 	}
+	return strconv.ParseFloat(payload.Price, 64)
+}
 
-	return strconv.ParseFloat(data.Price, 64)
+func (c *Client) FetchDepthREST() ([][]string, [][]string, error) {
+	resp, err := c.httpClient.Get("https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=20")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("depth status: %d", resp.StatusCode)
+	}
+	var payload struct {
+		Bids [][]string `json:"bids"`
+		Asks [][]string `json:"asks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, nil, err
+	}
+	if len(payload.Bids) == 0 || len(payload.Asks) == 0 {
+		return nil, nil, fmt.Errorf("empty depth snapshot")
+	}
+	return payload.Bids, payload.Asks, nil
 }

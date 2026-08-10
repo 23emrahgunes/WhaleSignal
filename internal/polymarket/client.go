@@ -3,15 +3,17 @@ package polymarket
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"regexp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+)
 
-	"pm-edge/internal/util"
-	"go.uber.org/zap"
+const (
+	defaultGammaBaseURL       = "https://gamma-api.polymarket.com"
+	defaultCryptoPriceBaseURL = "https://polymarket.com/api/crypto/crypto-price"
+	btc5mWindow               = 5 * time.Minute
 )
 
 type Token struct {
@@ -21,207 +23,210 @@ type Token struct {
 }
 
 type Market struct {
-	ID            string    `json:"id"`
-	Question      string    `json:"question"`
-	Slug          string    `json:"slug"`
-	EndDate       string    `json:"endDate"`       // ISO format end date (e.g. 2026-12-31T00:00:00Z)
-	EndDateIso    string    `json:"endDateIso"`    // Simple date (e.g. 2026-12-31)
-	ClobTokenIds  string    `json:"clobTokenIds"`  // String representation of token IDs
-	Tokens        []Token   `json:"tokens"`        // Custom tokens populated or parsed
-	Active        bool      `json:"active"`
-	Closed        bool      `json:"closed"`
-	PriceToBeat   float64   `json:"priceToBeat"`
-	EndTime       time.Time `json:"endTime"`
-	Outcomes      []string  `json:"outcomes"`
-	MarketStale   bool      `json:"marketStale"`
+	ID                string    `json:"id"`
+	Question          string    `json:"question"`
+	Slug              string    `json:"slug"`
+	EventSlug         string    `json:"eventSlug"`
+	EndDate           string    `json:"endDate"`
+	EndDateIso        string    `json:"endDateIso"`
+	ClobTokenIds      string    `json:"clobTokenIds"`
+	Tokens            []Token   `json:"tokens"`
+	Active            bool      `json:"active"`
+	Closed            bool      `json:"closed"`
+	PriceToBeat       float64   `json:"priceToBeat"`
+	PriceToBeatSource string    `json:"priceToBeatSource"`
+	StartTime         time.Time `json:"startTime"`
+	EndTime           time.Time `json:"endTime"`
+	Outcomes          []string  `json:"outcomes"`
+	MarketStale       bool      `json:"marketStale"`
+	ResolutionURL     string    `json:"resolutionUrl"`
 }
 
 type Client struct {
-	httpClient *http.Client
-	regexes    []*regexp.Regexp
+	httpClient         *http.Client
+	baseURL            string
+	cryptoPriceBaseURL string
 }
 
 func NewClient() *Client {
-	patterns := []string{
-		`(?i)bitcoin\s+above\s+\$?([0-9,]+(?:\.[0-9]+)?)(?:\s+at\s+([0-9:]+))?`,
-		`(?i)btc\s+above\s+\$?([0-9,]+(?:\.[0-9]+)?)`,
-		`(?i)btc\s*>\s*\$?([0-9,]+(?:\.[0-9]+)?)`,
-		`(?i)bitcoin\s+over\s+\$?([0-9,]+(?:\.[0-9]+)?)`,
-	}
-
-	compiled := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		compiled = append(compiled, regexp.MustCompile(p))
-	}
-
-	return &Client{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		regexes:    compiled,
-	}
+	return NewClientWithBaseURLs(defaultGammaBaseURL, defaultCryptoPriceBaseURL, &http.Client{Timeout: 10 * time.Second})
 }
 
-// ParsePriceToBeat extracts the target BTC price from Polymarket questions.
-func (c *Client) ParsePriceToBeat(question string) (float64, bool) {
-	for _, re := range c.regexes {
-		matches := re.FindStringSubmatch(question)
-		if len(matches) >= 2 {
-			rawVal := matches[1]
-			// Clean $ and commas
-			cleaned := strings.ReplaceAll(rawVal, "$", "")
-			cleaned = strings.ReplaceAll(cleaned, ",", "")
-			cleaned = strings.TrimSpace(cleaned)
+func NewClientWithBaseURL(baseURL string, httpClient *http.Client) *Client {
+	return NewClientWithBaseURLs(baseURL, defaultCryptoPriceBaseURL, httpClient)
+}
 
-			val, err := strconv.ParseFloat(cleaned, 64)
-			if err == nil {
-				return val, true
-			}
-		}
+func NewClientWithBaseURLs(baseURL, cryptoPriceBaseURL string, httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return 0.0, false
+	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/"), cryptoPriceBaseURL: strings.TrimRight(cryptoPriceBaseURL, "/")}
 }
 
-// Is5MinMarket checks if a question refers to a 5-minute interval.
-func (c *Client) Is5MinMarket(question string) bool {
-	reTime := regexp.MustCompile(`(?i)(?:at|by)\s+([0-9]{1,2}:[0-9]{2})`)
-	return reTime.MatchString(question)
+func BTC5mWindowStart(t time.Time) time.Time {
+	u := t.UTC().Unix()
+	return time.Unix(u-(u%300), 0).UTC()
 }
 
-// FetchActiveBTC5mMarket queries Gamma API and returns the closest active 5m BTC market.
+func BTC5mEventSlug(start time.Time) string {
+	return fmt.Sprintf("btc-updown-5m-%d", BTC5mWindowStart(start).Unix())
+}
+
+type gammaEvent struct {
+	Slug             string        `json:"slug"`
+	Title            string        `json:"title"`
+	ResolutionSource string        `json:"resolutionSource"`
+	Active           bool          `json:"active"`
+	Closed           bool          `json:"closed"`
+	Markets          []gammaMarket `json:"markets"`
+}
+
+type gammaMarket struct {
+	ID            string `json:"id"`
+	Question      string `json:"question"`
+	Slug          string `json:"slug"`
+	EndDate       string `json:"endDate"`
+	EndDateIso    string `json:"endDateIso"`
+	ClobTokenIds  string `json:"clobTokenIds"`
+	Outcomes      string `json:"outcomes"`
+	OutcomePrices string `json:"outcomePrices"`
+	Active        bool   `json:"active"`
+	Closed        bool   `json:"closed"`
+}
+
 func (c *Client) FetchActiveBTC5mMarket() (*Market, error) {
-	url := "https://gamma-api.polymarket.com/markets?limit=100&active=true"
-	resp, err := c.httpClient.Get(url)
+	return c.FetchActiveBTC5mMarketAt(time.Now().UTC())
+}
+
+func (c *Client) FetchActiveBTC5mMarketAt(now time.Time) (*Market, error) {
+	start := BTC5mWindowStart(now)
+	eventSlug := BTC5mEventSlug(start)
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/events/slug/"+eventSlug, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected Gamma API status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("gamma event lookup %s returned status %d", eventSlug, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	var ev gammaEvent
+	if err := json.NewDecoder(resp.Body).Decode(&ev); err != nil {
+		return nil, fmt.Errorf("decode gamma event %s: %w", eventSlug, err)
+	}
+	if ev.Closed || !ev.Active {
+		return nil, fmt.Errorf("event %s is not active", eventSlug)
+	}
+
+	var gm *gammaMarket
+	for i := range ev.Markets {
+		if ev.Markets[i].Active && !ev.Markets[i].Closed {
+			gm = &ev.Markets[i]
+			break
+		}
+	}
+	if gm == nil {
+		return nil, fmt.Errorf("event %s has no active market", eventSlug)
+	}
+
+	end := start.Add(btc5mWindow)
+	if !now.UTC().Before(end) {
+		return nil, fmt.Errorf("event %s has ended", eventSlug)
+	}
+	outcomes := parseJSONStringSlice(gm.Outcomes)
+	ids := parseJSONStringSlice(gm.ClobTokenIds)
+	prices := parseJSONFloatSlice(gm.OutcomePrices)
+	tokens := make([]Token, 0, len(ids))
+	for i, id := range ids {
+		t := Token{TokenID: id}
+		if i < len(outcomes) {
+			t.Outcome = outcomes[i]
+		}
+		if i < len(prices) {
+			t.Price = prices[i]
+		}
+		tokens = append(tokens, t)
+	}
+	q := gm.Question
+	if q == "" {
+		q = ev.Title
+	}
+	return &Market{ID: gm.ID, Question: q, Slug: gm.Slug, EventSlug: eventSlug, EndDate: gm.EndDate, EndDateIso: gm.EndDateIso, ClobTokenIds: gm.ClobTokenIds, Tokens: tokens, Active: gm.Active, Closed: gm.Closed, StartTime: start, EndTime: end, Outcomes: outcomes, ResolutionURL: ev.ResolutionSource}, nil
+}
+
+// FetchPriceToBeat reads Polymarket's read-only crypto reference-price endpoint.
+// On any failure the caller must emit NO_SIGNAL instead of inventing a price.
+func (c *Client) FetchPriceToBeat(m *Market) (float64, error) {
+	if m == nil || m.StartTime.IsZero() || m.EndTime.IsZero() {
+		return 0, fmt.Errorf("market window incomplete")
+	}
+	q := url.Values{}
+	q.Set("symbol", "BTC")
+	q.Set("eventStartTime", m.StartTime.UTC().Format(time.RFC3339))
+	q.Set("variant", "fiveminute")
+	q.Set("endDate", m.EndTime.UTC().Format(time.RFC3339))
+	req, err := http.NewRequest(http.MethodGet, c.cryptoPriceBaseURL+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-
-	var rawMarkets []struct {
-		ID           string          `json:"id"`
-		Question     string          `json:"question"`
-		Slug         string          `json:"slug"`
-		EndDate      string          `json:"endDate"`
-		EndDateIso   string          `json:"endDateIso"`
-		ClobTokenIds string          `json:"clobTokenIds"`
-		Closed       bool            `json:"closed"`
-		Active       bool            `json:"active"`
-		Outcomes     json.RawMessage `json:"outcomes"`
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 PM-Edge-Research/1.0")
+	req.Header.Set("Referer", "https://polymarket.com/")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
 	}
-
-	if err := json.Unmarshal(body, &rawMarkets); err != nil {
-		return nil, err
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("reference-price status %d", resp.StatusCode)
 	}
-
-	var candidateMarkets []Market
-	now := time.Now().UTC()
-
-	for _, m := range rawMarkets {
-		lowerQ := strings.ToLower(m.Question)
-		if m.Closed || !m.Active {
-			continue
-		}
-		if !strings.Contains(lowerQ, "btc") && !strings.Contains(lowerQ, "bitcoin") {
-			continue
-		}
-
-		if !c.Is5MinMarket(m.Question) {
-			continue
-		}
-
-		price, ok := c.ParsePriceToBeat(m.Question)
-		if !ok {
-			continue
-		}
-
-		var endTime time.Time
-		var parseErr error
-		if m.EndDate != "" {
-			endTime, parseErr = time.Parse(time.RFC3339, m.EndDate)
-			if parseErr != nil {
-				endTime, parseErr = time.Parse("2006-01-02T15:04:05Z", m.EndDate)
-			}
-		}
-
-		if parseErr != nil || endTime.Before(now) {
-			continue
-		}
-
-		remaining := endTime.Sub(now)
-		if remaining < 5*time.Second {
-			continue
-		}
-
-		// Defensively parse Outcomes
-		var outcomes []string
-		if len(m.Outcomes) > 0 {
-			if err := json.Unmarshal(m.Outcomes, &outcomes); err != nil {
-				var str string
-				if err := json.Unmarshal(m.Outcomes, &str); err == nil {
-					_ = json.Unmarshal([]byte(str), &outcomes)
-				}
-			}
-		}
-
-		var clobTokens []Token
-		if m.ClobTokenIds != "" {
-			var ids []string
-			if err := json.Unmarshal([]byte(m.ClobTokenIds), &ids); err == nil {
-				for i, id := range ids {
-					outcome := ""
-					if i < len(outcomes) {
-						outcome = outcomes[i]
-					}
-					clobTokens = append(clobTokens, Token{
-						Outcome: outcome,
-						TokenID: id,
-					})
-				}
-			}
-		}
-
-		candidateMarkets = append(candidateMarkets, Market{
-			ID:           m.ID,
-			Question:     m.Question,
-			Slug:         m.Slug,
-			EndDate:      m.EndDate,
-			EndDateIso:   m.EndDateIso,
-			ClobTokenIds: m.ClobTokenIds,
-			Tokens:       clobTokens,
-			Active:       m.Active,
-			Closed:       m.Closed,
-			PriceToBeat:   price,
-			EndTime:      endTime,
-			Outcomes:     outcomes,
-		})
+	var p struct {
+		OpenPrice json.RawMessage `json:"openPrice"`
 	}
-
-	if len(candidateMarkets) == 0 {
-		return nil, fmt.Errorf("no active 5m BTC markets found")
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		return 0, err
 	}
+	v, ok := parseNumber(p.OpenPrice)
+	if !ok || v <= 0 {
+		return 0, fmt.Errorf("reference-price response missing openPrice")
+	}
+	return v, nil
+}
 
-	bestIdx := 0
-	minRemaining := candidateMarkets[0].EndTime.Sub(now)
-	for i := 1; i < len(candidateMarkets); i++ {
-		rem := candidateMarkets[i].EndTime.Sub(now)
-		if rem < minRemaining {
-			minRemaining = rem
-			bestIdx = i
+func parseJSONStringSlice(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) == nil {
+		return out
+	}
+	return nil
+}
+func parseJSONFloatSlice(raw string) []float64 {
+	vals := parseJSONStringSlice(raw)
+	out := make([]float64, 0, len(vals))
+	for _, s := range vals {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			out = append(out, v)
 		}
 	}
-
-	util.Logger.Debug("Selected active BTC 5m market",
-		zap.String("question", candidateMarkets[bestIdx].Question),
-		zap.Float64("priceToBeat", candidateMarkets[bestIdx].PriceToBeat),
-		zap.Time("endTime", candidateMarkets[bestIdx].EndTime),
-	)
-
-	return &candidateMarkets[bestIdx], nil
+	return out
+}
+func parseNumber(raw json.RawMessage) (float64, bool) {
+	var v float64
+	if json.Unmarshal(raw, &v) == nil {
+		return v, true
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		v, err := strconv.ParseFloat(s, 64)
+		return v, err == nil
+	}
+	return 0, false
 }
