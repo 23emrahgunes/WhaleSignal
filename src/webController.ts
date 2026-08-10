@@ -105,7 +105,7 @@ export class WebController {
   private readonly logFile = "logs/trades.jsonl";
 
   // --- Mispricing (chainlink fair vs order book) olcer ---
-  mispricing: { fairUp: number; bookUp: number; edge: number } | null = null;
+  mispricing: { fairUp: number; bookUp: number; edge: number; reliable: boolean } | null = null;
   private mispN = 0;
   private mispSumAbs = 0;
   private mispSig = 0; // |edge| > esik sayisi
@@ -518,11 +518,16 @@ export class WebController {
     const fairUp = normCdf(z); // chainlink'e gore adil P(up)
     const bookUp = (this.upBook.bestBid + this.upBook.bestAsk) / 2; // market'in dedigi
     const edge = fairUp - bookUp; // + => book UP'i ucuz fiyatliyor (AL firsati)
-    this.mispricing = { fairUp, bookUp, edge };
-    this.mispN++;
-    this.mispSumAbs += Math.abs(edge);
-    if (Math.abs(edge) > this.mispThreshold) this.mispSig++;
-    if (Math.abs(edge) > this.mispMax) this.mispMax = Math.abs(edge);
+    // GUVEN: yeterli tick + makul kalan sure yoksa sigma kaba -> fair guvenilmez.
+    const reliable = this.feed.volReady && secLeft > 10 && secLeft < 290;
+    this.mispricing = { fairUp, bookUp, edge, reliable };
+    // Istatistige SADECE guvenilir ornekleri kat (sahte edge sismesin)
+    if (reliable) {
+      this.mispN++;
+      this.mispSumAbs += Math.abs(edge);
+      if (Math.abs(edge) > this.mispThreshold) this.mispSig++;
+      if (Math.abs(edge) > this.mispMax) this.mispMax = Math.abs(edge);
+    }
   }
 
   /** Istatistik ozeti (net EV, anlamlilik). */

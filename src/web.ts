@@ -487,8 +487,9 @@ async function poll(){
         $("mpFair").textContent=f(mp.live.fairUp,3);
         $("mpBook").textContent=f(mp.live.bookUp,3);
         const e=mp.live.edge;
-        $("mpEdge").textContent=(e>=0?"+":"")+f(e,3)+(Math.abs(e)>mp.threshold?" ⚠":"");
-        $("mpEdge").className="mono "+(Math.abs(e)>mp.threshold?(e>0?"up":"down"):"");
+        const rel=mp.live.reliable;
+        $("mpEdge").textContent=(e>=0?"+":"")+f(e,3)+(!rel?" (düşük güven)":(Math.abs(e)>mp.threshold?" ⚠":""));
+        $("mpEdge").className="mono "+(!rel?"warn":(Math.abs(e)>mp.threshold?(e>0?"up":"down"):""));
       }
       $("mpSig").textContent = mp.n? (100*mp.sigRate).toFixed(0)+"% ("+mp.n+" örnek)":"—";
       $("mpAvg").textContent = mp.n? f(mp.avgAbs,3):"—";

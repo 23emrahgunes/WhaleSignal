@@ -53,6 +53,10 @@ export class PriceFeed {
   get ready() {
     return this._price > 0;
   }
+  /** Veri-tabanli sigma icin yeterli tick var mi (mispricing guveni). */
+  get volReady() {
+    return this.samples.length >= 8;
+  }
   /** Verilen 5dk pencere baslangici (sn) icin chainlink acilis fiyati (priceToBeat). */
   priceToBeatFor(startSec: number): number {
     return this._windowTs === startSec ? this._p2b : 0;
