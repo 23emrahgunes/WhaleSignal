@@ -10,7 +10,7 @@
 </style>
 </head>
 <body>
-<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Calibrated Terminal Forecast · Binance Depth20 · CLOB Paper Execution · Shadow Hedge A/B</div></header>
+<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m · Chainlink Reference · Conservative Terminal Forecast · Binance Depth20 · CLOB Paper Execution · Shadow Hedge A/B</div></header>
 <div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. CLOB okumaları yalnızca gerçekçi paper fill/hedge simülasyonu içindir.</div>
 <div class="wrap">
   <div class="topgrid">
@@ -70,6 +70,12 @@
       <div class="mini paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>
       <div class="mini paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>
       <div class="mini paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>
+    </div>
+    <div class="grid4" style="margin-top:12px">
+      <div class="mini"><span>Avg Predicted Win P</span><strong id="paperPredicted">—</strong></div>
+      <div class="mini"><span>Actual Win P</span><strong id="paperActual">—</strong></div>
+      <div class="mini"><span>Calibration Gap</span><strong id="paperCalGap">—</strong></div>
+      <div class="mini"><span>Brier Score / N</span><strong id="paperBrier">—</strong></div>
     </div>
   </div>
 
@@ -150,7 +156,7 @@ async function updateHistory(){
   body.innerHTML=rows.map(x=>`<tr><td>${timeOnly(x.timestamp)}</td><td>${usd(x.currentPrice)}</td><td>${usd(x.priceToBeat)}</td><td>${pct(x.pUp)}</td><td>${pct(x.pDown)}</td><td>${Number(x.ptbZ||0).toFixed(2)}σ</td><td>${pct(x.orderFlowScore)}</td><td>${decisionChip(x.decision)}</td><td>${pctDirect(x.confidence,1)}</td></tr>`).join('');
 }
 async function updatePaper(){
-  const [s,trades]=await Promise.all([getJSON('/api/paper/stats'),getJSON('/api/paper/trades?limit=50')]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
+  const [s,trades]=await Promise.all([getJSON('/api/paper/stats'),getJSON('/api/paper/trades?limit=50')]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);document.getElementById('paperPredicted').textContent=pct(s.averageEntryProbability||0,1);document.getElementById('paperActual').textContent=pct(s.actualWinProbability||0,1);const gap=document.getElementById('paperCalGap');gap.textContent=pct(s.calibrationGap||0,1);gap.className=Math.abs(Number(s.calibrationGap||0))<=0.05?'positive':'negative';document.getElementById('paperBrier').textContent=`${Number(s.brierScore||0).toFixed(3)} / ${s.calibrationN||0}`;const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
 }
 async function updateHedge(){
   const [s,rows]=await Promise.all([getJSON('/api/paper/hedge/stats'),getJSON('/api/paper/hedges?limit=30')]);document.getElementById('hedgeCount').textContent=`${s.totalHedges||0} / ${s.openHedges||0}`;for(const [id,v] of [['hedgeOriginalPnl',s.originalPnlOnHedged],['hedgeContribution',s.hedgeContribution],['hedgeCombined',s.combinedPnl]]){const el=document.getElementById(id);el.textContent=usd(v);el.className=signClass(v)}document.getElementById('hedgeQuality').textContent=`${pct(s.averageEdge||0,1)} / ${pct(s.averagePersistence||0,0)}`;const body=document.getElementById('hedgeBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr>';return}body.innerHTML=rows.map(h=>`<tr><td>${timeOnly(h.hedgeTime)}</td><td>${h.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(h.originalSide)}</td><td>${decisionChip(h.side)}</td><td>${Number(h.entryPrice).toFixed(3)}</td><td>${Number(h.shares).toFixed(3)}</td><td>${pct(h.reverseProbability)}</td><td>${pct(h.edge)}</td><td>${pct(h.persistence)}</td><td>${Number(h.smoothedScore).toFixed(3)}</td><td>${Number(h.ptbZ).toFixed(2)}σ</td><td class="${signClass(h.lockedPnl)}">${usd(h.lockedPnl)}</td><td>${h.status==='OPEN'?chip('OPEN','open'):chip('SETTLED','neutral')}</td><td class="${signClass(h.combinedPnl)}">${h.status==='OPEN'?'—':usd(h.combinedPnl)}</td></tr>`).join('');
