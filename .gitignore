@@ -7,6 +7,10 @@ reports/*.csv
 reports/watchlists/*.json
 reports/watchlists/*.csv
 data/history/*.json
+data/*.sqlite
+data/*.sqlite-*
+data/*.db
+data/*.db-*
 !reports/.gitkeep
 !data/history/.gitkeep
 !reports/watchlists/
