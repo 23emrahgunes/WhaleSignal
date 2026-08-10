@@ -46,11 +46,7 @@ func (d *Database) Close() error {
 }
 
 func (d *Database) migrate() error {
-	// Let's drop old table if columns mismatch, or recreate cleanly with updated fields.
-	// We want standard clean migrations. Let's create with the new properties.
-	queryDrop := `DROP TABLE IF EXISTS signals;`
-	_, _ = d.db.Exec(queryDrop)
-
+	// Let's create with the new properties if not exists.
 	query := `
 	CREATE TABLE IF NOT EXISTS signals (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
