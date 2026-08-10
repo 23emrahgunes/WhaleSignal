@@ -72,9 +72,9 @@ func TestFreshLargeWallIsFilteredUntilPersistent(t *testing.T) {
 
 func TestWSStateAndFreshnessFallback(t *testing.T) {
 	c := NewClient()
-	now := time.Now().UTC()
-	c.UpdateFromTrade(64000, 1, now, true)
+	c.UpdateFromTrade(64000, 1, time.Now().UTC(), true)
 	c.SetWSState(true, false)
+	now := time.Now().UTC()
 	if c.ShouldRESTFallback(now, 3*time.Second) {
 		t.Fatal("fresh connected WS should not use REST fallback")
 	}
@@ -82,7 +82,7 @@ func TestWSStateAndFreshnessFallback(t *testing.T) {
 		t.Fatal("stale WS price must trigger REST fallback")
 	}
 	c.SetWSState(false, true)
-	if !c.ShouldRESTFallback(now, 3*time.Second) {
+	if !c.ShouldRESTFallback(time.Now().UTC(), 3*time.Second) {
 		t.Fatal("disconnected WS must trigger REST fallback")
 	}
 }
