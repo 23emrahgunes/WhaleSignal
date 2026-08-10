@@ -88,3 +88,57 @@ func TestTerminalForecastOutlierRobustness(t *testing.T) {
 		t.Fatalf("single outlier moved forecast drift too much: clean=%f robust=%f", clean.ExpectedMoveBps, robust.ExpectedMoveBps)
 	}
 }
+
+func TestTerminalForecastDoesNotCollapseOnFlatReturns(t *testing.T) {
+	returns := make([]float64, 60)
+	f := EstimateTerminalForecastWithContext(63921.09, 63952.50, 98, returns, ForecastContext{})
+	if !f.Ready {
+		t.Fatal("expected forecast to be ready")
+	}
+	// The previous model could produce a ~12-cent 68% band and |z| near 500.
+	// With an explicit volatility prior, a 98-second BTC forecast must retain
+	// meaningful uncertainty even if the last 60 observed returns are flat.
+	band68 := f.Upper68 - f.Lower68
+	if band68 < 10.0 {
+		t.Fatalf("forecast variance collapsed: 68%% band width=%f", band68)
+	}
+	if math.Abs(f.TargetZ) > 10.0 {
+		t.Fatalf("implausible target z-score after variance floor: %f", f.TargetZ)
+	}
+	if f.PAbove <= 0 || f.PAbove >= 1 {
+		t.Fatalf("probability should not numerically pin at 0/1: %f", f.PAbove)
+	}
+	if f.VolatilityFloorAnnual < 0.199 {
+		t.Fatalf("missing conservative annual volatility floor: %f", f.VolatilityFloorAnnual)
+	}
+}
+
+func TestTerminalForecastUsesMacroAndBasisUncertainty(t *testing.T) {
+	returns := make([]float64, 60)
+	base := EstimateTerminalForecastWithContext(100000, 100020, 90, returns, ForecastContext{})
+	wider := EstimateTerminalForecastWithContext(100000, 100020, 90, returns, ForecastContext{
+		VolatilityFloorPerSqrtS: 0.00008,
+		BasisVolatilityPerSqrtS: 0.00004,
+		ModelUncertainty:        1.20,
+	})
+	if !base.Ready || !wider.Ready {
+		t.Fatal("expected forecasts to be ready")
+	}
+	if wider.SigmaAtExpiryBps <= base.SigmaAtExpiryBps {
+		t.Fatalf("context uncertainty should widen terminal sigma: base=%f wider=%f", base.SigmaAtExpiryBps, wider.SigmaAtExpiryBps)
+	}
+}
+
+func TestTerminalForecastDriftIsHorizonCapped(t *testing.T) {
+	returns := make([]float64, 60)
+	for i := range returns {
+		returns[i] = 0.01 // deliberately absurd persistent one-second drift
+	}
+	f := EstimateTerminalForecastWithContext(100000, 100000, 120, returns, ForecastContext{})
+	if !f.Ready {
+		t.Fatal("expected forecast to be ready")
+	}
+	if math.Abs(f.ExpectedMoveBps) > 0.751*f.SigmaAtExpiryBps {
+		t.Fatalf("drift exceeded horizon cap: move=%f sigma=%f", f.ExpectedMoveBps, f.SigmaAtExpiryBps)
+	}
+}

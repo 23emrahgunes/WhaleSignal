@@ -43,6 +43,8 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/orderflow", s.cors(s.handleOrderflow))
 	mux.HandleFunc("/api/paper/stats", s.cors(s.handlePaperStats))
 	mux.HandleFunc("/api/paper/trades", s.cors(s.handlePaperTrades))
+	mux.HandleFunc("/api/paper/hedges", s.cors(s.handlePaperHedges))
+	mux.HandleFunc("/api/paper/hedge/stats", s.cors(s.handlePaperHedgeStats))
 	fileServer := http.FileServer(http.Dir("web/static"))
 	mux.Handle("/", s.corsHandler(fileServer))
 	return http.ListenAndServe(":"+port, mux)
@@ -156,6 +158,17 @@ func (s *Server) handlePaperTrades(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r, 50, 1000)
 	trades, err := s.db.GetPaperTrades(limit)
 	writeJSON(w, trades, err)
+}
+
+func (s *Server) handlePaperHedges(w http.ResponseWriter, r *http.Request) {
+	limit := parseLimit(r, 50, 1000)
+	rows, err := s.db.GetPaperHedges(limit)
+	writeJSON(w, rows, err)
+}
+
+func (s *Server) handlePaperHedgeStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetPaperHedgeStats()
+	writeJSON(w, stats, err)
 }
 
 func parseLimit(r *http.Request, fallback, max int) int {

@@ -38,17 +38,23 @@ type PaperTrade struct {
 }
 
 type PaperStats struct {
-	InitialBalance float64 `json:"initialBalance"`
-	CashBalance    float64 `json:"cashBalance"`
-	Equity         float64 `json:"equity"`
-	RealizedPnL    float64 `json:"realizedPnl"`
-	OpenStake      float64 `json:"openStake"`
-	TotalTrades    int     `json:"totalTrades"`
-	SettledTrades  int     `json:"settledTrades"`
-	OpenTrades     int     `json:"openTrades"`
-	Wins           int     `json:"wins"`
-	Losses         int     `json:"losses"`
-	WinRate        float64 `json:"winRate"`
+	InitialBalance          float64 `json:"initialBalance"`
+	CashBalance             float64 `json:"cashBalance"`
+	Equity                  float64 `json:"equity"`
+	RealizedPnL             float64 `json:"realizedPnl"`
+	OpenStake               float64 `json:"openStake"`
+	TotalTrades             int     `json:"totalTrades"`
+	SettledTrades           int     `json:"settledTrades"`
+	OpenTrades              int     `json:"openTrades"`
+	Wins                    int     `json:"wins"`
+	Losses                  int     `json:"losses"`
+	WinRate                 float64 `json:"winRate"`
+	CalibrationN            int     `json:"calibrationN"`
+	AverageEntryProbability float64 `json:"averageEntryProbability"`
+	ActualWinProbability    float64 `json:"actualWinProbability"`
+	CalibrationGap          float64 `json:"calibrationGap"`
+	BrierScore              float64 `json:"brierScore"`
+	ExpectedWins            float64 `json:"expectedWins"`
 }
 
 func NewDatabase(dbPath string) (*Database, error) {
@@ -145,8 +151,63 @@ func (d *Database) migrate() error {
 	-- Remove only the exact synthetic fallback rows produced by the old evaluator.
 	DELETE FROM signals WHERE slug = 'btc-above-100k-1505' AND price_to_beat = 100000;
 	`
-	_, err := d.db.Exec(query)
-	return err
+	if _, err := d.db.Exec(query); err != nil {
+		return err
+	}
+	return d.ensureSignalResearchColumns()
+}
+
+func (d *Database) ensureSignalResearchColumns() error {
+	columns := []struct {
+		name    string
+		typeSQL string
+	}{
+		{"binance_price", "REAL NOT NULL DEFAULT 0"},
+		{"chainlink_binance_basis_bps", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_samples", "INTEGER NOT NULL DEFAULT 0"},
+		{"forecast_price", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_mean_price", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_low68", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_high68", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_low95", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_high95", "REAL NOT NULL DEFAULT 0"},
+		{"ptb_z", "REAL NOT NULL DEFAULT 0"},
+		{"required_move_bps", "REAL NOT NULL DEFAULT 0"},
+		{"expected_move_bps", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_sigma_expiry_bps", "REAL NOT NULL DEFAULT 0"},
+		{"forecast_confidence", "REAL NOT NULL DEFAULT 0"},
+		{"micro_volatility_annual", "REAL NOT NULL DEFAULT 0"},
+		{"volatility_floor_annual", "REAL NOT NULL DEFAULT 0"},
+		{"basis_volatility_annual", "REAL NOT NULL DEFAULT 0"},
+	}
+	rows, err := d.db.Query("PRAGMA table_info(signals)")
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, column := range columns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE signals ADD COLUMN %s %s", column.name, column.typeSQL)); err != nil {
+			return fmt.Errorf("add signals.%s: %w", column.name, err)
+		}
+	}
+	return nil
 }
 
 func (d *Database) InsertSignal(r *engine.EvaluationResult) error {
@@ -172,12 +233,23 @@ func (d *Database) InsertSignal(r *engine.EvaluationResult) error {
 	query := `
 	INSERT INTO signals (
 		timestamp, question, slug, market_end_time, price_to_beat, current_price,
-		spot_minus_price_to_beat, seconds_remaining, p_up, p_down, bid_vol, ask_vol,
-		spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,
+		binance_price, chainlink_binance_basis_bps, spot_minus_price_to_beat, seconds_remaining, p_up, p_down,
+		forecast_samples, forecast_price, forecast_mean_price, forecast_low68, forecast_high68, forecast_low95, forecast_high95,
+		ptb_z, required_move_bps, expected_move_bps, forecast_sigma_expiry_bps, forecast_confidence,
+		micro_volatility_annual, volatility_floor_annual, basis_volatility_annual,
+		bid_vol, ask_vol, spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,
 		probability_score, order_flow_score, technical_score, volatility, drift,
 		composite_score, final_score, decision, confidence, market_stale, data_source
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := d.db.Exec(query, r.Timestamp, r.Question, r.Slug, r.MarketEndTime, r.PriceToBeat, r.CurrentPrice, r.SpotMinusPriceToBeat, r.SecondsRemaining, r.PUp, r.PDown, r.BidVol, r.AskVol, r.SpoofFilteredBidVol, r.SpoofFilteredAskVol, r.Imbalance, r.WeightedImbalance, r.ProbabilityScore, r.OrderFlowScore, r.TechnicalScore, r.Volatility, r.Drift, r.CompositeScore, r.FinalScore, r.Decision, r.Confidence, 0, r.DataSource)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(query,
+		r.Timestamp, r.Question, r.Slug, r.MarketEndTime, r.PriceToBeat, r.CurrentPrice,
+		r.BinancePrice, r.ChainlinkBinanceBasisBps, r.SpotMinusPriceToBeat, r.SecondsRemaining, r.PUp, r.PDown,
+		r.ForecastSamples, r.ForecastPrice, r.ForecastMeanPrice, r.ForecastLow68, r.ForecastHigh68, r.ForecastLow95, r.ForecastHigh95,
+		r.PTBZ, r.RequiredMoveBps, r.ExpectedMoveBps, r.ForecastSigmaExpiryBps, r.ForecastConfidence,
+		r.MicroVolatilityAnnual, r.VolatilityFloorAnnual, r.BasisVolatilityAnnual,
+		r.BidVol, r.AskVol, r.SpoofFilteredBidVol, r.SpoofFilteredAskVol, r.Imbalance, r.WeightedImbalance,
+		r.ProbabilityScore, r.OrderFlowScore, r.TechnicalScore, r.Volatility, r.Drift,
+		r.CompositeScore, r.FinalScore, r.Decision, r.Confidence, 0, r.DataSource)
 	return err
 }
 
@@ -190,8 +262,11 @@ func (d *Database) GetHistory(limit int) ([]engine.EvaluationResult, error) {
 	}
 	query := `
 	SELECT timestamp, question, slug, market_end_time, price_to_beat, current_price,
-		spot_minus_price_to_beat, seconds_remaining, p_up, p_down, bid_vol, ask_vol,
-		spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,
+		binance_price, chainlink_binance_basis_bps, spot_minus_price_to_beat, seconds_remaining, p_up, p_down,
+		forecast_samples, forecast_price, forecast_mean_price, forecast_low68, forecast_high68, forecast_low95, forecast_high95,
+		ptb_z, required_move_bps, expected_move_bps, forecast_sigma_expiry_bps, forecast_confidence,
+		micro_volatility_annual, volatility_floor_annual, basis_volatility_annual,
+		bid_vol, ask_vol, spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,
 		probability_score, order_flow_score, technical_score, volatility, drift,
 		composite_score, final_score, decision, confidence, market_stale, data_source
 	FROM signals ORDER BY id DESC LIMIT ?`
@@ -204,7 +279,15 @@ func (d *Database) GetHistory(limit int) ([]engine.EvaluationResult, error) {
 	for rows.Next() {
 		var r engine.EvaluationResult
 		var stale int
-		if err := rows.Scan(&r.Timestamp, &r.Question, &r.Slug, &r.MarketEndTime, &r.PriceToBeat, &r.CurrentPrice, &r.SpotMinusPriceToBeat, &r.SecondsRemaining, &r.PUp, &r.PDown, &r.BidVol, &r.AskVol, &r.SpoofFilteredBidVol, &r.SpoofFilteredAskVol, &r.Imbalance, &r.WeightedImbalance, &r.ProbabilityScore, &r.OrderFlowScore, &r.TechnicalScore, &r.Volatility, &r.Drift, &r.CompositeScore, &r.FinalScore, &r.Decision, &r.Confidence, &stale, &r.DataSource); err != nil {
+		if err := rows.Scan(
+			&r.Timestamp, &r.Question, &r.Slug, &r.MarketEndTime, &r.PriceToBeat, &r.CurrentPrice,
+			&r.BinancePrice, &r.ChainlinkBinanceBasisBps, &r.SpotMinusPriceToBeat, &r.SecondsRemaining, &r.PUp, &r.PDown,
+			&r.ForecastSamples, &r.ForecastPrice, &r.ForecastMeanPrice, &r.ForecastLow68, &r.ForecastHigh68, &r.ForecastLow95, &r.ForecastHigh95,
+			&r.PTBZ, &r.RequiredMoveBps, &r.ExpectedMoveBps, &r.ForecastSigmaExpiryBps, &r.ForecastConfidence,
+			&r.MicroVolatilityAnnual, &r.VolatilityFloorAnnual, &r.BasisVolatilityAnnual,
+			&r.BidVol, &r.AskVol, &r.SpoofFilteredBidVol, &r.SpoofFilteredAskVol, &r.Imbalance, &r.WeightedImbalance,
+			&r.ProbabilityScore, &r.OrderFlowScore, &r.TechnicalScore, &r.Volatility, &r.Drift,
+			&r.CompositeScore, &r.FinalScore, &r.Decision, &r.Confidence, &stale, &r.DataSource); err != nil {
 			return nil, err
 		}
 		r.MarketStale = stale == 1
@@ -316,14 +399,18 @@ func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {
 	stats := PaperStats{InitialBalance: initialBalance}
 	var realizedPnL, openStake float64
 	var total, settled, open, wins int
+	var avgEntryProbability, brierScore, expectedWins float64
 	err := d.db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN status='SETTLED' THEN pnl ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status='OPEN' THEN stake ELSE 0 END), 0),
 		COUNT(*),
 		COALESCE(SUM(CASE WHEN status='SETTLED' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0)
-		FROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins)
+		COALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0),
+		COALESCE(AVG(CASE WHEN status='SETTLED' THEN entry_probability END), 0),
+		COALESCE(AVG(CASE WHEN status='SETTLED' THEN (entry_probability-won)*(entry_probability-won) END), 0),
+		COALESCE(SUM(CASE WHEN status='SETTLED' THEN entry_probability ELSE 0 END), 0)
+		FROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins, &avgEntryProbability, &brierScore, &expectedWins)
 	if err != nil {
 		return stats, err
 	}
@@ -336,8 +423,14 @@ func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {
 	stats.Losses = settled - wins
 	stats.CashBalance = initialBalance + realizedPnL - openStake
 	stats.Equity = initialBalance + realizedPnL
+	stats.CalibrationN = settled
+	stats.AverageEntryProbability = avgEntryProbability
+	stats.BrierScore = brierScore
+	stats.ExpectedWins = expectedWins
 	if settled > 0 {
 		stats.WinRate = float64(wins) * 100 / float64(settled)
+		stats.ActualWinProbability = float64(wins) / float64(settled)
+		stats.CalibrationGap = stats.ActualWinProbability - avgEntryProbability
 	}
 	return stats, nil
 }

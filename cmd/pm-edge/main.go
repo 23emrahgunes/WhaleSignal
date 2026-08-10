@@ -74,26 +74,49 @@ func main() {
 	defer func() { _ = util.Logger.Sync() }()
 	util.Logger.Info("Initializing PM-Edge TV-Direction Real-Time Research Engine",
 		zap.Bool("mockMode", isMockMode), zap.Bool("paperEnabled", cfg.PaperEnabled),
-		zap.Float64("paperStake", cfg.PaperStake), zap.Float64("paperMinConfidence", cfg.PaperMinConfidence))
+		zap.Bool("paperHedgeEnabled", cfg.PaperHedgeEnabled), zap.Float64("paperStake", cfg.PaperStake),
+		zap.Float64("paperMinConfidence", cfg.PaperMinConfidence))
 
 	db, err := storage.NewDatabase(cfg.DBPath)
 	if err != nil {
 		util.Logger.Fatal("Database setup failed", zap.Error(err))
 	}
 	defer db.Close()
+	if err := db.EnsurePaperHedgeSchema(); err != nil {
+		util.Logger.Fatal("Paper hedge schema setup failed", zap.Error(err))
+	}
 
 	server := api.NewServer(db, cfg.PaperInitialBalance)
 	pmClient := polymarket.NewClient()
 	bClient := binance.NewClient()
 	clClient := chainlink.NewClient()
 	paperEngine := paper.NewEngine(db, paper.Config{
-		Enabled:         cfg.PaperEnabled && !isMockMode,
-		InitialBalance:  cfg.PaperInitialBalance,
-		Stake:           cfg.PaperStake,
-		MinConfidence:   cfg.PaperMinConfidence,
-		MinSecondsToEnd: cfg.PaperMinSecondsToEnd,
-		MaxSecondsToEnd: cfg.PaperMaxSecondsToEnd,
+		Enabled:              cfg.PaperEnabled && !isMockMode,
+		InitialBalance:       cfg.PaperInitialBalance,
+		Stake:                cfg.PaperStake,
+		MinConfidence:        cfg.PaperMinConfidence,
+		MinSecondsToEnd:      cfg.PaperMinSecondsToEnd,
+		MaxSecondsToEnd:      cfg.PaperMaxSecondsToEnd,
+		TakerFeeRate:         cfg.PaperTakerFeeRate,
+		LatencyBuffer:        cfg.PaperLatencyBuffer,
+		HedgeEnabled:         cfg.PaperHedgeEnabled && !isMockMode,
+		HedgeWindow:          cfg.PaperHedgeWindow,
+		HedgeMinVotes:        cfg.PaperHedgeMinVotes,
+		HedgeMinConsecutive:  cfg.PaperHedgeMinConsecutive,
+		HedgeScoreThreshold:  cfg.PaperHedgeScoreThreshold,
+		HedgeMinProbability:  cfg.PaperHedgeMinProbability,
+		HedgeMinEdge:         cfg.PaperHedgeMinEdge,
+		HedgeMinAbsPTBZ:      cfg.PaperHedgeMinAbsPTBZ,
+		HedgeMinSecondsToEnd: cfg.PaperHedgeMinSecondsToEnd,
+		HedgeMaxSecondsToEnd: cfg.PaperHedgeMaxSecondsToEnd,
 	})
+
+	quoteBudget := func(tokenID string, budget float64) (polymarket.BuyQuote, error) {
+		return pmClient.FetchBuyQuoteForBudget(tokenID, budget, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer)
+	}
+	quoteShares := func(tokenID string, shares float64) (polymarket.BuyQuote, error) {
+		return pmClient.FetchBuyQuoteForShares(tokenID, shares, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer)
+	}
 
 	util.Logger.Info("Warming up Binance candlestick caches...")
 	if err := bClient.WarmupCandles(); err != nil {
@@ -228,18 +251,29 @@ func main() {
 					util.Logger.Error("Failed to store signal in SQLite", zap.Error(err))
 					continue
 				}
-				if trade, opened, paperErr := paperEngine.MaybeOpen(res, m, now); paperErr != nil {
-					util.Logger.Error("Paper entry evaluation failed", zap.Error(paperErr))
+				if trade, opened, paperErr := paperEngine.MaybeOpenWithQuote(res, m, now, quoteBudget); paperErr != nil {
+					util.Logger.Warn("Paper entry quote/evaluation skipped", zap.Error(paperErr))
 				} else if opened {
 					util.Logger.Info("PAPER POSITION OPENED",
 						zap.String("market", trade.MarketSlug), zap.String("side", trade.Side),
-						zap.Float64("entryPrice", trade.EntryPrice), zap.Float64("stake", trade.Stake),
+						zap.Float64("entryPrice", trade.EntryPrice), zap.Float64("totalCost", trade.Stake),
 						zap.Float64("shares", trade.Shares), zap.Float64("confidence", trade.EntryConfidence))
+				}
+				if h, hedged, hedgeErr := paperEngine.MaybeHedge(res, m, now, quoteShares); hedgeErr != nil {
+					util.Logger.Warn("Paper hedge quote/evaluation skipped", zap.Error(hedgeErr))
+				} else if hedged {
+					util.Logger.Info("PAPER SHADOW HEDGE OPENED",
+						zap.String("market", h.MarketSlug), zap.String("originalSide", h.OriginalSide),
+						zap.String("hedgeSide", h.Side), zap.Float64("hedgePrice", h.EntryPrice),
+						zap.Float64("shares", h.Shares), zap.Float64("edge", h.Edge),
+						zap.Float64("persistence", h.Persistence), zap.Float64("lockedPnL", h.LockedPnL))
 				}
 				util.Logger.Info("Evaluated directional bias score",
 					zap.String("eventSlug", m.EventSlug), zap.String("ptbSource", m.PriceToBeatSource),
 					zap.Float64("priceToBeat", res.PriceToBeat), zap.Float64("currentPrice", res.CurrentPrice),
+					zap.Float64("binancePrice", res.BinancePrice), zap.Float64("basisBps", res.ChainlinkBinanceBasisBps),
 					zap.Float64("remaining_sec", res.SecondsRemaining), zap.Float64("pUp", res.PUp),
+					zap.Float64("ptbZ", res.PTBZ), zap.Float64("sigmaExpiryBps", res.ForecastSigmaExpiryBps),
 					zap.Float64("finalScore", res.FinalScore), zap.String("decision", res.Decision),
 					zap.Float64("confidence", res.Confidence), zap.String("source", res.DataSource),
 					zap.String("depthSource", res.DepthSource), zap.Int64("depthAgeMs", res.DepthAgeMs))

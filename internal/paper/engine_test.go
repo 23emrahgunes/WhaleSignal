@@ -17,6 +17,9 @@ func TestPaperEntryDedupeAndWinningSettlement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.EnsurePaperHedgeSchema(); err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Unix(1786390000, 0).UTC()
 	end := now.Add(90 * time.Second)
