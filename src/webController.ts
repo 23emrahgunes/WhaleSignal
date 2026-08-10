@@ -1,9 +1,20 @@
+import fs from "node:fs";
 import { cfg } from "./config.js";
 import { PriceFeed } from "./priceFeed.js";
 import { Polymarket, Book } from "./polymarket.js";
 import { autoMarket, manualMarket, fetchOpenPrice } from "./marketResolver.js";
 import type { MarketRef } from "./strategy.js";
 import { log } from "./logger.js";
+
+/** Standart normal CDF (Abramowitz-Stegun). fair olasilik icin. */
+function normCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp((-z * z) / 2);
+  let p =
+    d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  if (z > 0) p = 1 - p;
+  return p;
+}
 
 interface Leg {
   id?: string;
@@ -82,12 +93,36 @@ export class WebController {
   };
   momPnl = 0;
 
+  // --- Istatistik akumulatorleri (tum gecmis, bellek dostu) ---
+  private statN = 0;
+  private statSum = 0;
+  private statSumSq = 0;
+  private statWins = 0;
+  private statBox = 0;
+  private statNaked = 0;
+  private statAbort = 0;
+  private statMom = 0;
+  private readonly logFile = "logs/trades.jsonl";
+
+  // --- Mispricing (chainlink fair vs order book) olcer ---
+  mispricing: { fairUp: number; bookUp: number; edge: number } | null = null;
+  private mispN = 0;
+  private mispSumAbs = 0;
+  private mispSig = 0; // |edge| > esik sayisi
+  private mispMax = 0;
+  private readonly mispThreshold = 0.05; // %5 olasilik sapmasi = mispriced
+
   constructor() {
     this.feed = new PriceFeed(cfg.priceSource);
     this.pm = new Polymarket();
   }
 
   async start() {
+    try {
+      fs.mkdirSync("logs", { recursive: true });
+    } catch {
+      /* yut */
+    }
     this.feed.connect();
     await this.pm.init();
     this.loop();
@@ -174,6 +209,7 @@ export class WebController {
     if (a) this.upBook = a;
     if (b) this.downBook = b;
     if (this.upBook && this.downBook) this.computeMomentum(this.upBook, this.downBook);
+    this.computeMispricing();
 
     if (this.pinned) {
       await this.refresh("UP", a);
@@ -441,15 +477,90 @@ export class WebController {
   }
 
   private pushHistory(kind: string, result: string, shares: number, pnl: number) {
-    this.history.push({
-      slug: this.market?.id ?? "",
-      kind,
-      result,
-      shares,
-      pnl,
-      ts: Date.now(),
-    });
+    const rec = { slug: this.market?.id ?? "", kind, result, shares, pnl, ts: Date.now() };
+    this.history.push(rec);
     if (this.history.length > 100) this.history.shift();
+
+    // Istatistik akumulatorleri (tum gecmis)
+    this.statN++;
+    this.statSum += pnl;
+    this.statSumSq += pnl * pnl;
+    if (pnl >= 0) this.statWins++;
+    if (kind === "BOX") this.statBox++;
+    else if (kind.startsWith("NAKED")) this.statNaked++;
+    else if (kind.startsWith("ABORT")) this.statAbort++;
+    else if (kind.startsWith("MOM")) this.statMom++;
+
+    // Dosyaya JSONL logu (analiz icin) — giris baglami ile
+    try {
+      const line =
+        JSON.stringify({
+          ...rec,
+          iso: new Date(rec.ts).toISOString(),
+          strike: this.market?.strike ?? 0,
+          spot: this.feed.price,
+          drift20: this.feed.price ? Math.abs(this.feed.price - this.feed.priceAgo(20000)) : 0,
+          dry: cfg.dryRun,
+        }) + "\n";
+      fs.appendFile(this.logFile, line, () => {});
+    } catch {
+      /* yut */
+    }
+  }
+
+  /** Chainlink fair olasilik vs order book — mispricing (latency edge) olcer. */
+  private computeMispricing() {
+    if (!this.market || !this.upBook || this.market.strike <= 0) return;
+    const secLeft = this.market.resolveTs - Date.now() / 1000;
+    if (secLeft <= 1) return;
+    const sigma = Math.max(this.feed.sigmaOverHorizon(secLeft), 1e-6);
+    const z = (this.feed.price - this.market.strike) / sigma;
+    const fairUp = normCdf(z); // chainlink'e gore adil P(up)
+    const bookUp = (this.upBook.bestBid + this.upBook.bestAsk) / 2; // market'in dedigi
+    const edge = fairUp - bookUp; // + => book UP'i ucuz fiyatliyor (AL firsati)
+    this.mispricing = { fairUp, bookUp, edge };
+    this.mispN++;
+    this.mispSumAbs += Math.abs(edge);
+    if (Math.abs(edge) > this.mispThreshold) this.mispSig++;
+    if (Math.abs(edge) > this.mispMax) this.mispMax = Math.abs(edge);
+  }
+
+  /** Istatistik ozeti (net EV, anlamlilik). */
+  stats() {
+    const n = this.statN;
+    if (n === 0)
+      return { n: 0, net: 0, mean: 0, se: 0, t: 0, boxRate: 0, nakedRate: 0, winRate: 0, box: 0, naked: 0, abort: 0, mom: 0, wins: 0, losses: 0 };
+    const mean = this.statSum / n;
+    const varr = Math.max(this.statSumSq / n - mean * mean, 0);
+    const std = Math.sqrt((varr * n) / Math.max(n - 1, 1));
+    const se = std / Math.sqrt(n);
+    return {
+      n,
+      net: this.statSum,
+      mean,
+      se,
+      t: se > 0 ? mean / se : 0, // |t|>2 ~ %95 anlamli
+      boxRate: this.statBox / n,
+      nakedRate: this.statNaked / n,
+      winRate: this.statWins / n,
+      box: this.statBox,
+      naked: this.statNaked,
+      abort: this.statAbort,
+      mom: this.statMom,
+      wins: this.statWins,
+      losses: n - this.statWins,
+    };
+  }
+
+  mispStats() {
+    return {
+      live: this.mispricing,
+      n: this.mispN,
+      sigRate: this.mispN > 0 ? this.mispSig / this.mispN : 0,
+      avgAbs: this.mispN > 0 ? this.mispSumAbs / this.mispN : 0,
+      max: this.mispMax,
+      threshold: this.mispThreshold,
+    };
   }
 
   private async cancelSide(side: "UP" | "DOWN") {
@@ -727,6 +838,8 @@ export class WebController {
       wins: this.history.filter((h) => h.pnl >= 0).length,
       losses: this.history.filter((h) => h.pnl < 0).length,
       history: this.history.slice(-15).reverse(),
+      stats: this.stats(),
+      misp: this.mispStats(),
     };
   }
 }

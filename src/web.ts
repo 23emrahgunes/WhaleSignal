@@ -347,6 +347,30 @@ const HTML = /* html */ `<!doctype html>
       <div class="msg" id="momMsg"></div>
     </div>
 
+    <div class="grid" style="grid-column:1/3">
+      <div class="card">
+        <h2>📊 İstatistik (edge gerçek mi?)</h2>
+        <div class="row"><span class="k">İşlem sayısı (n)</span><span class="mono" id="stN">0</span></div>
+        <div class="row"><span class="k">Net PnL</span><span class="mono" id="stNet">$0.00</span></div>
+        <div class="row"><span class="k">Ortalama/işlem ± SE</span><span class="mono" id="stMean">—</span></div>
+        <div class="row"><span class="k">t-istatistik (|t|>2 anlamlı)</span><span class="mono" id="stT">—</span></div>
+        <div class="row"><span class="k">Box tamamlanma %</span><span class="mono" id="stBox">—</span></div>
+        <div class="row"><span class="k">Naked %</span><span class="mono" id="stNaked">—</span></div>
+        <div class="row"><span class="k">Kazanma %</span><span class="mono" id="stWin">—</span></div>
+        <p style="margin:6px 0 0"><small>Tüm sonuçlar <code>logs/trades.jsonl</code>'e loglanıyor.</small></p>
+      </div>
+      <div class="card">
+        <h2>⏱ Mispricing (chainlink ↔ book)</h2>
+        <div class="row"><span class="k">Fair P(UP) — chainlink</span><span class="mono" id="mpFair">—</span></div>
+        <div class="row"><span class="k">Book P(UP) — market</span><span class="mono" id="mpBook">—</span></div>
+        <div class="row"><span class="k">Edge (fair − book)</span><span class="mono" id="mpEdge">—</span></div>
+        <div class="row" style="border-top:1px solid var(--bd);margin-top:6px;padding-top:6px"><span class="k">Mispriced oranı (>%5)</span><span class="mono" id="mpSig">—</span></div>
+        <div class="row"><span class="k">Ortalama |edge|</span><span class="mono" id="mpAvg">—</span></div>
+        <div class="row"><span class="k">Max |edge|</span><span class="mono" id="mpMax">—</span></div>
+        <p style="margin:6px 0 0"><small>Edge büyük+sık ise latency stratejisi (taker) mantıklı.</small></p>
+      </div>
+    </div>
+
     <div class="card full">
       <h2>Son işlemler — kazanç <span id="wins" class="up">0</span> / kayıp <span id="losses" class="down">0</span></h2>
       <table id="histTbl"><tr><th>Market</th><th>Tip</th><th>Sonuç</th><th>Share</th><th>PnL ($)</th></tr></table>
@@ -443,6 +467,33 @@ async function poll(){
     }
     if(s.momPos){ $("momPosRow").style.display="flex"; $("momPos").textContent=s.momPos.side+" "+s.momPos.shares+" (maliyet $"+f(s.momPos.cost,2)+")"; }
     else { $("momPosRow").style.display="none"; }
+    // İstatistik
+    if(s.stats){
+      const st=s.stats;
+      $("stN").textContent=st.n;
+      $("stNet").textContent="$"+f(st.net,2); $("stNet").className="mono "+(st.net>0?"up":st.net<0?"down":"");
+      $("stMean").textContent = st.n? f(st.mean,3)+" ± "+f(st.se,3):"—";
+      $("stT").textContent = st.n? f(st.t,2)+(Math.abs(st.t)>2?" ✓":" (yetersiz)"):"—";
+      $("stT").className="mono "+(st.t>2?"up":st.t<-2?"down":"warn");
+      $("stBox").textContent = st.n? (100*st.boxRate).toFixed(0)+"% ("+st.box+")":"—";
+      $("stNaked").textContent = st.n? (100*st.nakedRate).toFixed(0)+"% ("+st.naked+")":"—";
+      $("stNaked").className="mono "+(st.nakedRate>0.3?"down":"");
+      $("stWin").textContent = st.n? (100*st.winRate).toFixed(0)+"%":"—";
+    }
+    // Mispricing
+    if(s.misp){
+      const mp=s.misp;
+      if(mp.live){
+        $("mpFair").textContent=f(mp.live.fairUp,3);
+        $("mpBook").textContent=f(mp.live.bookUp,3);
+        const e=mp.live.edge;
+        $("mpEdge").textContent=(e>=0?"+":"")+f(e,3)+(Math.abs(e)>mp.threshold?" ⚠":"");
+        $("mpEdge").className="mono "+(Math.abs(e)>mp.threshold?(e>0?"up":"down"):"");
+      }
+      $("mpSig").textContent = mp.n? (100*mp.sigRate).toFixed(0)+"% ("+mp.n+" örnek)":"—";
+      $("mpAvg").textContent = mp.n? f(mp.avgAbs,3):"—";
+      $("mpMax").textContent = mp.n? f(mp.max,3):"—";
+    }
     $("wins").textContent = s.wins||0;
     $("losses").textContent = s.losses||0;
     const tbl = $("histTbl");
