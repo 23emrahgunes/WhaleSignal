@@ -1,0 +1,69 @@
+name: PM-Edge CI
+
+on:
+  push:
+    branches:
+      - main
+      - feature/tv-direction-paper-engine-1868605833685460026
+      - fix/tv-direction-production-ready-20260810
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -count=1 ./...
+
+      - name: Race detector
+        run: go test -race -count=1 ./...
+
+      - name: Build Linux amd64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/pm-edge-linux-amd64 ./cmd/pm-edge
+          chmod +x dist/pm-edge-linux-amd64
+          sha256sum dist/pm-edge-linux-amd64 > dist/pm-edge-linux-amd64.sha256
+
+      - name: Upload VPS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pm-edge-linux-amd64
+          path: |
+            dist/pm-edge-linux-amd64
+            dist/pm-edge-linux-amd64.sha256
+          if-no-files-found: error
+          retention-days: 30
