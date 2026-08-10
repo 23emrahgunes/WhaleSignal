@@ -38,17 +38,23 @@ type PaperTrade struct {
 }
 
 type PaperStats struct {
-	InitialBalance float64 `json:"initialBalance"`
-	CashBalance    float64 `json:"cashBalance"`
-	Equity         float64 `json:"equity"`
-	RealizedPnL    float64 `json:"realizedPnl"`
-	OpenStake      float64 `json:"openStake"`
-	TotalTrades    int     `json:"totalTrades"`
-	SettledTrades  int     `json:"settledTrades"`
-	OpenTrades     int     `json:"openTrades"`
-	Wins           int     `json:"wins"`
-	Losses         int     `json:"losses"`
-	WinRate        float64 `json:"winRate"`
+	InitialBalance          float64 `json:"initialBalance"`
+	CashBalance             float64 `json:"cashBalance"`
+	Equity                  float64 `json:"equity"`
+	RealizedPnL             float64 `json:"realizedPnl"`
+	OpenStake               float64 `json:"openStake"`
+	TotalTrades             int     `json:"totalTrades"`
+	SettledTrades           int     `json:"settledTrades"`
+	OpenTrades              int     `json:"openTrades"`
+	Wins                    int     `json:"wins"`
+	Losses                  int     `json:"losses"`
+	WinRate                 float64 `json:"winRate"`
+	CalibrationN            int     `json:"calibrationN"`
+	AverageEntryProbability float64 `json:"averageEntryProbability"`
+	ActualWinProbability    float64 `json:"actualWinProbability"`
+	CalibrationGap          float64 `json:"calibrationGap"`
+	BrierScore              float64 `json:"brierScore"`
+	ExpectedWins            float64 `json:"expectedWins"`
 }
 
 func NewDatabase(dbPath string) (*Database, error) {
@@ -393,14 +399,18 @@ func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {
 	stats := PaperStats{InitialBalance: initialBalance}
 	var realizedPnL, openStake float64
 	var total, settled, open, wins int
+	var avgEntryProbability, brierScore, expectedWins float64
 	err := d.db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN status='SETTLED' THEN pnl ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status='OPEN' THEN stake ELSE 0 END), 0),
 		COUNT(*),
 		COALESCE(SUM(CASE WHEN status='SETTLED' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0)
-		FROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins)
+		COALESCE(SUM(CASE WHEN status='SETTLED' AND won=1 THEN 1 ELSE 0 END), 0),
+		COALESCE(AVG(CASE WHEN status='SETTLED' THEN entry_probability END), 0),
+		COALESCE(AVG(CASE WHEN status='SETTLED' THEN (entry_probability-won)*(entry_probability-won) END), 0),
+		COALESCE(SUM(CASE WHEN status='SETTLED' THEN entry_probability ELSE 0 END), 0)
+		FROM paper_trades`).Scan(&realizedPnL, &openStake, &total, &settled, &open, &wins, &avgEntryProbability, &brierScore, &expectedWins)
 	if err != nil {
 		return stats, err
 	}
@@ -413,8 +423,14 @@ func (d *Database) GetPaperStats(initialBalance float64) (PaperStats, error) {
 	stats.Losses = settled - wins
 	stats.CashBalance = initialBalance + realizedPnL - openStake
 	stats.Equity = initialBalance + realizedPnL
+	stats.CalibrationN = settled
+	stats.AverageEntryProbability = avgEntryProbability
+	stats.BrierScore = brierScore
+	stats.ExpectedWins = expectedWins
 	if settled > 0 {
 		stats.WinRate = float64(wins) * 100 / float64(settled)
+		stats.ActualWinProbability = float64(wins) / float64(settled)
+		stats.CalibrationGap = stats.ActualWinProbability - avgEntryProbability
 	}
 	return stats, nil
 }
