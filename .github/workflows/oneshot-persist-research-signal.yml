@@ -1,0 +1,61 @@
+name: One-shot persist research signal diagnostics
+
+on:
+  push:
+    branches:
+      - feat/regime-hedge-clob-paper-execution-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/regime-hedge-clob-paper-execution-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Persist calibration diagnostics and self-remove
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/storage/sqlite.go')
+          s = p.read_text()
+
+          old = '''\t_, err := d.db.Exec(query)\n\treturn err\n}\n\nfunc (d *Database) InsertSignal'''
+          new = '''\tif _, err := d.db.Exec(query); err != nil {\n\t\treturn err\n\t}\n\treturn d.ensureSignalResearchColumns()\n}\n\nfunc (d *Database) ensureSignalResearchColumns() error {\n\tcolumns := []struct {\n\t\tname string\n\t\ttypeSQL string\n\t}{\n\t\t{"binance_price", "REAL NOT NULL DEFAULT 0"},\n\t\t{"chainlink_binance_basis_bps", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_samples", "INTEGER NOT NULL DEFAULT 0"},\n\t\t{"forecast_price", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_mean_price", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_low68", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_high68", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_low95", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_high95", "REAL NOT NULL DEFAULT 0"},\n\t\t{"ptb_z", "REAL NOT NULL DEFAULT 0"},\n\t\t{"required_move_bps", "REAL NOT NULL DEFAULT 0"},\n\t\t{"expected_move_bps", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_sigma_expiry_bps", "REAL NOT NULL DEFAULT 0"},\n\t\t{"forecast_confidence", "REAL NOT NULL DEFAULT 0"},\n\t\t{"micro_volatility_annual", "REAL NOT NULL DEFAULT 0"},\n\t\t{"volatility_floor_annual", "REAL NOT NULL DEFAULT 0"},\n\t\t{"basis_volatility_annual", "REAL NOT NULL DEFAULT 0"},\n\t}\n\trows, err := d.db.Query("PRAGMA table_info(signals)")\n\tif err != nil {\n\t\treturn err\n\t}\n\texisting := make(map[string]bool)\n\tfor rows.Next() {\n\t\tvar cid int\n\t\tvar name, typ string\n\t\tvar notnull, pk int\n\t\tvar defaultValue interface{}\n\t\tif err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {\n\t\t\trows.Close()\n\t\t\treturn err\n\t\t}\n\t\texisting[name] = true\n\t}\n\tif err := rows.Close(); err != nil {\n\t\treturn err\n\t}\n\tfor _, column := range columns {\n\t\tif existing[column.name] {\n\t\t\tcontinue\n\t\t}\n\t\tif _, err := d.db.Exec(fmt.Sprintf("ALTER TABLE signals ADD COLUMN %s %s", column.name, column.typeSQL)); err != nil {\n\t\t\treturn fmt.Errorf("add signals.%s: %w", column.name, err)\n\t\t}\n\t}\n\treturn nil\n}\n\nfunc (d *Database) InsertSignal'''
+          if old not in s:
+              raise SystemExit('migration anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''\tquery := `\n\tINSERT INTO signals (\n\t\ttimestamp, question, slug, market_end_time, price_to_beat, current_price,\n\t\tspot_minus_price_to_beat, seconds_remaining, p_up, p_down, bid_vol, ask_vol,\n\t\tspoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,\n\t\tprobability_score, order_flow_score, technical_score, volatility, drift,\n\t\tcomposite_score, final_score, decision, confidence, market_stale, data_source\n\t) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`\n\t_, err := d.db.Exec(query, r.Timestamp, r.Question, r.Slug, r.MarketEndTime, r.PriceToBeat, r.CurrentPrice, r.SpotMinusPriceToBeat, r.SecondsRemaining, r.PUp, r.PDown, r.BidVol, r.AskVol, r.SpoofFilteredBidVol, r.SpoofFilteredAskVol, r.Imbalance, r.WeightedImbalance, r.ProbabilityScore, r.OrderFlowScore, r.TechnicalScore, r.Volatility, r.Drift, r.CompositeScore, r.FinalScore, r.Decision, r.Confidence, 0, r.DataSource)\n\treturn err'''
+          new = '''\tquery := `\n\tINSERT INTO signals (\n\t\ttimestamp, question, slug, market_end_time, price_to_beat, current_price,\n\t\tbinance_price, chainlink_binance_basis_bps, spot_minus_price_to_beat, seconds_remaining, p_up, p_down,\n\t\tforecast_samples, forecast_price, forecast_mean_price, forecast_low68, forecast_high68, forecast_low95, forecast_high95,\n\t\tptb_z, required_move_bps, expected_move_bps, forecast_sigma_expiry_bps, forecast_confidence,\n\t\tmicro_volatility_annual, volatility_floor_annual, basis_volatility_annual,\n\t\tbid_vol, ask_vol, spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,\n\t\tprobability_score, order_flow_score, technical_score, volatility, drift,\n\t\tcomposite_score, final_score, decision, confidence, market_stale, data_source\n\t) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`\n\t_, err := d.db.Exec(query,\n\t\tr.Timestamp, r.Question, r.Slug, r.MarketEndTime, r.PriceToBeat, r.CurrentPrice,\n\t\tr.BinancePrice, r.ChainlinkBinanceBasisBps, r.SpotMinusPriceToBeat, r.SecondsRemaining, r.PUp, r.PDown,\n\t\tr.ForecastSamples, r.ForecastPrice, r.ForecastMeanPrice, r.ForecastLow68, r.ForecastHigh68, r.ForecastLow95, r.ForecastHigh95,\n\t\tr.PTBZ, r.RequiredMoveBps, r.ExpectedMoveBps, r.ForecastSigmaExpiryBps, r.ForecastConfidence,\n\t\tr.MicroVolatilityAnnual, r.VolatilityFloorAnnual, r.BasisVolatilityAnnual,\n\t\tr.BidVol, r.AskVol, r.SpoofFilteredBidVol, r.SpoofFilteredAskVol, r.Imbalance, r.WeightedImbalance,\n\t\tr.ProbabilityScore, r.OrderFlowScore, r.TechnicalScore, r.Volatility, r.Drift,\n\t\tr.CompositeScore, r.FinalScore, r.Decision, r.Confidence, 0, r.DataSource)\n\treturn err'''
+          if old not in s:
+              raise SystemExit('insert block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''\tquery := `\n\tSELECT timestamp, question, slug, market_end_time, price_to_beat, current_price,\n\t\tspot_minus_price_to_beat, seconds_remaining, p_up, p_down, bid_vol, ask_vol,\n\t\tspoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,\n\t\tprobability_score, order_flow_score, technical_score, volatility, drift,\n\t\tcomposite_score, final_score, decision, confidence, market_stale, data_source\n\tFROM signals ORDER BY id DESC LIMIT ?`'''
+          new = '''\tquery := `\n\tSELECT timestamp, question, slug, market_end_time, price_to_beat, current_price,\n\t\tbinance_price, chainlink_binance_basis_bps, spot_minus_price_to_beat, seconds_remaining, p_up, p_down,\n\t\tforecast_samples, forecast_price, forecast_mean_price, forecast_low68, forecast_high68, forecast_low95, forecast_high95,\n\t\tptb_z, required_move_bps, expected_move_bps, forecast_sigma_expiry_bps, forecast_confidence,\n\t\tmicro_volatility_annual, volatility_floor_annual, basis_volatility_annual,\n\t\tbid_vol, ask_vol, spoof_filtered_bid_vol, spoof_filtered_ask_vol, imbalance, weighted_imbalance,\n\t\tprobability_score, order_flow_score, technical_score, volatility, drift,\n\t\tcomposite_score, final_score, decision, confidence, market_stale, data_source\n\tFROM signals ORDER BY id DESC LIMIT ?`'''
+          if old not in s:
+              raise SystemExit('select block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''\t\tif err := rows.Scan(&r.Timestamp, &r.Question, &r.Slug, &r.MarketEndTime, &r.PriceToBeat, &r.CurrentPrice, &r.SpotMinusPriceToBeat, &r.SecondsRemaining, &r.PUp, &r.PDown, &r.BidVol, &r.AskVol, &r.SpoofFilteredBidVol, &r.SpoofFilteredAskVol, &r.Imbalance, &r.WeightedImbalance, &r.ProbabilityScore, &r.OrderFlowScore, &r.TechnicalScore, &r.Volatility, &r.Drift, &r.CompositeScore, &r.FinalScore, &r.Decision, &r.Confidence, &stale, &r.DataSource); err != nil {'''
+          new = '''\t\tif err := rows.Scan(\n\t\t\t&r.Timestamp, &r.Question, &r.Slug, &r.MarketEndTime, &r.PriceToBeat, &r.CurrentPrice,\n\t\t\t&r.BinancePrice, &r.ChainlinkBinanceBasisBps, &r.SpotMinusPriceToBeat, &r.SecondsRemaining, &r.PUp, &r.PDown,\n\t\t\t&r.ForecastSamples, &r.ForecastPrice, &r.ForecastMeanPrice, &r.ForecastLow68, &r.ForecastHigh68, &r.ForecastLow95, &r.ForecastHigh95,\n\t\t\t&r.PTBZ, &r.RequiredMoveBps, &r.ExpectedMoveBps, &r.ForecastSigmaExpiryBps, &r.ForecastConfidence,\n\t\t\t&r.MicroVolatilityAnnual, &r.VolatilityFloorAnnual, &r.BasisVolatilityAnnual,\n\t\t\t&r.BidVol, &r.AskVol, &r.SpoofFilteredBidVol, &r.SpoofFilteredAskVol, &r.Imbalance, &r.WeightedImbalance,\n\t\t\t&r.ProbabilityScore, &r.OrderFlowScore, &r.TechnicalScore, &r.Volatility, &r.Drift,\n\t\t\t&r.CompositeScore, &r.FinalScore, &r.Decision, &r.Confidence, &stale, &r.DataSource); err != nil {'''
+          if old not in s:
+              raise SystemExit('scan block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          gofmt -w internal/storage/sqlite.go
+          rm -f .github/workflows/oneshot-persist-research-signal.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "storage: persist forecast calibration diagnostics"
+          git push origin HEAD:feat/regime-hedge-clob-paper-execution-20260811
