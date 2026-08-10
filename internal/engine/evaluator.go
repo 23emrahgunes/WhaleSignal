@@ -57,7 +57,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	if !market.Active || market.Closed {
 		return nil
 	}
-	if !binanceClient.IsPriceFresh(3 * time.Second) || !binanceClient.IsDepthFresh(3*time.Second) {
+	if !binanceClient.IsPriceFresh(3*time.Second) || !binanceClient.IsDepthFresh(3*time.Second) {
 		return nil
 	}
 

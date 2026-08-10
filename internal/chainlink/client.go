@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	defaultRTDSURL = "wss://ws-live-data.polymarket.com"
-	anchorGrace    = 3 * time.Second
-	freshnessLimit = 3 * time.Second
-	readTimeout    = 15 * time.Second
+	defaultRTDSURL  = "wss://ws-live-data.polymarket.com"
+	anchorGrace     = 3 * time.Second
+	freshnessLimit  = 3 * time.Second
+	readTimeout     = 15 * time.Second
 	anchorRetention = 24 * time.Hour
 )
 
