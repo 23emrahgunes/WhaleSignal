@@ -2,7 +2,9 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
+	"strings"
 
 	"pm-edge/internal/engine"
 	_ "modernc.org/sqlite"
@@ -21,20 +23,20 @@ func NewDatabase(dbPath string) (*Database, error) {
 		}
 	}
 	if dir != "" {
-		_ = os.MkdirAll(dir, 0755)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
-
 	inst := &Database{db: db}
 	if err := inst.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-
 	return inst, nil
 }
 
@@ -46,7 +48,6 @@ func (d *Database) Close() error {
 }
 
 func (d *Database) migrate() error {
-	// Let's create with the new properties if not exists.
 	query := `
 	CREATE TABLE IF NOT EXISTS signals (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,12 +79,49 @@ func (d *Database) migrate() error {
 		market_stale INTEGER NOT NULL,
 		data_source TEXT NOT NULL
 	);
+	CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp);
 	`
-	_, err := d.db.Exec(query)
+	if _, err := d.db.Exec(query); err != nil {
+		return err
+	}
+
+	// REV-FIX-1 cleanup: older builds generated this exact synthetic fallback
+	// whenever Polymarket discovery failed. Those rows are not valid research data.
+	_, err := d.db.Exec(`
+		DELETE FROM signals
+		WHERE slug = 'btc-above-100k-1505'
+		   OR question = 'BTC above $100,000 at 15:05?';
+	`)
 	return err
 }
 
+func validateSignal(r *engine.EvaluationResult) error {
+	if r == nil {
+		return fmt.Errorf("nil signal")
+	}
+	if !strings.HasPrefix(r.Slug, "btc-updown-5m-") {
+		return fmt.Errorf("unverified market slug: %q", r.Slug)
+	}
+	if r.PriceToBeat <= 0 || r.CurrentPrice <= 0 {
+		return fmt.Errorf("invalid reference prices")
+	}
+	if r.SecondsRemaining <= 0 || r.SecondsRemaining > 305 {
+		return fmt.Errorf("invalid remaining time: %f", r.SecondsRemaining)
+	}
+	if !strings.HasPrefix(r.DataSource, "CHAINLINK_RTDS+") || strings.Contains(r.DataSource, "MOCK") {
+		return fmt.Errorf("unverified data source: %q", r.DataSource)
+	}
+	if r.PUp < 0 || r.PUp > 1 || r.PDown < 0 || r.PDown > 1 {
+		return fmt.Errorf("invalid probabilities")
+	}
+	return nil
+}
+
 func (d *Database) InsertSignal(r *engine.EvaluationResult) error {
+	if err := validateSignal(r); err != nil {
+		return err
+	}
+
 	query := `
 	INSERT INTO signals (
 		timestamp, question, slug, market_end_time, price_to_beat, current_price,
@@ -109,6 +147,13 @@ func (d *Database) InsertSignal(r *engine.EvaluationResult) error {
 }
 
 func (d *Database) GetHistory(limit int) ([]engine.EvaluationResult, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
 	query := `
 	SELECT
 		timestamp, question, slug, market_end_time, price_to_beat, current_price,
@@ -130,19 +175,20 @@ func (d *Database) GetHistory(limit int) ([]engine.EvaluationResult, error) {
 	for rows.Next() {
 		var r engine.EvaluationResult
 		var staleInt int
-		err := rows.Scan(
+		if err := rows.Scan(
 			&r.Timestamp, &r.Question, &r.Slug, &r.MarketEndTime, &r.PriceToBeat, &r.CurrentPrice,
 			&r.SpotMinusPriceToBeat, &r.SecondsRemaining, &r.PUp, &r.PDown, &r.BidVol, &r.AskVol,
 			&r.SpoofFilteredBidVol, &r.SpoofFilteredAskVol, &r.Imbalance, &r.WeightedImbalance,
 			&r.ProbabilityScore, &r.OrderFlowScore, &r.TechnicalScore, &r.Volatility, &r.Drift,
 			&r.CompositeScore, &r.FinalScore, &r.Decision, &r.Confidence, &staleInt, &r.DataSource,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, err
 		}
-		r.MarketStale = (staleInt == 1)
+		r.MarketStale = staleInt == 1
 		results = append(results, r)
 	}
-
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
