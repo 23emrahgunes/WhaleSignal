@@ -34,22 +34,22 @@ func newHedgeTestEngine(t *testing.T) (*storage.Database, *Engine, *polymarket.M
 		},
 	}
 	pe := NewEngine(db, Config{
-		Enabled:              true,
-		InitialBalance:       1000,
-		Stake:                2.5,
-		MinConfidence:        55,
-		MinSecondsToEnd:      30,
-		MaxSecondsToEnd:      240,
-		HedgeEnabled:         true,
-		HedgeWindow:          8,
-		HedgeMinVotes:        6,
-		HedgeMinConsecutive:  3,
-		HedgeScoreThreshold:  0.35,
-		HedgeMinProbability:  0.65,
-		HedgeMinEdge:         0.03,
-		HedgeMinAbsPTBZ:      0.50,
-		HedgeMinSecondsToEnd: 20,
-		HedgeMaxSecondsToEnd: 120,
+		Enabled:                  true,
+		InitialBalance:           1000,
+		Stake:                    2.5,
+		MinConfidence:            55,
+		MinSecondsToEnd:          30,
+		MaxSecondsToEnd:          240,
+		HedgeEnabled:             true,
+		HedgeWindow:              8,
+		HedgeMinVotes:            6,
+		HedgeMinConsecutive:      3,
+		HedgeScoreThreshold:      0.35,
+		HedgeMinProbability:      0.65,
+		HedgeMinEdge:             0.03,
+		HedgeMinAbsPTBZ:          0.50,
+		HedgeMinSecondsToEnd:     20,
+		HedgeMaxSecondsToEnd:     120,
 	})
 	return db, pe, market, now
 }
@@ -213,7 +213,7 @@ func TestHedgeSettlementPreservesOriginalABPnL(t *testing.T) {
 			t.Fatal(err)
 		}
 		if opened {
-			heedgeOpened = true
+			hegeOpened = true
 			if i != 7 || h == nil {
 				t.Fatalf("hedge opened at wrong point i=%d h=%+v", i, h)
 			}
