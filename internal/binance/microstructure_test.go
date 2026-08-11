@@ -77,6 +77,20 @@ func TestRecordTradeWithIDDeduplicatesRESTAndWS(t *testing.T) {
 	}
 }
 
+func TestRecordTradeWithIDPreservesOutOfOrderRESTBackfill(t *testing.T) {
+	c := NewMicrostructureClient()
+	now := time.Now().UTC()
+	c.recordTradeWithID(100, 2, true, now.Add(-time.Second), 105)    // newer aggressive sell arrives first
+	c.recordTradeWithID(100, 3, false, now.Add(-2*time.Second), 103) // older aggressive buy arrives later via REST
+	c.recordTradeWithID(100, 3, false, now.Add(-2*time.Second), 103) // duplicate must still be ignored
+	c.mu.RLock()
+	buy, sell := tradeWindow(c.trades, now.Add(-5*time.Second))
+	c.mu.RUnlock()
+	if buy != 300 || sell != 200 {
+		t.Fatalf("out-of-order backfill lost flow: buy %.2f sell %.2f", buy, sell)
+	}
+}
+
 func TestReconcileLifePreservesFirstSeen(t *testing.T) {
 	now := time.Now().UTC()
 	first := now.Add(-5 * time.Second)

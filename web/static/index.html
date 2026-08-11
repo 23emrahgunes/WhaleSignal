@@ -23,6 +23,7 @@
       <div class="mini"><span>Kalibrasyon Farkı</span><strong style="font-size:13px">Tahmin edilen kazanma olasılığı ile gerçek kazanma oranı arasındaki farktır. 0’a yakın olması daha iyidir.</strong></div>
       <div class="mini"><span>Ekonomik Avantaj</span><strong style="font-size:13px">Modelin kazanma olasılığından gerçek giriş maliyetinin gerektirdiği başa baş olasılığı çıkarılır. Pozitif olması daha sağlıklıdır.</strong></div>
       <div class="mini"><span>Gölge Model B</span><strong style="font-size:13px">Yeni ±$10/$25/$50/$75 derinlik ve gerçek alış/satış akışını ölçen test modelidir. Şimdilik kağıt işlemi açmaz.</strong></div>
+      <div class="mini"><span>PTB Terminal Olasılığı</span><strong style="font-size:13px">Fiyat-zaman-oynaklık tahminini başlangıç kabul eder; PTB yolundaki likidite, gerçek agresif alış/satış hızı ve duvar dinamikleriyle güncelleyerek kapanışın hedef fiyatın üstünde/altında olma olasılığını hesaplar.</strong></div>
       <div class="mini"><span>VWAP</span><strong style="font-size:13px">Emrin birden fazla fiyat kademesinde gerçekleşmesi halinde oluşan hacim ağırlıklı ortalama gerçekleşme fiyatıdır.</strong></div>
       <div class="mini"><span>EWMA</span><strong style="font-size:13px">Yeni sinyallere daha fazla ağırlık veren yumuşatılmış ters yön skorudur.</strong></div>
       <div class="mini"><span>Baz Puan</span><strong style="font-size:13px">Fiyat hareketini küçük ölçekte gösterir. 1 baz puan = %0,01.</strong></div>
@@ -99,6 +100,11 @@
       <div class="mini"><span>Derinlik / Gerçek İşlem Skorları</span><strong id="deepTradeScores">—</strong></div>
       <div class="mini"><span>Emir Duvarları / Erime</span><strong id="wallDynamics">—</strong></div>
       <div class="mini"><span>Hedefe Giden Likidite / Bariyer</span><strong id="ptbPath">—</strong></div>
+      <div class="mini"><span>PTB Üstünde / Altında Kapanış Olasılığı</span><strong id="ptbTerminalProb">—</strong></div>
+      <div class="mini"><span>PTB Terminal Yönü / Güveni</span><strong id="ptbTerminalDecision">—</strong></div>
+      <div class="mini"><span>Agresif Alış / Satış Hızı</span><strong id="ptbFlowRate">—</strong></div>
+      <div class="mini"><span>PTB Akış Kapasitesi / Mikroyapı Kanıtı</span><strong id="ptbFlowCapacity">—</strong></div>
+      <div class="mini"><span>PTB Koridoru Kapsanıyor mu?</span><strong id="ptbCorridor">—</strong></div>
       <div class="mini"><span>Giriş Ekonomik Avantajı</span><strong id="economicEdge">—</strong></div>
     </div>
   </div>
@@ -248,6 +254,12 @@ async function updateLive(){
   document.getElementById('deepTradeScores').textContent=`${pct(data.deepBookScore||0)} / ${pct(data.tradeFlowScore||0)}`;
   document.getElementById('wallDynamics').textContent=`${pct(data.wallDynamicsScore||0)} · Alış duvarı ${pct(dm.bidWallScore||0)} / Satış duvarı ${pct(dm.askWallScore||0)}`;
   document.getElementById('ptbPath').textContent=`Alış desteği ${usdCompact(dm.ptbPathBidUsd||0)} / Satış bariyeri ${usdCompact(dm.ptbPathAskUsd||0)} · ${pct(data.ptbBarrierScore||0)}`;
+  const pt=data.ptbTerminal||{};
+  document.getElementById('ptbTerminalProb').textContent=pt.ready?`${pct(pt.pAbove,1)} / ${pct(pt.pBelow,1)}`:`Öncül: ${pct(pt.priorPAbove||data.pUp,1)} / ${pct(pt.priorPBelow||data.pDown,1)}`;
+  document.getElementById('ptbTerminalDecision').innerHTML=pt.ready?`${decisionChip(pt.decision)} · ${pctDirect(pt.confidence||0,1)}`:chip('VERİ TAMAMLANIYOR','warn');
+  document.getElementById('ptbFlowRate').textContent=pt.ready?`Alış ${usdCompact(pt.buyRateUsdPerSec)}/sn · Satış ${usdCompact(pt.sellRateUsdPerSec)}/sn`:'—';
+  document.getElementById('ptbFlowCapacity').textContent=pt.ready?`${pct(pt.flowCapacityScore,1)} / ${pct(pt.microEvidenceScore,1)}`:'—';
+  document.getElementById('ptbCorridor').innerHTML=pt.corridorCovered?chip(`EVET · ${usd(pt.ptbDistanceUsd||0)}`,'fresh'):chip(`HAYIR · ${usd(pt.ptbDistanceUsd||0)}`,'warn');
 
   const box=document.getElementById('indicatorBody');const nextIndicatorHTML=Object.entries(data.indicators||{}).sort().map(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';return `<div class="indrow"><span>${indicatorTr(name)}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`}).join('');if(nextIndicatorHTML!==indicatorHTML){box.innerHTML=nextIndicatorHTML||'<div class="indrow"><span>Henüz gösterge üretilmedi</span><span class="chip neutral">0</span></div>';indicatorHTML=nextIndicatorHTML;}
 }

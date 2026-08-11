@@ -29,6 +29,7 @@ func TestMicrostructureSnapshotRoundTrip(t *testing.T) {
 		},
 		DeepBookScore: 0.12, TradeFlowScore: 0.22, WallDynamicsScore: 0.32, PTBBarrierScore: -0.42,
 		MicrostructureScore: 0.08, ShadowModelBScore: 0.24, ShadowDecision: "UP", ShadowConfidence: 24,
+		PTBTerminal: engine.PTBTerminalEstimate{Ready: true, CorridorCovered: true, PTBDistanceUSD: 25, PriorPAbove: 0.60, PriorPBelow: 0.40, PAbove: 0.68, PBelow: 0.32, Decision: "UP", Confidence: 36, FlowCapacityScore: 0.2},
 	}
 	if err := db.InsertMicrostructureSnapshot(r); err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestMicrostructureSnapshotRoundTrip(t *testing.T) {
 		t.Fatalf("expected one row, got %d", len(rows))
 	}
 	got := rows[0]
-	if got.Band10BidUSD != 1000 || got.Trade5BuyUSD != 2000 || got.ShadowDecision != "UP" || got.PTBBarrierScore != -0.42 {
+	if got.Band10BidUSD != 1000 || got.Trade5BuyUSD != 2000 || got.ShadowDecision != "UP" || got.PTBBarrierScore != -0.42 || !got.PTBTerminal.Ready || got.PTBTerminal.PAbove != 0.68 {
 		t.Fatalf("unexpected round trip %+v", got)
 	}
 }

@@ -1,61 +1,63 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"pm-edge/internal/engine"
 )
 
 type MicrostructureSnapshot struct {
-	Timestamp           string  `json:"timestamp"`
-	Slug                string  `json:"slug"`
-	Timeframe           string  `json:"timeframe"`
-	Ready               bool    `json:"ready"`
-	Synchronized        bool    `json:"synchronized"`
-	Source              string  `json:"source"`
-	AgeMs               int64   `json:"ageMs"`
-	BidLevels           int     `json:"bidLevels"`
-	AskLevels           int     `json:"askLevels"`
-	Band10BidUSD        float64 `json:"band10BidUsd"`
-	Band10AskUSD        float64 `json:"band10AskUsd"`
-	Band10Imbalance     float64 `json:"band10Imbalance"`
-	Band25BidUSD        float64 `json:"band25BidUsd"`
-	Band25AskUSD        float64 `json:"band25AskUsd"`
-	Band25Imbalance     float64 `json:"band25Imbalance"`
-	Band50BidUSD        float64 `json:"band50BidUsd"`
-	Band50AskUSD        float64 `json:"band50AskUsd"`
-	Band50Imbalance     float64 `json:"band50Imbalance"`
-	Band75BidUSD        float64 `json:"band75BidUsd"`
-	Band75AskUSD        float64 `json:"band75AskUsd"`
-	Band75Imbalance     float64 `json:"band75Imbalance"`
-	Trade5BuyUSD        float64 `json:"trade5BuyUsd"`
-	Trade5SellUSD       float64 `json:"trade5SellUsd"`
-	Trade5Imbalance     float64 `json:"trade5Imbalance"`
-	Trade15BuyUSD       float64 `json:"trade15BuyUsd"`
-	Trade15SellUSD      float64 `json:"trade15SellUsd"`
-	Trade15Imbalance    float64 `json:"trade15Imbalance"`
-	Trade30BuyUSD       float64 `json:"trade30BuyUsd"`
-	Trade30SellUSD      float64 `json:"trade30SellUsd"`
-	Trade30Imbalance    float64 `json:"trade30Imbalance"`
-	Trade60BuyUSD       float64 `json:"trade60BuyUsd"`
-	Trade60SellUSD      float64 `json:"trade60SellUsd"`
-	Trade60Imbalance    float64 `json:"trade60Imbalance"`
-	TradeAcceleration   float64 `json:"tradeAcceleration"`
-	BidWallScore        float64 `json:"bidWallScore"`
-	AskWallScore        float64 `json:"askWallScore"`
-	BidDepletionScore   float64 `json:"bidDepletionScore"`
-	AskDepletionScore   float64 `json:"askDepletionScore"`
-	PTBPathBidUSD       float64 `json:"ptbPathBidUsd"`
-	PTBPathAskUSD       float64 `json:"ptbPathAskUsd"`
-	PTBBeyondUSD        float64 `json:"ptbBeyondUsd"`
-	PTBBarrierScore     float64 `json:"ptbBarrierScore"`
-	DeepBookScore       float64 `json:"deepBookScore"`
-	TradeFlowScore      float64 `json:"tradeFlowScore"`
-	WallDynamicsScore   float64 `json:"wallDynamicsScore"`
-	MicrostructureScore float64 `json:"microstructureScore"`
-	ShadowModelBScore   float64 `json:"shadowModelBScore"`
-	ShadowDecision      string  `json:"shadowDecision"`
-	ShadowConfidence    float64 `json:"shadowConfidence"`
+	Timestamp           string                     `json:"timestamp"`
+	Slug                string                     `json:"slug"`
+	Timeframe           string                     `json:"timeframe"`
+	Ready               bool                       `json:"ready"`
+	Synchronized        bool                       `json:"synchronized"`
+	Source              string                     `json:"source"`
+	AgeMs               int64                      `json:"ageMs"`
+	BidLevels           int                        `json:"bidLevels"`
+	AskLevels           int                        `json:"askLevels"`
+	Band10BidUSD        float64                    `json:"band10BidUsd"`
+	Band10AskUSD        float64                    `json:"band10AskUsd"`
+	Band10Imbalance     float64                    `json:"band10Imbalance"`
+	Band25BidUSD        float64                    `json:"band25BidUsd"`
+	Band25AskUSD        float64                    `json:"band25AskUsd"`
+	Band25Imbalance     float64                    `json:"band25Imbalance"`
+	Band50BidUSD        float64                    `json:"band50BidUsd"`
+	Band50AskUSD        float64                    `json:"band50AskUsd"`
+	Band50Imbalance     float64                    `json:"band50Imbalance"`
+	Band75BidUSD        float64                    `json:"band75BidUsd"`
+	Band75AskUSD        float64                    `json:"band75AskUsd"`
+	Band75Imbalance     float64                    `json:"band75Imbalance"`
+	Trade5BuyUSD        float64                    `json:"trade5BuyUsd"`
+	Trade5SellUSD       float64                    `json:"trade5SellUsd"`
+	Trade5Imbalance     float64                    `json:"trade5Imbalance"`
+	Trade15BuyUSD       float64                    `json:"trade15BuyUsd"`
+	Trade15SellUSD      float64                    `json:"trade15SellUsd"`
+	Trade15Imbalance    float64                    `json:"trade15Imbalance"`
+	Trade30BuyUSD       float64                    `json:"trade30BuyUsd"`
+	Trade30SellUSD      float64                    `json:"trade30SellUsd"`
+	Trade30Imbalance    float64                    `json:"trade30Imbalance"`
+	Trade60BuyUSD       float64                    `json:"trade60BuyUsd"`
+	Trade60SellUSD      float64                    `json:"trade60SellUsd"`
+	Trade60Imbalance    float64                    `json:"trade60Imbalance"`
+	TradeAcceleration   float64                    `json:"tradeAcceleration"`
+	BidWallScore        float64                    `json:"bidWallScore"`
+	AskWallScore        float64                    `json:"askWallScore"`
+	BidDepletionScore   float64                    `json:"bidDepletionScore"`
+	AskDepletionScore   float64                    `json:"askDepletionScore"`
+	PTBPathBidUSD       float64                    `json:"ptbPathBidUsd"`
+	PTBPathAskUSD       float64                    `json:"ptbPathAskUsd"`
+	PTBBeyondUSD        float64                    `json:"ptbBeyondUsd"`
+	PTBBarrierScore     float64                    `json:"ptbBarrierScore"`
+	DeepBookScore       float64                    `json:"deepBookScore"`
+	TradeFlowScore      float64                    `json:"tradeFlowScore"`
+	WallDynamicsScore   float64                    `json:"wallDynamicsScore"`
+	MicrostructureScore float64                    `json:"microstructureScore"`
+	ShadowModelBScore   float64                    `json:"shadowModelBScore"`
+	ShadowDecision      string                     `json:"shadowDecision"`
+	ShadowConfidence    float64                    `json:"shadowConfidence"`
+	PTBTerminal         engine.PTBTerminalEstimate `json:"ptbTerminal"`
 }
 
 func (d *Database) EnsureMicrostructureSchema() error {
@@ -85,11 +87,44 @@ func (d *Database) EnsureMicrostructureSchema() error {
 		ptb_path_bid_usd REAL NOT NULL, ptb_path_ask_usd REAL NOT NULL, ptb_beyond_usd REAL NOT NULL, ptb_barrier_score REAL NOT NULL,
 		deep_book_score REAL NOT NULL, trade_flow_score REAL NOT NULL, wall_dynamics_score REAL NOT NULL, microstructure_score REAL NOT NULL,
 		shadow_model_b_score REAL NOT NULL, shadow_decision TEXT NOT NULL, shadow_confidence REAL NOT NULL,
+		ptb_terminal_json TEXT NOT NULL DEFAULT '{}',
 		UNIQUE(timestamp, slug)
 	);
 	CREATE INDEX IF NOT EXISTS idx_microstructure_tf_time ON microstructure_snapshots(timeframe, timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_microstructure_slug ON microstructure_snapshots(slug);
 	`)
+	if err != nil {
+		return err
+	}
+	return d.ensureMicrostructureTerminalColumn()
+}
+
+func (d *Database) ensureMicrostructureTerminalColumn() error {
+	rows, err := d.db.Query("PRAGMA table_info(microstructure_snapshots)")
+	if err != nil {
+		return err
+	}
+	has := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "ptb_terminal_json" {
+			has = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = d.db.Exec("ALTER TABLE microstructure_snapshots ADD COLUMN ptb_terminal_json TEXT NOT NULL DEFAULT '{}'")
 	return err
 }
 
@@ -127,6 +162,14 @@ func (d *Database) InsertMicrostructureSnapshot(r *engine.EvaluationResult) erro
 		m.PTBPathBidUSD, m.PTBPathAskUSD, m.PTBBeyondUSD, m.PTBBarrierScore,
 		m.DeepBookScore, m.TradeFlowScore, m.WallDynamicsScore, m.MicrostructureScore,
 		m.ShadowModelBScore, m.ShadowDecision, m.ShadowConfidence)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(r.PTBTerminal)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec(`UPDATE microstructure_snapshots SET ptb_terminal_json=? WHERE timestamp=? AND slug=?`, string(payload), r.Timestamp, r.Slug)
 	return err
 }
 
@@ -149,7 +192,7 @@ func (d *Database) GetMicrostructureSnapshots(limit int, timeframe string) ([]Mi
 		trade_acceleration, bid_wall_score, ask_wall_score, bid_depletion_score, ask_depletion_score,
 		ptb_path_bid_usd, ptb_path_ask_usd, ptb_beyond_usd, ptb_barrier_score,
 		deep_book_score, trade_flow_score, wall_dynamics_score, microstructure_score,
-		shadow_model_b_score, shadow_decision, shadow_confidence
+		shadow_model_b_score, shadow_decision, shadow_confidence, ptb_terminal_json
 		FROM microstructure_snapshots WHERE timeframe=? ORDER BY id DESC LIMIT ?`, NormalizeTimeframe(timeframe), limit)
 	if err != nil {
 		return nil, err
@@ -159,6 +202,7 @@ func (d *Database) GetMicrostructureSnapshots(limit int, timeframe string) ([]Mi
 	for rows.Next() {
 		var m MicrostructureSnapshot
 		var ready, synced int
+		var terminalJSON string
 		if err := rows.Scan(&m.Timestamp, &m.Slug, &m.Timeframe, &ready, &synced, &m.Source, &m.AgeMs, &m.BidLevels, &m.AskLevels,
 			&m.Band10BidUSD, &m.Band10AskUSD, &m.Band10Imbalance,
 			&m.Band25BidUSD, &m.Band25AskUSD, &m.Band25Imbalance,
@@ -171,8 +215,11 @@ func (d *Database) GetMicrostructureSnapshots(limit int, timeframe string) ([]Mi
 			&m.TradeAcceleration, &m.BidWallScore, &m.AskWallScore, &m.BidDepletionScore, &m.AskDepletionScore,
 			&m.PTBPathBidUSD, &m.PTBPathAskUSD, &m.PTBBeyondUSD, &m.PTBBarrierScore,
 			&m.DeepBookScore, &m.TradeFlowScore, &m.WallDynamicsScore, &m.MicrostructureScore,
-			&m.ShadowModelBScore, &m.ShadowDecision, &m.ShadowConfidence); err != nil {
+			&m.ShadowModelBScore, &m.ShadowDecision, &m.ShadowConfidence, &terminalJSON); err != nil {
 			return nil, err
+		}
+		if terminalJSON != "" {
+			_ = json.Unmarshal([]byte(terminalJSON), &m.PTBTerminal)
 		}
 		m.Ready = ready == 1
 		m.Synchronized = synced == 1
@@ -182,7 +229,7 @@ func (d *Database) GetMicrostructureSnapshots(limit int, timeframe string) ([]Mi
 }
 
 func snapshotFromEvaluation(r *engine.EvaluationResult) MicrostructureSnapshot {
-	m := MicrostructureSnapshot{Timestamp: r.Timestamp, Slug: r.Slug, Timeframe: TimeframeFromMarketSlug(r.Slug), Ready: r.DeepMicrostructure.Ready, Synchronized: r.DeepMicrostructure.Synchronized, Source: r.DeepMicrostructure.Source, AgeMs: r.DeepMicrostructure.AgeMs, BidLevels: r.DeepMicrostructure.BidLevels, AskLevels: r.DeepMicrostructure.AskLevels, TradeAcceleration: r.DeepMicrostructure.TradeAcceleration, BidWallScore: r.DeepMicrostructure.BidWallScore, AskWallScore: r.DeepMicrostructure.AskWallScore, BidDepletionScore: r.DeepMicrostructure.BidDepletionScore, AskDepletionScore: r.DeepMicrostructure.AskDepletionScore, PTBPathBidUSD: r.DeepMicrostructure.PTBPathBidUSD, PTBPathAskUSD: r.DeepMicrostructure.PTBPathAskUSD, PTBBeyondUSD: r.DeepMicrostructure.PTBBeyondUSD, PTBBarrierScore: r.PTBBarrierScore, DeepBookScore: r.DeepBookScore, TradeFlowScore: r.TradeFlowScore, WallDynamicsScore: r.WallDynamicsScore, MicrostructureScore: r.MicrostructureScore, ShadowModelBScore: r.ShadowModelBScore, ShadowDecision: r.ShadowDecision, ShadowConfidence: r.ShadowConfidence}
+	m := MicrostructureSnapshot{Timestamp: r.Timestamp, Slug: r.Slug, Timeframe: TimeframeFromMarketSlug(r.Slug), Ready: r.DeepMicrostructure.Ready, Synchronized: r.DeepMicrostructure.Synchronized, Source: r.DeepMicrostructure.Source, AgeMs: r.DeepMicrostructure.AgeMs, BidLevels: r.DeepMicrostructure.BidLevels, AskLevels: r.DeepMicrostructure.AskLevels, TradeAcceleration: r.DeepMicrostructure.TradeAcceleration, BidWallScore: r.DeepMicrostructure.BidWallScore, AskWallScore: r.DeepMicrostructure.AskWallScore, BidDepletionScore: r.DeepMicrostructure.BidDepletionScore, AskDepletionScore: r.DeepMicrostructure.AskDepletionScore, PTBPathBidUSD: r.DeepMicrostructure.PTBPathBidUSD, PTBPathAskUSD: r.DeepMicrostructure.PTBPathAskUSD, PTBBeyondUSD: r.DeepMicrostructure.PTBBeyondUSD, PTBBarrierScore: r.PTBBarrierScore, DeepBookScore: r.DeepBookScore, TradeFlowScore: r.TradeFlowScore, WallDynamicsScore: r.WallDynamicsScore, MicrostructureScore: r.MicrostructureScore, ShadowModelBScore: r.ShadowModelBScore, ShadowDecision: r.ShadowDecision, ShadowConfidence: r.ShadowConfidence, PTBTerminal: r.PTBTerminal}
 	for _, b := range r.DeepMicrostructure.Bands {
 		switch int(b.DistanceUSD) {
 		case 10:

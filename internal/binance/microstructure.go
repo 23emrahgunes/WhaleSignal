@@ -73,6 +73,8 @@ type DeepMicroSnapshot struct {
 	LastTradeAgeMs     int64         `json:"lastTradeAgeMs"`
 	TradeFlowAvailable bool          `json:"tradeFlowAvailable"`
 	PTBPrice           float64       `json:"ptbPrice"`
+	PTBDistanceUSD     float64       `json:"ptbDistanceUsd"`
+	PTBCorridorCovered bool          `json:"ptbCorridorCovered"`
 }
 
 type aggressiveTrade struct {
@@ -97,12 +99,13 @@ type MicrostructureClient struct {
 	askLife    map[float64]levelLife
 	trades     []aggressiveTrade
 
-	synchronized   bool
-	lastUpdateID   int64
-	lastBookTime   time.Time
-	lastTradeTime  time.Time
-	lastAggTradeID int64
-	source         string
+	synchronized    bool
+	lastUpdateID    int64
+	lastBookTime    time.Time
+	lastTradeTime   time.Time
+	lastAggTradeID  int64
+	seenAggTradeIDs map[int64]time.Time
+	source          string
 
 	stopChan chan struct{}
 	stopOnce sync.Once
@@ -113,14 +116,15 @@ type MicrostructureClient struct {
 
 func NewMicrostructureClient() *MicrostructureClient {
 	return &MicrostructureClient{
-		httpClient: &http.Client{Timeout: 8 * time.Second},
-		bids:       make(map[float64]float64),
-		asks:       make(map[float64]float64),
-		bidLife:    make(map[float64]levelLife),
-		askLife:    make(map[float64]levelLife),
-		trades:     make([]aggressiveTrade, 0, 4096),
-		source:     "UNINITIALIZED",
-		stopChan:   make(chan struct{}),
+		httpClient:      &http.Client{Timeout: 8 * time.Second},
+		bids:            make(map[float64]float64),
+		asks:            make(map[float64]float64),
+		bidLife:         make(map[float64]levelLife),
+		askLife:         make(map[float64]levelLife),
+		trades:          make([]aggressiveTrade, 0, 4096),
+		seenAggTradeIDs: make(map[int64]time.Time, 8192),
+		source:          "UNINITIALIZED",
+		stopChan:        make(chan struct{}),
 	}
 }
 
@@ -381,6 +385,11 @@ func (c *MicrostructureClient) recordTrade(price, qty float64, buyerIsMaker bool
 }
 
 func (c *MicrostructureClient) recordTradeWithID(price, qty float64, buyerIsMaker bool, ts time.Time, aggregateID int64) {
+	now := time.Now().UTC()
+	cutoff := now.Add(-tradeFlowRetention)
+	if ts.Before(cutoff) {
+		return
+	}
 	notional := price * qty
 	tr := aggressiveTrade{Time: ts}
 	if buyerIsMaker {
@@ -388,22 +397,29 @@ func (c *MicrostructureClient) recordTradeWithID(price, qty float64, buyerIsMake
 	} else {
 		tr.BuyUSD = notional
 	}
-	cutoff := ts.Add(-tradeFlowRetention)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if aggregateID > 0 {
-		if aggregateID <= c.lastAggTradeID {
+		if _, seen := c.seenAggTradeIDs[aggregateID]; seen {
 			return
 		}
-		c.lastAggTradeID = aggregateID
+		c.seenAggTradeIDs[aggregateID] = ts
+		if aggregateID > c.lastAggTradeID {
+			c.lastAggTradeID = aggregateID
+		}
 	}
 	c.trades = append(c.trades, tr)
-	first := 0
-	for first < len(c.trades) && c.trades[first].Time.Before(cutoff) {
-		first++
+	kept := c.trades[:0]
+	for _, row := range c.trades {
+		if !row.Time.Before(cutoff) {
+			kept = append(kept, row)
+		}
 	}
-	if first > 0 {
-		c.trades = append([]aggressiveTrade(nil), c.trades[first:]...)
+	c.trades = kept
+	for id, seenAt := range c.seenAggTradeIDs {
+		if seenAt.Before(cutoff) {
+			delete(c.seenAggTradeIDs, id)
+		}
 	}
 	if c.lastTradeTime.IsZero() || ts.After(c.lastTradeTime) {
 		c.lastTradeTime = ts
@@ -420,10 +436,11 @@ func (c *MicrostructureClient) runRESTFallback() {
 				util.Logger.Warn("Binance deep REST book fallback failed", zap.Error(err))
 			}
 		}
-		if c.tradeNeedsREST(now) {
-			if err := c.loadRESTAggTradesFallback(); err != nil {
-				util.Logger.Warn("Binance aggTrades REST fallback failed", zap.Error(err))
-			}
+		// Always backfill aggregate trades from REST. WebSocket and REST can arrive
+		// out of order; the ID seen-set deduplicates them without dropping valid
+		// BUY trades that have a lower ID than a newer WS event.
+		if err := c.loadRESTAggTradesFallback(); err != nil {
+			util.Logger.Warn("Binance aggTrades REST backfill failed", zap.Error(err))
 		}
 	}
 	poll(time.Now().UTC())
@@ -581,6 +598,10 @@ func (c *MicrostructureClient) Snapshot(currentPrice, priceToBeat float64, now t
 		currentPrice = out.MidPrice
 	}
 	out.BidRangeUSD, out.AskRangeUSD = fullRanges(c.bids, c.asks, out.BestBid, out.BestAsk)
+	if priceToBeat > 0 {
+		out.PTBDistanceUSD = math.Abs(priceToBeat - currentPrice)
+		out.PTBCorridorCovered = out.PTBDistanceUSD == 0 || (out.BidRangeUSD >= out.PTBDistanceUSD && out.AskRangeUSD >= out.PTBDistanceUSD)
+	}
 	for _, d := range []float64{10, 25, 50, 75} {
 		bid, ask := bandNotional(c.bids, c.asks, currentPrice, d)
 		out.Bands = append(out.Bands, DeepBand{DistanceUSD: d, BidUSD: bid, AskUSD: ask, Imbalance: normalizedImbalance(bid, ask)})
