@@ -99,7 +99,11 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		return nil
 	}
 	secondsRemaining := market.EndTime.Sub(nowTime).Seconds()
-	if secondsRemaining <= 0 || secondsRemaining > 5*60+5 {
+	marketDuration := market.EndTime.Sub(market.StartTime).Seconds()
+	if marketDuration <= 0 {
+		marketDuration = 5 * 60
+	}
+	if secondsRemaining <= 0 || secondsRemaining > marketDuration+5 {
 		return nil
 	}
 
