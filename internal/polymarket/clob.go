@@ -38,10 +38,17 @@ type clobBookResponse struct {
 	MinOrderSize string `json:"min_order_size"`
 }
 
+// FetchBuyQuoteForShares estimates the USDC cost needed to acquire a target
+// number of shares by walking the ask book. This is used internally for shadow
+// hedge sizing; it does not model a resting share-denominated limit order.
 func (c *Client) FetchBuyQuoteForShares(tokenID string, targetShares, feeRate, latencyBuffer float64) (BuyQuote, error) {
 	return c.fetchBuyQuote(defaultCLOBBaseURL, tokenID, targetShares, 0, feeRate, latencyBuffer)
 }
 
+// FetchBuyQuoteForBudget models a Polymarket market BUY: BUY amount is supplied
+// in dollars/USDC and the resulting share count is an execution result. The
+// orderbook min_order_size field is retained as metadata but is deliberately
+// not treated as a minimum-share gate for a dollar-denominated market BUY.
 func (c *Client) FetchBuyQuoteForBudget(tokenID string, budget, feeRate, latencyBuffer float64) (BuyQuote, error) {
 	return c.fetchBuyQuote(defaultCLOBBaseURL, tokenID, 0, budget, feeRate, latencyBuffer)
 }
@@ -137,9 +144,6 @@ func (c *Client) fetchBuyQuote(baseURL, tokenID string, targetShares, budget, fe
 		return q, fmt.Errorf("insufficient ask liquidity: got %.6f of %.6f shares", q.Shares, targetShares)
 	}
 	q.AveragePrice = q.Notional / q.Shares
-	if q.MinOrderSize > 0 && q.Shares+1e-9 < q.MinOrderSize {
-		return q, fmt.Errorf("quote %.6f shares below min_order_size %.6f", q.Shares, q.MinOrderSize)
-	}
 	return q, nil
 }
 
