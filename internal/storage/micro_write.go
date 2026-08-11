@@ -2,12 +2,15 @@ package storage
 
 import "pm-edge/internal/engine"
 
-// InsertSignalWithMicro keeps the legacy signal row and the deep-microstructure
-// research row aligned at the same evaluator timestamp. Model-A remains the
-// production paper signal; Model-B is research-only.
+// InsertSignalWithMicro persists the production Model-A signal first. The deep
+// microstructure row is research-only: if that secondary write ever fails, it
+// must never suppress the established paper entry/hedge path for the same
+// evaluation. Microstructure schema/round-trip correctness is covered by its
+// dedicated storage tests and the read-only research API exposes missing rows.
 func (d *Database) InsertSignalWithMicro(r *engine.EvaluationResult) error {
 	if err := d.InsertSignal(r); err != nil {
 		return err
 	}
-	return d.InsertMicrostructureSnapshot(r)
+	_ = d.InsertMicrostructureSnapshot(r)
+	return nil
 }
