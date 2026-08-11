@@ -1,0 +1,27 @@
+name: Apply SQLite Deep Hotfix
+on:
+  push:
+    branches:
+      - fix/sqlite-deep-ready-hotfix-20260811
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Apply SQLite deep runtime hotfix') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/sqlite-deep-ready-hotfix-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: python3 .github/scripts/apply_sqlite_deep_hotfix.py
+      - run: gofmt -w internal/storage/sqlite.go internal/storage/sqlite_test.go internal/binance/microstructure.go internal/binance/microstructure_test.go internal/binance/websocket.go internal/engine/evaluator.go internal/engine/microstructure_test.go
+      - name: Commit hotfix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .
+          git commit -m 'Apply SQLite deep runtime hotfix'
+          git push origin HEAD:fix/sqlite-deep-ready-hotfix-20260811
