@@ -3,152 +3,170 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>PM-Edge Research Dashboard</title>
+<title>PM-Edge BTC Yön Araştırma Paneli</title>
 <style>
 :root{--bg:#090e17;--panel:#111a2a;--panel2:#0d1523;--line:#22304a;--text:#f5f7fb;--muted:#8fa3c4;--blue:#4b9cff;--green:#13c88a;--red:#ef4d4d;--amber:#f2a93b}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif}header{padding:24px 28px 18px;text-align:center;border-bottom:1px solid var(--line);background:#0a101b}h1{margin:0;color:var(--blue);font-size:30px}.subtitle{margin-top:6px;color:var(--muted);font-size:13px}.banner{padding:10px 20px;text-align:center;background:#5a2e05;color:#ffdca7;border-bottom:1px solid #a15d0c;font-size:12px}.wrap{max-width:1550px;margin:auto;padding:20px}.topgrid{display:grid;grid-template-columns:2fr 1fr;gap:18px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 8px 26px rgba(0,0,0,.16)}.card h2{margin:0 0 16px;color:var(--blue);font-size:18px;border-bottom:1px solid var(--line);padding-bottom:10px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.stat label,.mini span{display:block;color:#9db4d5;font-size:11px;text-transform:uppercase;margin-bottom:7px}.value{font-size:24px;font-weight:750}.smallvalue{font-size:16px;font-weight:700}.chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:5px;font-size:13px;font-weight:800}.up,.win,.fresh{background:#087b58;color:#9ff6d8}.down,.loss,.stale{background:#8f2020;color:#ffc0c0}.neutral,.open{background:#39465b;color:#d5deed}.warn{background:#80500a;color:#ffe2a8}.grid5{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.mini{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:13px}.mini strong{display:block;font-size:17px}.paperstat strong{font-size:21px}.source{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:10px}.source .small{color:var(--muted);font-size:11px}.source b{display:block;margin-top:4px;font-size:12px;word-break:break-all}.two{display:grid;grid-template-columns:2fr 1fr;gap:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:10px 8px;border-bottom:1px solid #202c41;text-align:left;white-space:nowrap}th{color:#9eb5d5;font-weight:500}.scroll{overflow:auto;max-height:460px}.indrow{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid #202c41}.positive{color:var(--green)}.negative{color:var(--red)}.muted{color:var(--muted)}.tfbar{display:flex;justify-content:center;gap:10px;margin-bottom:18px}.tfbtn{background:var(--panel2);color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:10px 22px;font-weight:800;cursor:pointer}.tfbtn.active{background:#17345d;color:#b9d8ff;border-color:#3778c8}.gategrid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.gate-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #202c41;font-size:12px}.gate-row span:first-child{color:#9db4d5}#connection{position:fixed;right:16px;bottom:16px;z-index:10}@media(max-width:1050px){.topgrid,.two{grid-template-columns:1fr}.grid5,.grid4,.grid3{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.stats,.grid5,.grid4,.grid3{grid-template-columns:1fr}.wrap{padding:10px}.value{font-size:20px}}
 </style>
 </head>
 <body>
-<header><h1>PM-Edge TV-Direction</h1><div class="subtitle">BTC 5m + 15m · Chainlink Reference · Conservative Terminal Forecast · Binance Deep Microstructure · CLOB Paper Execution · Shadow Hedge A/B</div></header>
-<div class="banner"><b>PAPER-ONLY RESEARCH ENGINE</b> — Canlı emir göndermez. CLOB okumaları yalnızca gerçekçi paper fill/hedge simülasyonu içindir.</div>
+<header><h1>PM-Edge BTC Yön Analizi</h1><div class="subtitle">BTC 5 dk + 15 dk · Chainlink referansı · Temkinli kapanış tahmini · Binance derin piyasa yapısı · Polymarket emir defteri kağıt işlem simülasyonu · Gölge koruma A/B testi</div></header>
+<div class="banner"><b>YALNIZCA KAĞIT İŞLEM ARAŞTIRMA MOTORU</b> — Canlı emir göndermez. Polymarket emir defteri verileri yalnızca gerçekçi sanal gerçekleşme ve koruma simülasyonu için kullanılır.</div>
 <div class="wrap">
-  <div class="tfbar"><button class="tfbtn active" data-tf="5m" onclick="switchTf('5m')">BTC 5 MIN</button><button class="tfbtn" data-tf="15m" onclick="switchTf('15m')">BTC 15 MIN</button></div>
+  <div class="tfbar"><button class="tfbtn active" data-tf="5m" onclick="switchTf('5m')">BTC 5 DAKİKA</button><button class="tfbtn" data-tf="15m" onclick="switchTf('15m')">BTC 15 DAKİKA</button></div>
+  <div class="card" style="padding:14px 18px">
+    <h2 style="margin-bottom:10px">Bu Terimler Ne Anlama Geliyor?</h2>
+    <div class="grid3">
+      <div class="mini"><span>Hedef Fiyat (PTB)</span><strong style="font-size:13px">Piyasa başında sabitlenen Chainlink fiyatıdır. Kapanış bunun üstündeyse YUKARI, altındaysa AŞAĞI sonucu oluşur.</strong></div>
+      <div class="mini"><span>Hedef Uzaklığı (Z/σ)</span><strong style="font-size:13px">Fiyatın hedefe, beklenen oynaklığa göre kaç standart sapma uzakta olduğunu gösterir. Mutlak değer büyüdükçe mesafe artar.</strong></div>
+      <div class="mini"><span>Brier Hata Skoru</span><strong style="font-size:13px">Olasılık tahminlerinin doğruluğunu ölçer. 0 en iyi değerdir; düşük olması daha iyidir.</strong></div>
+      <div class="mini"><span>Kalibrasyon Farkı</span><strong style="font-size:13px">Tahmin edilen kazanma olasılığı ile gerçek kazanma oranı arasındaki farktır. 0’a yakın olması daha iyidir.</strong></div>
+      <div class="mini"><span>Ekonomik Avantaj</span><strong style="font-size:13px">Modelin kazanma olasılığından gerçek giriş maliyetinin gerektirdiği başa baş olasılığı çıkarılır. Pozitif olması daha sağlıklıdır.</strong></div>
+      <div class="mini"><span>Gölge Model B</span><strong style="font-size:13px">Yeni ±$10/$25/$50/$75 derinlik ve gerçek alış/satış akışını ölçen test modelidir. Şimdilik kağıt işlemi açmaz.</strong></div>
+      <div class="mini"><span>VWAP</span><strong style="font-size:13px">Emrin birden fazla fiyat kademesinde gerçekleşmesi halinde oluşan hacim ağırlıklı ortalama gerçekleşme fiyatıdır.</strong></div>
+      <div class="mini"><span>EWMA</span><strong style="font-size:13px">Yeni sinyallere daha fazla ağırlık veren yumuşatılmış ters yön skorudur.</strong></div>
+      <div class="mini"><span>Baz Puan</span><strong style="font-size:13px">Fiyat hareketini küçük ölçekte gösterir. 1 baz puan = %0,01.</strong></div>
+      <div class="mini"><span>Polymarket Emir Defteri (CLOB)</span><strong style="font-size:13px">Polymarket'teki gerçek alış ve satış fiyatlarının bulunduğu emir defteridir. Kağıt işlemlerde gerçekçi giriş maliyetini buradan hesaplıyoruz.</strong></div>
+    </div>
+  </div>
   <div class="topgrid">
     <div class="card">
-      <h2>Real-Time Signals & Prediction</h2>
+      <h2>Anlık Sinyaller ve Yön Tahmini</h2>
       <div class="stats">
-        <div class="stat"><label>Current BTC / Chainlink</label><div id="currentPrice" class="value">Waiting...</div></div>
-        <div class="stat"><label>Price To Beat</label><div id="priceToBeat" class="value">Waiting...</div></div>
-        <div class="stat"><label>Time Remaining</label><div id="timeRemaining" class="value">Waiting...</div></div>
-        <div class="stat"><label>Final Bias</label><div id="decision" class="value"><span class="chip neutral">WAIT</span></div></div>
-        <div class="stat"><label>Composite Confidence</label><div id="confidence" class="value">—</div></div>
-        <div class="stat"><label>Terminal P(UP) / P(DOWN)</label><div id="probabilities" class="value">—</div></div>
+        <div class="stat"><label>Güncel BTC / Chainlink Fiyatı</label><div id="currentPrice" class="value">Bekleniyor...</div></div>
+        <div class="stat"><label>Hedef Fiyat (PTB)</label><div id="priceToBeat" class="value">Bekleniyor...</div></div>
+        <div class="stat"><label>Kalan Süre</label><div id="timeRemaining" class="value">Bekleniyor...</div></div>
+        <div class="stat"><label>Nihai Yön</label><div id="decision" class="value"><span class="chip neutral">BEKLE</span></div></div>
+        <div class="stat"><label>Birleşik Güven Skoru</label><div id="confidence" class="value">—</div></div>
+        <div class="stat"><label>Kapanışta P(Yukarı) / P(Aşağı)</label><div id="probabilities" class="value">—</div></div>
       </div>
     </div>
     <div class="card">
-      <h2>Legacy Depth20 — Model A Order-Book Input</h2>
+      <h2>Eski İlk 20 Kademe — Model A Emir Defteri Girdisi</h2>
       <div class="stats">
-        <div class="stat"><label>Bid / Ask Imbalance</label><div id="imbalance" class="value">—</div></div>
-        <div class="stat"><label>Rank-Weighted Imbalance</label><div id="weightedImbalance" class="value">—</div></div>
+        <div class="stat"><label>Alış / Satış Dengesizliği</label><div id="imbalance" class="value">—</div></div>
+        <div class="stat"><label>Yakın Kademeye Ağırlıklı Dengesizlik</label><div id="weightedImbalance" class="value">—</div></div>
       </div>
-      <div class="stat" style="margin-top:16px"><label>Total Bid / Ask Volumes (Depth20)</label><div id="volumes" class="smallvalue">—</div></div>
+      <div class="stat" style="margin-top:16px"><label>Toplam Alış / Satış Hacmi (İlk 20 Kademe)</label><div id="volumes" class="smallvalue">—</div></div>
       <div class="grid3" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-        <div class="mini"><span>Total Depth20 USD</span><strong id="totalNotional">—</strong></div>
-        <div class="mini"><span>Bid / Ask USD</span><strong id="sideNotional">—</strong></div>
-        <div class="mini"><span>Spread</span><strong id="spread">—</strong></div>
-        <div class="mini"><span>Bid 20 Range</span><strong id="bidRange">—</strong></div>
-        <div class="mini"><span>Ask 20 Range</span><strong id="askRange">—</strong></div>
-        <div class="mini"><span>Order-Flow Score</span><strong id="orderFlowScore">—</strong></div>
+        <div class="mini"><span>İlk 20 Kademe Toplam USD</span><strong id="totalNotional">—</strong></div>
+        <div class="mini"><span>Alış / Satış USD</span><strong id="sideNotional">—</strong></div>
+        <div class="mini"><span>Alış-Satış Farkı</span><strong id="spread">—</strong></div>
+        <div class="mini"><span>20 Alış Kademesinin Fiyat Aralığı</span><strong id="bidRange">—</strong></div>
+        <div class="mini"><span>20 Satış Kademesinin Fiyat Aralığı</span><strong id="askRange">—</strong></div>
+        <div class="mini"><span>Emir Defteri Baskı Skoru</span><strong id="orderFlowScore">—</strong></div>
       </div>
-      <div class="source"><div><span class="small">Depth Source</span><b id="depthSource">—</b></div><div><span class="small">Depth Freshness</span><b id="depthFresh"><span class="chip neutral">WAIT</span></b></div></div>
+      <div class="source"><div><span class="small">Derinlik Veri Kaynağı</span><b id="depthSource">—</b></div><div><span class="small">Derinlik Verisi Güncelliği</span><b id="depthFresh"><span class="chip neutral">BEKLE</span></b></div></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>PTB Terminal Forecast — Uncertainty Diagnostics</h2>
+    <h2>Hedef Fiyat Kapanış Tahmini — Belirsizlik Ölçümleri</h2>
     <div class="grid4">
-      <div class="mini"><span>Forecast @ Expiry</span><strong id="forecastPrice">—</strong></div>
-      <div class="mini"><span>68% Forecast Band</span><strong id="forecast68">—</strong></div>
-      <div class="mini"><span>95% Forecast Band</span><strong id="forecast95">—</strong></div>
-      <div class="mini"><span>PTB Z / Model Confidence</span><strong id="forecastZ">—</strong></div>
-      <div class="mini"><span>Required / Expected Move</span><strong id="moves">—</strong></div>
-      <div class="mini"><span>1σ @ Expiry</span><strong id="sigmaExpiry">—</strong></div>
-      <div class="mini"><span>Binance / Chainlink Basis</span><strong id="basis">—</strong></div>
-      <div class="mini"><span>Forecast Samples</span><strong id="forecastSamples">—</strong></div>
-      <div class="mini"><span>Micro Vol Annual</span><strong id="microVol">—</strong></div>
-      <div class="mini"><span>Macro Vol Floor Annual</span><strong id="floorVol">—</strong></div>
-      <div class="mini"><span>Basis Vol Annual</span><strong id="basisVol">—</strong></div>
-      <div class="mini"><span>Binance Price</span><strong id="binancePrice">—</strong></div>
+      <div class="mini"><span>Kapanış İçin Tahmini Fiyat</span><strong id="forecastPrice">—</strong></div>
+      <div class="mini"><span>%68 Olasılık Fiyat Aralığı</span><strong id="forecast68">—</strong></div>
+      <div class="mini"><span>%95 Olasılık Fiyat Aralığı</span><strong id="forecast95">—</strong></div>
+      <div class="mini"><span>Hedef Fiyata Uzaklık (Z/σ) / Model Güveni</span><strong id="forecastZ">—</strong></div>
+      <div class="mini"><span>Gerekli / Beklenen Hareket</span><strong id="moves">—</strong></div>
+      <div class="mini"><span>Kapanışa Kadar 1σ Oynaklık</span><strong id="sigmaExpiry">—</strong></div>
+      <div class="mini"><span>Binance / Chainlink Fiyat Farkı</span><strong id="basis">—</strong></div>
+      <div class="mini"><span>Tahminde Kullanılan Örnek Sayısı</span><strong id="forecastSamples">—</strong></div>
+      <div class="mini"><span>Kısa Vadeli Yıllıklandırılmış Oynaklık</span><strong id="microVol">—</strong></div>
+      <div class="mini"><span>Asgari Yıllık Oynaklık Varsayımı</span><strong id="floorVol">—</strong></div>
+      <div class="mini"><span>Fiyat Farkı Yıllık Oynaklığı</span><strong id="basisVol">—</strong></div>
+      <div class="mini"><span>Binance Fiyatı</span><strong id="binancePrice">—</strong></div>
     </div>
   </div>
 
 
+  <!-- CI smoke marker: Binance Deep Microstructure -->
   <div class="card">
-    <h2>Binance Deep Microstructure — Shadow Model B</h2>
-    <div class="banner" style="margin:-4px 0 14px;border-radius:7px;border:1px solid #80500a"><b>SHADOW ONLY</b> — Paper entries still follow Model A until out-of-sample evidence promotes Model B.</div>
+    <h2>Binance Derin Piyasa Yapısı — Gölge Model B</h2>
+    <div class="banner" style="margin:-4px 0 14px;border-radius:7px;border:1px solid #80500a"><b>YALNIZCA GÖLGE TESTİ</b> — Model B bağımsız veride üstünlüğünü kanıtlayana kadar kağıt işlemleri Model A açar.</div>
     <div class="grid4">
-      <div class="mini"><span>Deep Book Health</span><strong id="deepHealth">WAITING</strong></div>
-      <div class="mini"><span>Shadow B Direction</span><strong id="shadowDecision">WAITING</strong></div>
-      <div class="mini"><span>Shadow B Score / Confidence</span><strong id="shadowScore">—</strong></div>
-      <div class="mini"><span>Microstructure Score</span><strong id="microScore">—</strong></div>
-      <div class="mini"><span>±$10 Bid / Ask / Imb.</span><strong id="deep10">—</strong></div>
-      <div class="mini"><span>±$25 Bid / Ask / Imb.</span><strong id="deep25">—</strong></div>
-      <div class="mini"><span>±$50 Bid / Ask / Imb.</span><strong id="deep50">—</strong></div>
-      <div class="mini"><span>±$75 Bid / Ask / Imb.</span><strong id="deep75">—</strong></div>
-      <div class="mini"><span>Agg Trade Flow 5s</span><strong id="flow5">—</strong></div>
-      <div class="mini"><span>Agg Trade Flow 15s</span><strong id="flow15">—</strong></div>
-      <div class="mini"><span>Agg Trade Flow 30s</span><strong id="flow30">—</strong></div>
-      <div class="mini"><span>Agg Trade Flow 60s</span><strong id="flow60">—</strong></div>
-      <div class="mini"><span>Deep / Trade Scores</span><strong id="deepTradeScores">—</strong></div>
-      <div class="mini"><span>Walls / Depletion</span><strong id="wallDynamics">—</strong></div>
-      <div class="mini"><span>PTB Path / Barrier</span><strong id="ptbPath">—</strong></div>
-      <div class="mini"><span>Entry Economic Edge</span><strong id="economicEdge">—</strong></div>
+      <div class="mini"><span>Derin Emir Defteri Sağlığı</span><strong id="deepHealth">BEKLENİYOR</strong></div>
+      <div class="mini"><span>Gölge Model B Yönü</span><strong id="shadowDecision">BEKLENİYOR</strong></div>
+      <div class="mini"><span>Gölge Model B Skoru / Güveni</span><strong id="shadowScore">—</strong></div>
+      <div class="mini"><span>Piyasa Yapısı Skoru</span><strong id="microScore">—</strong></div>
+      <div class="mini"><span>±$10 Alış / Satış / Dengesizlik</span><strong id="deep10">—</strong></div>
+      <div class="mini"><span>±$25 Alış / Satış / Dengesizlik</span><strong id="deep25">—</strong></div>
+      <div class="mini"><span>±$50 Alış / Satış / Dengesizlik</span><strong id="deep50">—</strong></div>
+      <div class="mini"><span>±$75 Alış / Satış / Dengesizlik</span><strong id="deep75">—</strong></div>
+      <div class="mini"><span>Gerçekleşen Agresif Alış/Satış Akışı · 5 sn</span><strong id="flow5">—</strong></div>
+      <div class="mini"><span>Gerçekleşen Agresif Alış/Satış Akışı · 15 sn</span><strong id="flow15">—</strong></div>
+      <div class="mini"><span>Gerçekleşen Agresif Alış/Satış Akışı · 30 sn</span><strong id="flow30">—</strong></div>
+      <div class="mini"><span>Gerçekleşen Agresif Alış/Satış Akışı · 60 sn</span><strong id="flow60">—</strong></div>
+      <div class="mini"><span>Derinlik / Gerçek İşlem Skorları</span><strong id="deepTradeScores">—</strong></div>
+      <div class="mini"><span>Emir Duvarları / Erime</span><strong id="wallDynamics">—</strong></div>
+      <div class="mini"><span>Hedefe Giden Likidite / Bariyer</span><strong id="ptbPath">—</strong></div>
+      <div class="mini"><span>Giriş Ekonomik Avantajı</span><strong id="economicEdge">—</strong></div>
     </div>
   </div>
 
 
   <div class="gategrid">
-    <div class="card"><h2>Paper Entry Gate Monitor — <span id="entryTf">5m</span></h2><div id="entryGateBody"><div class="gate-row"><span>Status</span><b>Waiting...</b></div></div></div>
-    <div class="card"><h2>Hedge Gate Monitor — <span id="hedgeTf">5m</span></h2><div id="hedgeGateBody"><div class="gate-row"><span>Status</span><b>Waiting...</b></div></div></div>
+    <div class="card"><h2>Kağıt İşlem Giriş Kontrolü — <span id="entryTf">5 dk</span></h2><div id="entryGateBody"><div class="gate-row"><span>Durum</span><b>Bekleniyor...</b></div></div></div>
+    <div class="card"><h2>Koruma İşlemi Kontrolü — <span id="hedgeTf">5 dk</span></h2><div id="hedgeGateBody"><div class="gate-row"><span>Durum</span><b>Bekleniyor...</b></div></div></div>
   </div>
-  <div class="card"><h2>BTC 5m vs 15m — Paper Efficiency Experiment</h2>
+  <div class="card"><h2>BTC 5 dk ve 15 dk — Kağıt İşlem Verimlilik Karşılaştırması</h2>
     <div class="grid3">
-      <div class="mini"><span>5m: N / Win Rate</span><strong id="cmp5n">—</strong></div><div class="mini"><span>5m: Return on Stake</span><strong id="cmp5roi">—</strong></div><div class="mini"><span>5m: Avg Return ± SE</span><strong id="cmp5avg">—</strong></div>
-      <div class="mini"><span>15m: N / Win Rate</span><strong id="cmp15n">—</strong></div><div class="mini"><span>15m: Return on Stake</span><strong id="cmp15roi">—</strong></div><div class="mini"><span>15m: Avg Return ± SE</span><strong id="cmp15avg">—</strong></div>
-      <div class="mini"><span>5m Brier / Cal Gap</span><strong id="cmp5cal">—</strong></div><div class="mini"><span>15m Brier / Cal Gap</span><strong id="cmp15cal">—</strong></div><div class="mini"><span>Inference</span><strong id="cmpInference">Collecting...</strong></div>
+      <div class="mini"><span>5 dk: İşlem Sayısı / Kazanma Oranı</span><strong id="cmp5n">—</strong></div><div class="mini"><span>5 dk: Yatırılan Tutar Getirisi</span><strong id="cmp5roi">—</strong></div><div class="mini"><span>5 dk: Ortalama Getiri ± Standart Hata</span><strong id="cmp5avg">—</strong></div>
+      <div class="mini"><span>15 dk: İşlem Sayısı / Kazanma Oranı</span><strong id="cmp15n">—</strong></div><div class="mini"><span>15 dk: Yatırılan Tutar Getirisi</span><strong id="cmp15roi">—</strong></div><div class="mini"><span>15 dk: Ortalama Getiri ± Standart Hata</span><strong id="cmp15avg">—</strong></div>
+      <div class="mini"><span>5 dk: Brier Hata Skoru / Kalibrasyon Farkı</span><strong id="cmp5cal">—</strong></div><div class="mini"><span>15 dk: Brier Hata Skoru / Kalibrasyon Farkı</span><strong id="cmp15cal">—</strong></div><div class="mini"><span>İstatistiksel Sonuç</span><strong id="cmpInference">Veri toplanıyor...</strong></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Paper Portfolio — Original Strategy A</h2>
+    <h2>Kağıt İşlem Portföyü — Asıl Strateji A</h2>
     <div class="grid5">
-      <div class="mini paperstat"><span>Cash Balance</span><strong id="paperBalance">$1,000.00</strong></div>
-      <div class="mini paperstat"><span>Realized PnL</span><strong id="paperPnl">$0.00</strong></div>
-      <div class="mini paperstat"><span>Win Rate</span><strong id="paperWinRate">0.0%</strong></div>
-      <div class="mini paperstat"><span>Trades / Open</span><strong id="paperTrades">0 / 0</strong></div>
-      <div class="mini paperstat"><span>Open Stake</span><strong id="paperOpenStake">$0.00</strong></div>
+      <div class="mini paperstat"><span>Nakit Bakiye</span><strong id="paperBalance">$1,000.00</strong></div>
+      <div class="mini paperstat"><span>Gerçekleşen Kâr/Zarar</span><strong id="paperPnl">$0.00</strong></div>
+      <div class="mini paperstat"><span>Kazanma Oranı</span><strong id="paperWinRate">0.0%</strong></div>
+      <div class="mini paperstat"><span>İşlem / Açık İşlem</span><strong id="paperTrades">0 / 0</strong></div>
+      <div class="mini paperstat"><span>Açık İşlemlerdeki Tutar</span><strong id="paperOpenStake">$0.00</strong></div>
     </div>
     <div class="grid4" style="margin-top:12px">
-      <div class="mini"><span>Avg Predicted Win P</span><strong id="paperPredicted">—</strong></div>
-      <div class="mini"><span>Actual Win P</span><strong id="paperActual">—</strong></div>
-      <div class="mini"><span>Calibration Gap</span><strong id="paperCalGap">—</strong></div>
-      <div class="mini"><span>Brier Score / N</span><strong id="paperBrier">—</strong></div>
+      <div class="mini"><span>Ortalama Tahmini Kazanma Olasılığı</span><strong id="paperPredicted">—</strong></div>
+      <div class="mini"><span>Gerçekleşen Kazanma Oranı</span><strong id="paperActual">—</strong></div>
+      <div class="mini"><span>Kalibrasyon Farkı (0’a yakın iyi)</span><strong id="paperCalGap">—</strong></div>
+      <div class="mini"><span>Brier Hata Skoru (düşük iyi) / Örnek</span><strong id="paperBrier">—</strong></div>
     </div>
   </div>
 
   <div class="card">
-    <h2>Shadow Hedge Portfolio B — Persistent Reverse Regime</h2>
+    <h2>Gölge Koruma Portföyü B — Kalıcı Ters Yön Rejimi</h2>
     <div class="grid5">
-      <div class="mini paperstat"><span>Hedges / Open</span><strong id="hedgeCount">0 / 0</strong></div>
-      <div class="mini paperstat"><span>Original PnL on Hedged</span><strong id="hedgeOriginalPnl">$0.00</strong></div>
-      <div class="mini paperstat"><span>Hedge Contribution</span><strong id="hedgeContribution">$0.00</strong></div>
-      <div class="mini paperstat"><span>Combined PnL</span><strong id="hedgeCombined">$0.00</strong></div>
-      <div class="mini paperstat"><span>Avg Edge / Persistence</span><strong id="hedgeQuality">—</strong></div>
+      <div class="mini paperstat"><span>Koruma İşlemi / Açık</span><strong id="hedgeCount">0 / 0</strong></div>
+      <div class="mini paperstat"><span>Korunan İşlemlerin Asıl Kâr/Zararı</span><strong id="hedgeOriginalPnl">$0.00</strong></div>
+      <div class="mini paperstat"><span>Koruma İşlemi Katkısı</span><strong id="hedgeContribution">$0.00</strong></div>
+      <div class="mini paperstat"><span>Birleşik Kâr/Zarar</span><strong id="hedgeCombined">$0.00</strong></div>
+      <div class="mini paperstat"><span>Ort. Avantaj / Kalıcılık</span><strong id="hedgeQuality">—</strong></div>
     </div>
-    <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Time</th><th>Market</th><th>A</th><th>Hedge</th><th>Px</th><th>Shares</th><th>P(reverse)</th><th>Edge</th><th>Persist.</th><th>EWMA</th><th>PTB Z</th><th>Locked PnL</th><th>Status</th><th>Combined</th></tr></thead><tbody id="hedgeBody"><tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr></tbody></table></div>
+    <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Saat</th><th>Piyasa</th><th>Asıl Yön</th><th>Koruma Yönü</th><th>Fiyat</th><th>Pay</th><th>Ters Yön Olasılığı</th><th>Avantaj</th><th>Kalıcılık</th><th>Yumuşatılmış Skor</th><th>Hedef Uzaklığı</th><th>Kilitli K/Z</th><th>Durum</th><th>Birleşik K/Z</th></tr></thead><tbody id="hedgeBody"><tr><td colspan="14">Henüz kalıcı ters yön koruma işlemi yok.</td></tr></tbody></table></div>
   </div>
 
   <div class="two">
     <div>
-      <div class="card"><h2>Paper Trades</h2><div class="scroll"><table><thead><tr><th>Entry</th><th>Market</th><th>Side</th><th>Entry Px</th><th>Cost</th><th>Conf.</th><th>Status</th><th>Outcome</th><th>PnL</th></tr></thead><tbody id="paperTradeBody"><tr><td colspan="9">Henüz paper trade yok.</td></tr></tbody></table></div></div>
-      <div class="card"><h2>Recent Signals (Last 20)</h2><div class="scroll"><table><thead><tr><th>Time</th><th>Current</th><th>Target</th><th>P_up</th><th>P_down</th><th>PTB Z</th><th>OrderFlow</th><th>Bias</th><th>Confidence</th></tr></thead><tbody id="historyBody"><tr><td colspan="9">Waiting for verified signal stream...</td></tr></tbody></table></div></div>
+      <div class="card"><h2>Kağıt İşlemler</h2><div class="scroll"><table><thead><tr><th>Giriş Saati</th><th>Piyasa</th><th>Yön</th><th>Giriş Fiyatı</th><th>Maliyet</th><th>Güven</th><th>Durum</th><th>Sonuç</th><th>Kâr/Zarar</th></tr></thead><tbody id="paperTradeBody"><tr><td colspan="9">Henüz kağıt işlem yok.</td></tr></tbody></table></div></div>
+      <div class="card"><h2>Son Sinyaller (Son 20)</h2><div class="scroll"><table><thead><tr><th>Saat</th><th>Güncel Fiyat</th><th>Hedef Fiyat</th><th>P(Yukarı)</th><th>P(Aşağı)</th><th>Hedef Uzaklığı</th><th>Emir Baskısı</th><th>Yön</th><th>Güven</th></tr></thead><tbody id="historyBody"><tr><td colspan="9">Doğrulanmış sinyal verisi bekleniyor...</td></tr></tbody></table></div></div>
     </div>
-    <div class="card"><h2>Technical Indicator Scores</h2><div id="indicatorBody"><div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div></div></div>
+    <div class="card"><h2>Teknik Gösterge Skorları</h2><div id="indicatorBody"><div class="indrow"><span>Henüz gösterge üretilmedi</span><span class="chip neutral">0</span></div></div></div>
   </div>
 </div>
-<div id="connection"><span class="chip neutral">CONNECTING</span></div>
+<div id="connection"><span class="chip neutral">BAĞLANIYOR</span></div>
 <script>
 const usd=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n||0));
 const usdCompact=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',notation:'compact',maximumFractionDigits:2}).format(Number(n||0));
 const pct=(n,d=1)=>`${(Number(n||0)*100).toFixed(d)}%`;
 const pctDirect=(n,d=1)=>`${Number(n||0).toFixed(d)}%`;
-const bps=(n,d=2)=>`${Number(n||0).toFixed(d)} bps`;
+const bps=(n,d=2)=>`${Number(n||0).toFixed(d)} baz puan`;
 const chip=(txt,cls)=>`<span class="chip ${cls}">${txt}</span>`;
 const signClass=n=>Number(n)>=0?'positive':'negative';
-function decisionChip(d){return d==='UP'?chip('UP','up'):d==='DOWN'?chip('DOWN','down'):chip(d||'NEUTRAL','neutral')}
+function directionText(d){return d==='UP'?'YUKARI':d==='DOWN'?'AŞAĞI':d==='NEUTRAL'?'NÖTR':d==='WAITING'?'BEKLENİYOR':d||'NÖTR'}
+function decisionChip(d){return d==='UP'?chip('YUKARI','up'):d==='DOWN'?chip('AŞAĞI','down'):chip(directionText(d),'neutral')}
 function timeOnly(v){try{return new Date(v).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return v||'—'}}
-function setConnection(ok){document.getElementById('connection').innerHTML=ok?chip('LIVE','fresh'):chip('API ERROR','down')}
+function marketLabel(v){return String(v||'—').replace('btc-updown-5m-','').replace('btc-updown-15m-','')}
+function setConnection(ok){document.getElementById('connection').innerHTML=ok?chip('CANLI','fresh'):chip('VERİ BAĞLANTISI HATASI','down')}
 async function getJSON(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${url}: ${r.status}`);return r.json()}
 let activeTf='5m';
 let latestLiveData=null;
@@ -157,14 +175,30 @@ let liveBusy=false;
 let slowBusy=false;
 let indicatorHTML='';
 function markLiveWaiting(){
-  document.getElementById('decision').innerHTML=chip('WAITING','warn');
-  document.getElementById('depthFresh').innerHTML=chip('WAIT','neutral');
+  document.getElementById('decision').innerHTML=chip('BEKLENİYOR','warn');
+  document.getElementById('depthFresh').innerHTML=chip('BEKLE','neutral');
   if(!hasLiveSnapshot){
-    document.getElementById('currentPrice').textContent='Waiting...';
-    document.getElementById('priceToBeat').textContent='Waiting...';
-    document.getElementById('timeRemaining').textContent='Waiting...';
+    document.getElementById('currentPrice').textContent='Bekleniyor...';
+    document.getElementById('priceToBeat').textContent='Bekleniyor...';
+    document.getElementById('timeRemaining').textContent='Bekleniyor...';
   }
 }
+function sourceTr(v){const m={
+'BINANCE_REST_DEPTH20':'Binance yedek veri kaynağı · İlk 20 kademe','BINANCE_WS_DEPTH20':'Binance canlı veri akışı · İlk 20 kademe',
+'BINANCE_DEEP_REST1000':'Binance yedek veri kaynağı · Derin 1000 kademe','BINANCE_DEEP_DIFF':'Binance canlı derinlik fark akışı',
+'BINANCE_DEEP_SNAPSHOT':'Binance derinlik başlangıç görüntüsü','DEEP_WS_CONNECT_FAILED':'Derin veri bağlantısı kurulamadı',
+'DEEP_SNAPSHOT_FAILED':'Derinlik görüntüsü alınamadı','DEEP_WS_DISCONNECTED':'Derin veri bağlantısı koptu','UNINITIALIZED':'Henüz başlatılmadı'};return m[v]||'Bilinmeyen teknik veri kaynağı'}
+function indicatorTr(v){const m={ADX:'Trend Gücü (ADX)',CCI:'Emtia Kanal Endeksi (CCI)',EMA:'Üssel Hareketli Ortalama (EMA)',HMA:'Hull Hareketli Ortalama (HMA)',MACD:'Hareketli Ortalama Yakınsama/Farkı (MACD)',Momentum:'Fiyat İvmesi (Momentum)',RSI:'Göreceli Güç Endeksi (RSI)',SMA:'Basit Hareketli Ortalama (SMA)',Stochastic:'Stokastik Osilatör',VWMA:'Hacim Ağırlıklı Hareketli Ortalama (VWMA)',WilliamsR:'Williams %R'};return m[v]||v}
+function reasonTr(v){const m={
+'NEUTRAL_SIGNAL':'Yön sinyali yeterince güçlü değil','CONFIDENCE_BELOW_THRESHOLD':'Güven skoru eşik altında','OUTSIDE_ENTRY_WINDOW':'Giriş zaman aralığı dışında',
+'DATA_NOT_FRESH_OR_MARKET_INACTIVE':'Veri güncel değil veya piyasa aktif değil','INSUFFICIENT_PAPER_BALANCE':'Kağıt işlem bakiyesi yetersiz','MIN_ORDER_SIZE_NOT_MET':'Minimum emir koşulu sağlanmadı',
+'CLOB_QUOTE_ERROR':'Polymarket emir defteri fiyat teklifi alınamadı','POSITION_ALREADY_RECORDED':'Bu piyasa için işlem zaten kaydedildi','NO_OPEN_POSITION':'Korunacak açık işlem yok',
+'ALREADY_HEDGED':'Bu işlem zaten korunmuş','OUTSIDE_HEDGE_WINDOW':'Koruma zaman aralığı dışında','REVERSE_DECISION_NOT_CONFIRMED':'Ters yön yeterince doğrulanmadı',
+'REGIME_NOT_READY':'Ters yön örnek penceresi henüz dolmadı','PERSISTENCE_BELOW_THRESHOLD':'Ters yön kalıcılığı yetersiz','CONSECUTIVE_BELOW_THRESHOLD':'Ardışık ters sinyal sayısı yetersiz',
+'PROBABILITY_BELOW_THRESHOLD':'Ters yön olasılığı eşik altında','PTB_Z_NOT_CONFIRMED':'Hedef fiyat uzaklığı ters yönü doğrulamıyor','SCORE_BELOW_THRESHOLD':'Yumuşatılmış ters yön skoru yetersiz',
+'EDGE_BELOW_THRESHOLD':'Ekonomik avantaj eşik altında','EXPECTED_IMPROVEMENT_NOT_POSITIVE':'Koruma işlemi beklenen sonucu iyileştirmiyor','WAITING_FOR_DATA':'Veri bekleniyor',
+'BLOCKED':'ENGELLENDİ','READY':'HAZIR'};return m[v]||'Koşullardan biri henüz sağlanmadı'}
+function comparisonStatusTr(v){const m={collecting:'Veri toplanıyor',insufficient_samples:'Örnek sayısı yetersiz',no_significant_difference:'Anlamlı fark yok',significant_difference:'İstatistiksel fark var',leader:'Önde olan zaman dilimi'};return m[String(v||'').toLowerCase()]||'Veri toplanıyor'}
 async function updateLive(){
   const data=await getJSON('/api/live?tf='+activeTf);
   if(data.status){markLiveWaiting();return}
@@ -172,7 +206,7 @@ async function updateLive(){
   latestLiveData=data;
   document.getElementById('currentPrice').textContent=usd(data.currentPrice);
   document.getElementById('priceToBeat').textContent=usd(data.priceToBeat);
-  const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)}m ${s%60}s`;
+  const s=Math.max(0,Math.floor(data.secondsRemaining||0));document.getElementById('timeRemaining').textContent=`${Math.floor(s/60)} dk ${s%60} sn`;
   document.getElementById('decision').innerHTML=decisionChip(data.decision);
   document.getElementById('confidence').textContent=pctDirect(data.confidence,2);
   document.getElementById('probabilities').textContent=`${pct(data.pUp)} / ${pct(data.pDown)}`;
@@ -190,58 +224,58 @@ async function updateLive(){
   document.getElementById('binancePrice').textContent=usd(data.binancePrice);
   document.getElementById('imbalance').textContent=pct(data.imbalance,2);
   document.getElementById('weightedImbalance').textContent=pct(data.weightedImbalance,2);
-  document.getElementById('volumes').textContent=`Bids: ${Number(data.bidVol||0).toFixed(3)} | Asks: ${Number(data.askVol||0).toFixed(3)}`;
+  document.getElementById('volumes').textContent=`Alış: ${Number(data.bidVol||0).toFixed(3)} | Satış: ${Number(data.askVol||0).toFixed(3)}`;
   document.getElementById('totalNotional').textContent=usdCompact(data.totalDepthNotionalUsd);
   document.getElementById('sideNotional').textContent=`${usdCompact(data.bidNotionalUsd)} / ${usdCompact(data.askNotionalUsd)}`;
-  document.getElementById('spread').textContent=`${usd(data.spreadUsd)} · ${Number(data.spreadBps||0).toFixed(3)} bps`;
-  document.getElementById('bidRange').textContent=`${usd(data.bidRangeUsd)} · ${Number(data.bidRangeBps||0).toFixed(2)} bps`;
-  document.getElementById('askRange').textContent=`${usd(data.askRangeUsd)} · ${Number(data.askRangeBps||0).toFixed(2)} bps`;
+  document.getElementById('spread').textContent=`${usd(data.spreadUsd)} · ${Number(data.spreadBps||0).toFixed(3)} baz puan`;
+  document.getElementById('bidRange').textContent=`${usd(data.bidRangeUsd)} · ${Number(data.bidRangeBps||0).toFixed(2)} baz puan`;
+  document.getElementById('askRange').textContent=`${usd(data.askRangeUsd)} · ${Number(data.askRangeBps||0).toFixed(2)} baz puan`;
   document.getElementById('orderFlowScore').textContent=pct(data.orderFlowScore,2);
-  document.getElementById('depthSource').textContent=data.depthSource||'UNKNOWN';
-  const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`FRESH · ${age>=0?age+' ms':'—'}`,'fresh'):chip('STALE','stale');
+  document.getElementById('depthSource').textContent=sourceTr(data.depthSource);
+  const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`GÜNCEL · ${age>=0?age+' milisaniye':'—'}`,'fresh'):chip('ESKİ VERİ','stale');
 
   const dm=data.deepMicrostructure||{};
   const bands=Object.fromEntries((dm.bands||[]).map(x=>[Number(x.distanceUsd),x]));
   const flows=Object.fromEntries((dm.trades||[]).map(x=>[Number(x.seconds),x]));
   const fmtBand=d=>{const x=bands[d];return x?`${usdCompact(x.bidUsd)} / ${usdCompact(x.askUsd)} / ${pct(x.imbalance)}`:'—'};
   const fmtFlow=d=>{const x=flows[d];return x?`${usdCompact(x.buyUsd)} / ${usdCompact(x.sellUsd)} / ${pct(x.imbalance)}`:'—'};
-  document.getElementById('deepHealth').innerHTML=dm.ready?chip(`SYNC · ${dm.bidLevels||0}/${dm.askLevels||0} · ${dm.ageMs||0}ms`,'fresh'):chip(`${dm.source||'WAITING'} · ${dm.ageMs??'—'}ms`,'warn');
+  document.getElementById('deepHealth').innerHTML=dm.ready?chip(`SENKRON · ${dm.bidLevels||0}/${dm.askLevels||0} · ${dm.ageMs||0} milisaniye`,'fresh'):chip(`${sourceTr(dm.source)} · ${dm.ageMs??'—'} milisaniye`,'warn');
   document.getElementById('shadowDecision').innerHTML=decisionChip(data.shadowDecision||'WAITING');
   document.getElementById('shadowScore').textContent=`${Number(data.shadowModelBScore||0).toFixed(3)} / ${Number(data.shadowConfidence||0).toFixed(1)}%`;
   document.getElementById('microScore').textContent=pct(data.microstructureScore||0,1);
   for(const d of [10,25,50,75])document.getElementById('deep'+d).textContent=fmtBand(d);
   for(const d of [5,15,30,60])document.getElementById('flow'+d).textContent=fmtFlow(d);
   document.getElementById('deepTradeScores').textContent=`${pct(data.deepBookScore||0)} / ${pct(data.tradeFlowScore||0)}`;
-  document.getElementById('wallDynamics').textContent=`${pct(data.wallDynamicsScore||0)} · B ${pct(dm.bidWallScore||0)} / A ${pct(dm.askWallScore||0)}`;
-  document.getElementById('ptbPath').textContent=`B ${usdCompact(dm.ptbPathBidUsd||0)} / A ${usdCompact(dm.ptbPathAskUsd||0)} · ${pct(data.ptbBarrierScore||0)}`;
+  document.getElementById('wallDynamics').textContent=`${pct(data.wallDynamicsScore||0)} · Alış duvarı ${pct(dm.bidWallScore||0)} / Satış duvarı ${pct(dm.askWallScore||0)}`;
+  document.getElementById('ptbPath').textContent=`Alış desteği ${usdCompact(dm.ptbPathBidUsd||0)} / Satış bariyeri ${usdCompact(dm.ptbPathAskUsd||0)} · ${pct(data.ptbBarrierScore||0)}`;
 
-  const box=document.getElementById('indicatorBody');const nextIndicatorHTML=Object.entries(data.indicators||{}).sort().map(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';return `<div class="indrow"><span>${name}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`}).join('');if(nextIndicatorHTML!==indicatorHTML){box.innerHTML=nextIndicatorHTML||'<div class="indrow"><span>No metrics generated</span><span class="chip neutral">0</span></div>';indicatorHTML=nextIndicatorHTML;}
+  const box=document.getElementById('indicatorBody');const nextIndicatorHTML=Object.entries(data.indicators||{}).sort().map(([name,val])=>{const cls=val>0?'up':val<0?'down':'neutral';return `<div class="indrow"><span>${indicatorTr(name)}</span>${chip(val>0?'+'+val:String(val),cls)}</div>`}).join('');if(nextIndicatorHTML!==indicatorHTML){box.innerHTML=nextIndicatorHTML||'<div class="indrow"><span>Henüz gösterge üretilmedi</span><span class="chip neutral">0</span></div>';indicatorHTML=nextIndicatorHTML;}
 }
 async function updateHistory(){
-  const rows=await getJSON('/api/history?limit=20&tf='+activeTf);const body=document.getElementById('historyBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="9">Waiting for verified signal stream...</td></tr>';return}
+  const rows=await getJSON('/api/history?limit=20&tf='+activeTf);const body=document.getElementById('historyBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="9">Doğrulanmış sinyal verisi bekleniyor...</td></tr>';return}
   body.innerHTML=rows.map(x=>`<tr><td>${timeOnly(x.timestamp)}</td><td>${usd(x.currentPrice)}</td><td>${usd(x.priceToBeat)}</td><td>${pct(x.pUp)}</td><td>${pct(x.pDown)}</td><td>${Number(x.ptbZ||0).toFixed(2)}σ</td><td>${pct(x.orderFlowScore)}</td><td>${decisionChip(x.decision)}</td><td>${pctDirect(x.confidence,1)}</td></tr>`).join('');
 }
 async function updatePaper(){
-  const [s,trades]=await Promise.all([getJSON('/api/paper/stats?tf='+activeTf),getJSON('/api/paper/trades?limit=50&tf='+activeTf)]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);document.getElementById('paperPredicted').textContent=pct(s.averageEntryProbability||0,1);document.getElementById('paperActual').textContent=pct(s.actualWinProbability||0,1);const gap=document.getElementById('paperCalGap');gap.textContent=pct(s.calibrationGap||0,1);gap.className=Math.abs(Number(s.calibrationGap||0))<=0.05?'positive':'negative';document.getElementById('paperBrier').textContent=`${Number(s.brierScore||0).toFixed(3)} / ${s.calibrationN||0}`;const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen paper trade yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('OPEN','open'):t.won?chip('WIN','win'):chip('LOSS','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${t.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome||'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
+  const [s,trades]=await Promise.all([getJSON('/api/paper/stats?tf='+activeTf),getJSON('/api/paper/trades?limit=50&tf='+activeTf)]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);document.getElementById('paperPredicted').textContent=pct(s.averageEntryProbability||0,1);document.getElementById('paperActual').textContent=pct(s.actualWinProbability||0,1);const gap=document.getElementById('paperCalGap');gap.textContent=pct(s.calibrationGap||0,1);gap.className=Math.abs(Number(s.calibrationGap||0))<=0.05?'positive':'negative';document.getElementById('paperBrier').textContent=`${Number(s.brierScore||0).toFixed(3)} / ${s.calibrationN||0}`;const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen kağıt işlem yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('AÇIK','open'):t.won?chip('KAZANDI','win'):chip('KAYBETTİ','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${marketLabel(t.marketSlug)}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome?directionText(t.outcome):'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
 }
 async function updateHedge(){
-  const [s,rows]=await Promise.all([getJSON('/api/paper/hedge/stats?tf='+activeTf),getJSON('/api/paper/hedges?limit=30&tf='+activeTf)]);document.getElementById('hedgeCount').textContent=`${s.totalHedges||0} / ${s.openHedges||0}`;for(const [id,v] of [['hedgeOriginalPnl',s.originalPnlOnHedged],['hedgeContribution',s.hedgeContribution],['hedgeCombined',s.combinedPnl]]){const el=document.getElementById(id);el.textContent=usd(v);el.className=signClass(v)}document.getElementById('hedgeQuality').textContent=`${pct(s.averageEdge||0,1)} / ${pct(s.averagePersistence||0,0)}`;const body=document.getElementById('hedgeBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="14">Henüz persistent reverse hedge yok.</td></tr>';return}body.innerHTML=rows.map(h=>`<tr><td>${timeOnly(h.hedgeTime)}</td><td>${h.marketSlug.replace('btc-updown-5m-','')}</td><td>${decisionChip(h.originalSide)}</td><td>${decisionChip(h.side)}</td><td>${Number(h.entryPrice).toFixed(3)}</td><td>${Number(h.shares).toFixed(3)}</td><td>${pct(h.reverseProbability)}</td><td>${pct(h.edge)}</td><td>${pct(h.persistence)}</td><td>${Number(h.smoothedScore).toFixed(3)}</td><td>${Number(h.ptbZ).toFixed(2)}σ</td><td class="${signClass(h.lockedPnl)}">${usd(h.lockedPnl)}</td><td>${h.status==='OPEN'?chip('OPEN','open'):chip('SETTLED','neutral')}</td><td class="${signClass(h.combinedPnl)}">${h.status==='OPEN'?'—':usd(h.combinedPnl)}</td></tr>`).join('');
+  const [s,rows]=await Promise.all([getJSON('/api/paper/hedge/stats?tf='+activeTf),getJSON('/api/paper/hedges?limit=30&tf='+activeTf)]);document.getElementById('hedgeCount').textContent=`${s.totalHedges||0} / ${s.openHedges||0}`;for(const [id,v] of [['hedgeOriginalPnl',s.originalPnlOnHedged],['hedgeContribution',s.hedgeContribution],['hedgeCombined',s.combinedPnl]]){const el=document.getElementById(id);el.textContent=usd(v);el.className=signClass(v)}document.getElementById('hedgeQuality').textContent=`${pct(s.averageEdge||0,1)} / ${pct(s.averagePersistence||0,0)}`;const body=document.getElementById('hedgeBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="14">Henüz kalıcı ters yön koruma işlemi yok.</td></tr>';return}body.innerHTML=rows.map(h=>`<tr><td>${timeOnly(h.hedgeTime)}</td><td>${marketLabel(h.marketSlug)}</td><td>${decisionChip(h.originalSide)}</td><td>${decisionChip(h.side)}</td><td>${Number(h.entryPrice).toFixed(3)}</td><td>${Number(h.shares).toFixed(3)}</td><td>${pct(h.reverseProbability)}</td><td>${pct(h.edge)}</td><td>${pct(h.persistence)}</td><td>${Number(h.smoothedScore).toFixed(3)}</td><td>${Number(h.ptbZ).toFixed(2)}σ</td><td class="${signClass(h.lockedPnl)}">${usd(h.lockedPnl)}</td><td>${h.status==='OPEN'?chip('AÇIK','open'):chip('SONUÇLANDI','neutral')}</td><td class="${signClass(h.combinedPnl)}">${h.status==='OPEN'?'—':usd(h.combinedPnl)}</td></tr>`).join('');
 }
-function boolChip(v){return v?chip('PASS','fresh'):chip('BLOCK','down')}
+function boolChip(v){return v?chip('GEÇTİ','fresh'):chip('ENGEL','down')}
 function gateRow(k,v){return `<div class="gate-row"><span>${k}</span><b>${v}</b></div>`}
 async function updateGates(){
   const g=await getJSON('/api/gates?tf='+activeTf);if(g.status)return;
-  document.getElementById('entryTf').textContent=activeTf;document.getElementById('hedgeTf').textContent=activeTf;
+  const tfText=activeTf==='15m'?'15 dk':'5 dk';document.getElementById('entryTf').textContent=tfText;document.getElementById('hedgeTf').textContent=tfText;
   const e=g.entry||{};
-  document.getElementById('entryGateBody').innerHTML=[gateRow('ENTRY',e.allowed?chip('READY','fresh'):chip(e.reason||'BLOCKED','warn')),gateRow('Direction',`${e.decision||'—'} ${boolChip(e.directionPass)}`),gateRow('Confidence',`${Number(e.confidence||0).toFixed(1)} / ${Number(e.minConfidence||0).toFixed(1)}% ${boolChip(e.confidencePass)}`),gateRow('Time',`${Math.round(e.secondsRemaining||0)}s / ${Math.round(e.minSeconds||0)}-${Math.round(e.maxSeconds||0)}s ${boolChip(e.timePass)}`),gateRow('Fresh market/data',boolChip(e.freshPass)),gateRow('Paper balance',`${usd(e.cashBalance)} / stake ${usd(e.stake)} ${boolChip(e.balancePass)}`),gateRow('CLOB ask / VWAP',e.bestAsk?`${Number(e.bestAsk).toFixed(3)} / ${Number(e.averagePrice||0).toFixed(3)}`:'—'),gateRow('Shares / market BUY',e.estimatedShares?`${Number(e.estimatedShares).toFixed(3)} ${boolChip(e.quotePass)}`:'—'),gateRow('Economic Edge (shadow)',(()=>{const lp=latestLiveData||{};const mp=e.decision==='UP'?Number(lp.pUp||0):e.decision==='DOWN'?Number(lp.pDown||0):0;const eff=Number(e.estimatedShares||0)>0?Number(e.totalCost||0)/Number(e.estimatedShares):0;const edge=mp&&eff?mp-eff:0;const el=document.getElementById('economicEdge');if(el)el.textContent=mp&&eff?`${pct(mp)} - ${pct(eff)} = ${pct(edge)}`:'—';return mp&&eff?`${pct(mp)} - ${pct(eff)} = ${pct(edge)} ${edge>0?chip('POSITIVE','fresh'):chip('NEGATIVE','down')}`:'—'})())].join('');
+  document.getElementById('entryGateBody').innerHTML=[gateRow('GİRİŞ',e.allowed?chip('HAZIR','fresh'):chip(reasonTr(e.reason),'warn')),gateRow('Yön',`${e.decision?directionText(e.decision):'—'} ${boolChip(e.directionPass)}`),gateRow('Güven skoru',`${Number(e.confidence||0).toFixed(1)} / ${Number(e.minConfidence||0).toFixed(1)}% ${boolChip(e.confidencePass)}`),gateRow('Kalan süre',`${Math.round(e.secondsRemaining||0)} sn / ${Math.round(e.minSeconds||0)}-${Math.round(e.maxSeconds||0)} sn ${boolChip(e.timePass)}`),gateRow('Piyasa ve veri güncel mi?',boolChip(e.freshPass)),gateRow('Kağıt işlem bakiyesi',`${usd(e.cashBalance)} / işlem tutarı ${usd(e.stake)} ${boolChip(e.balancePass)}`),gateRow('Polymarket emir defteri satış fiyatı / ortalama gerçekleşme (VWAP)',e.bestAsk?`${Number(e.bestAsk).toFixed(3)} / ${Number(e.averagePrice||0).toFixed(3)}`:'—'),gateRow('Pay adedi / piyasa alış emri',e.estimatedShares?`${Number(e.estimatedShares).toFixed(3)} ${boolChip(e.quotePass)}`:'—'),gateRow('Ekonomik avantaj (gölge test)',(()=>{const lp=latestLiveData||{};const mp=e.decision==='UP'?Number(lp.pUp||0):e.decision==='DOWN'?Number(lp.pDown||0):0;const eff=Number(e.estimatedShares||0)>0?Number(e.totalCost||0)/Number(e.estimatedShares):0;const edge=mp&&eff?mp-eff:0;const el=document.getElementById('economicEdge');if(el)el.textContent=mp&&eff?`${pct(mp)} - ${pct(eff)} = ${pct(edge)}`:'—';return mp&&eff?`${pct(mp)} - ${pct(eff)} = ${pct(edge)} ${edge>0?chip('AVANTAJLI','fresh'):chip('AVANTAJ YOK','down')}`:'—'})())].join('');
   const h=g.hedge||{};
-  document.getElementById('hedgeGateBody').innerHTML=[gateRow('HEDGE',h.allowed?chip('READY','fresh'):chip(h.reason||'BLOCKED','warn')),gateRow('Open A position',boolChip(h.hasOpenPosition)),gateRow('Original → Reverse',`${h.originalSide||'—'} → ${h.reverseSide||'—'} ${boolChip(h.decisionPass)}`),gateRow('Reverse votes',`${h.reverseVotes||0}/${h.windowSize||0} · min ${h.minVotes||0}`),gateRow('Consecutive',`${h.consecutive||0} / ${h.minConsecutive||0}`),gateRow('P(reverse)',`${pct(h.reverseProbability||0)} / min ${pct(h.minProbability||0)} ${boolChip(h.probabilityPass)}`),gateRow('EWMA score',`${Number(h.smoothedScore||0).toFixed(3)} / ±${Number(h.scoreThreshold||0).toFixed(2)} ${boolChip(h.scorePass)}`),gateRow('PTB Z',`${Number(h.ptbZ||0).toFixed(2)}σ / ±${Number(h.minAbsPtbZ||0).toFixed(2)}σ ${boolChip(h.ptbZPass)}`),gateRow('Edge',`${pct(h.edge||0)} / min ${pct(h.minEdge||0)} ${boolChip(h.edgePass)}`),gateRow('Expected improve',`${usd(h.expectedImprovement||0)} ${boolChip(h.improvementPass)}`)].join('');
+  document.getElementById('hedgeGateBody').innerHTML=[gateRow('KORUMA',h.allowed?chip('HAZIR','fresh'):chip(reasonTr(h.reason),'warn')),gateRow('Açık A pozisyonu var mı?',boolChip(h.hasOpenPosition)),gateRow('Asıl yön → Ters yön',`${h.originalSide?directionText(h.originalSide):'—'} → ${h.reverseSide?directionText(h.reverseSide):'—'} ${boolChip(h.decisionPass)}`),gateRow('Ters yön oyları',`${h.reverseVotes||0}/${h.windowSize||0} · en az ${h.minVotes||0}`),gateRow('Ardışık ters sinyal',`${h.consecutive||0} / ${h.minConsecutive||0}`),gateRow('Ters yön olasılığı',`${pct(h.reverseProbability||0)} / en az ${pct(h.minProbability||0)} ${boolChip(h.probabilityPass)}`),gateRow('Yumuşatılmış ters yön skoru (EWMA)',`${Number(h.smoothedScore||0).toFixed(3)} / ±${Number(h.scoreThreshold||0).toFixed(2)} ${boolChip(h.scorePass)}`),gateRow('Hedef fiyata uzaklık (Z/σ)',`${Number(h.ptbZ||0).toFixed(2)}σ / ±${Number(h.minAbsPtbZ||0).toFixed(2)}σ ${boolChip(h.ptbZPass)}`),gateRow('Ekonomik avantaj',`${pct(h.edge||0)} / en az ${pct(h.minEdge||0)} ${boolChip(h.edgePass)}`),gateRow('Beklenen iyileşme',`${usd(h.expectedImprovement||0)} ${boolChip(h.improvementPass)}`)].join('');
 }
 async function updateComparison(){
  const c=await getJSON('/api/comparison'),a=c.fiveMinute||{},b=c.fifteenMinute||{};
  document.getElementById('cmp5n').textContent=`${a.settledTrades||0} / ${Number(a.winRate||0).toFixed(1)}%`;document.getElementById('cmp5roi').textContent=`${Number(a.returnOnStakePct||0).toFixed(2)}%`;document.getElementById('cmp5avg').textContent=`${Number(a.averageReturnPct||0).toFixed(2)}% ± ${Number(a.returnSePct||0).toFixed(2)}%`;
  document.getElementById('cmp15n').textContent=`${b.settledTrades||0} / ${Number(b.winRate||0).toFixed(1)}%`;document.getElementById('cmp15roi').textContent=`${Number(b.returnOnStakePct||0).toFixed(2)}%`;document.getElementById('cmp15avg').textContent=`${Number(b.averageReturnPct||0).toFixed(2)}% ± ${Number(b.returnSePct||0).toFixed(2)}%`;
- document.getElementById('cmp5cal').textContent=`${Number(a.brierScore||0).toFixed(3)} / ${pct(a.calibrationGap||0)}`;document.getElementById('cmp15cal').textContent=`${Number(b.brierScore||0).toFixed(3)} / ${pct(b.calibrationGap||0)}`;document.getElementById('cmpInference').textContent=`${c.status||'collecting'} · leader ${c.leader||'none'} · z=${Number(c.zScore||0).toFixed(2)}`;
+ document.getElementById('cmp5cal').textContent=`${Number(a.brierScore||0).toFixed(3)} / ${pct(a.calibrationGap||0)}`;document.getElementById('cmp15cal').textContent=`${Number(b.brierScore||0).toFixed(3)} / ${pct(b.calibrationGap||0)}`;document.getElementById('cmpInference').textContent=`${comparisonStatusTr(c.status)} · önde: ${c.leader==='5m'?'5 dk':c.leader==='15m'?'15 dk':'yok'} · istatistik z-skoru=${Number(c.zScore||0).toFixed(2)}`;
 }
 function switchTf(tf){activeTf=tf==='15m'?'15m':'5m';hasLiveSnapshot=false;document.querySelectorAll('.tfbtn').forEach(b=>b.classList.toggle('active',b.dataset.tf===activeTf));markLiveWaiting();tickLive();tickSlow()}
 async function tickLive(){if(liveBusy)return;liveBusy=true;try{await Promise.all([updateLive(),updateGates()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}finally{liveBusy=false}}
