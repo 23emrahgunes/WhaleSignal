@@ -1,0 +1,27 @@
+name: One-shot fix vet
+on:
+  push:
+    branches:
+      - feat/btc-5m-15m-gate-comparison-20260811
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/btc-5m-15m-gate-comparison-20260811
+          fetch-depth: 0
+      - name: Fix unused import
+        run: |
+          sed -i '/^[[:space:]]*"strings"$/d' internal/storage/hedge.go
+          gofmt -w internal/storage/hedge.go
+      - name: Commit
+        run: |
+          rm -f .github/workflows/oneshot-fix-vet.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: remove stale storage import"
+          git push origin HEAD:feat/btc-5m-15m-gate-comparison-20260811
