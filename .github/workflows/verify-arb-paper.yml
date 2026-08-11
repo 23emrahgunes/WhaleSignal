@@ -21,7 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Apply paper executor
-        run: python3 .ops/apply_arb_paper.py
+        run: |
+          python3 .ops/fix_apply_arb_paper.py
+          python3 .ops/apply_arb_paper.py
       - name: Format
         run: gofmt -w internal/arb internal/storage/arb.go internal/storage/arb_test.go internal/api/arb.go internal/api/server.go internal/config/config.go cmd/pm-edge/arb_shadow.go
       - name: Diff sanity
