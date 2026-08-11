@@ -103,3 +103,84 @@ func TestReconcileLifePreservesFirstSeen(t *testing.T) {
 		t.Fatalf("new level lifecycle wrong: %#v", got[99])
 	}
 }
+
+func TestRESTAuthoritativeReconcileCorrectsWrongWSClassification(t *testing.T) {
+	c := NewMicrostructureClient()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Simulate a provisional WS record with the wrong aggressor side.
+	c.recordTradeWithID(100, 2, true, now.Add(-2*time.Second), 42)
+	rows := []aggTradeRESTEvent{{
+		AggregateTradeID: 42,
+		Price:            "100",
+		Quantity:         "2",
+		TradeTime:        now.Add(-2 * time.Second).UnixMilli(),
+		BuyerIsMaker:     false, // authoritative REST says aggressive BUY
+	}}
+	if err := c.reconcileRESTAggTradeWindow(rows, now); err != nil {
+		t.Fatal(err)
+	}
+
+	c.mu.RLock()
+	buy, sell := tradeWindow(c.trades, now.Add(-5*time.Second))
+	restFresh := !c.lastAggRESTTime.IsZero()
+	c.mu.RUnlock()
+	if buy != 200 || sell != 0 {
+		t.Fatalf("REST did not correct WS side: buy %.2f sell %.2f", buy, sell)
+	}
+	if !restFresh {
+		t.Fatal("expected authoritative REST reconcile timestamp")
+	}
+}
+
+func TestRESTAuthoritativeReconcilePreservesNewerWSRecord(t *testing.T) {
+	c := NewMicrostructureClient()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	c.recordTradeWithID(100, 1, true, now.Add(time.Second), 101)
+	rows := []aggTradeRESTEvent{{
+		AggregateTradeID: 100,
+		Price:            "100",
+		Quantity:         "2",
+		TradeTime:        now.Add(-time.Second).UnixMilli(),
+		BuyerIsMaker:     false,
+	}}
+	if err := c.reconcileRESTAggTradeWindow(rows, now); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.RLock()
+	buy, sell := tradeWindow(c.trades, now.Add(-5*time.Second))
+	c.mu.RUnlock()
+	if buy != 200 || sell != 100 {
+		t.Fatalf("newer provisional WS record lost: buy %.2f sell %.2f", buy, sell)
+	}
+}
+
+func TestTradeFlowRequiresFreshAuthoritativeREST(t *testing.T) {
+	c := NewMicrostructureClient()
+	now := time.Now().UTC()
+	c.mu.Lock()
+	c.synchronized = true
+	c.source = "BINANCE_DEEP_REST1000"
+	c.lastBookTime = now
+	c.bids = map[float64]float64{100: 1, 20: 1}
+	c.asks = map[float64]float64{101: 1, 181: 1}
+	c.lastTradeTime = now
+	c.trades = []aggressiveTrade{{Time: now, BuyUSD: 100}}
+	c.mu.Unlock()
+
+	before := c.Snapshot(100.5, 110, now)
+	if before.TradeFlowAvailable {
+		t.Fatal("unverified WS-only trade flow must fail closed")
+	}
+
+	c.mu.Lock()
+	c.lastAggRESTTime = now
+	c.mu.Unlock()
+	after := c.Snapshot(100.5, 110, now)
+	if !after.TradeFlowAvailable {
+		t.Fatalf("fresh REST-authoritative flow should be available: %#v", after)
+	}
+	if after.TradeFlowSource != "BINANCE_AGGTRADES_REST_AUTH" {
+		t.Fatalf("unexpected trade-flow source %q", after.TradeFlowSource)
+	}
+}
