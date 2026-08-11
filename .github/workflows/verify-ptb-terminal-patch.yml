@@ -18,7 +18,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Apply patch
-        run: python3 .ops/apply_ptb_terminal_patch.py
+        run: |
+          python3 .ops/apply_ptb_terminal_patch.py
+          python3 .ops/fix_ptb_terminal_patch.py
       - name: Format and verify
         run: |
           gofmt -w internal/binance/microstructure.go internal/binance/microstructure_test.go internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go internal/storage/microstructure.go internal/storage/microstructure_test.go
