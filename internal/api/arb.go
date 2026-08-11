@@ -24,3 +24,13 @@ func (s *Server) handleArbStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := s.db.GetArbStatsByTimeframe(normalizeTF(r))
 	writeJSON(w, stats, err)
 }
+
+func (s *Server) handleArbPaperCycles(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.db.GetArbPaperCyclesByTimeframe(parseLimit(r, 50, 1000), normalizeTF(r))
+	writeJSON(w, rows, err)
+}
+
+func (s *Server) handleArbPaperStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetArbPaperStatsByTimeframe(s.paperInitialBalance, normalizeTF(r))
+	writeJSON(w, stats, err)
+}

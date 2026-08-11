@@ -24,11 +24,16 @@ type Config struct {
 	PaperMaxEffectiveEntry float64
 	PaperMinEconomicEdge   float64
 
-	ArbShadowEnabled      bool
-	ArbTargetEdge         float64
-	ArbOperationalBuffer  float64
-	ArbUncertaintyPenalty float64
-	ArbMaxStrandedUnits   int
+	ArbShadowEnabled         bool
+	ArbTargetEdge            float64
+	ArbOperationalBuffer     float64
+	ArbUncertaintyPenalty    float64
+	ArbMaxStrandedUnits      int
+	ArbMaxBookFetchMs        int
+	ArbPaperEnabled          bool
+	ArbPaperOrderTTLSec      int
+	ArbPaperMaxStrandedSec   int
+	ArbPaperStopBeforeEndSec int
 
 	PaperHedgeEnabled         bool
 	PaperHedgeWindow          int
@@ -70,6 +75,11 @@ func LoadConfig() (*Config, error) {
 		ArbOperationalBuffer:      envFloat("ARB_OPERATIONAL_BUFFER", 0.002),
 		ArbUncertaintyPenalty:     envFloat("ARB_UNCERTAINTY_PENALTY", 0.02),
 		ArbMaxStrandedUnits:       envInt("ARB_MAX_STRANDED_UNITS", 1),
+		ArbMaxBookFetchMs:         envInt("ARB_MAX_BOOK_FETCH_MS", 1000),
+		ArbPaperEnabled:           envBool("ARB_PAPER_ENABLED", true),
+		ArbPaperOrderTTLSec:       envInt("ARB_PAPER_ORDER_TTL_SEC", 12),
+		ArbPaperMaxStrandedSec:    envInt("ARB_PAPER_MAX_STRANDED_SEC", 20),
+		ArbPaperStopBeforeEndSec:  envInt("ARB_PAPER_STOP_BEFORE_END_SEC", 12),
 		PaperHedgeEnabled:         envBool("PAPER_HEDGE_ENABLED", true),
 		PaperHedgeWindow:          envInt("PAPER_HEDGE_WINDOW", 8),
 		PaperHedgeMinVotes:        envInt("PAPER_HEDGE_MIN_VOTES", 6),

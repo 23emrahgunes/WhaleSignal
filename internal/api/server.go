@@ -49,6 +49,8 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/arb", s.cors(s.handleArbLive))
 	mux.HandleFunc("/api/arb/history", s.cors(s.handleArbHistory))
 	mux.HandleFunc("/api/arb/stats", s.cors(s.handleArbStats))
+	mux.HandleFunc("/api/arb/paper/cycles", s.cors(s.handleArbPaperCycles))
+	mux.HandleFunc("/api/arb/paper/stats", s.cors(s.handleArbPaperStats))
 	mux.HandleFunc("/api/comparison", s.cors(s.handleComparison))
 	fileServer := http.FileServer(http.Dir("web/static"))
 	mux.Handle("/", s.corsHandler(fileServer))
