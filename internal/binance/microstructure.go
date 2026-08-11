@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	deepBookFreshAfter = 3 * time.Second
-	tradeFlowRetention = 65 * time.Second
+	deepBookFreshAfter     = 3 * time.Second
+	tradeFlowRetention     = 65 * time.Second
+	aggTradeRESTFreshAfter = 3 * time.Second
+	aggTradeRESTPageSize   = 1000
+	aggTradeRESTMaxPages   = 8
 )
 
 var deepWSURLs = []string{
@@ -71,7 +74,9 @@ type DeepMicroSnapshot struct {
 	PTBBarrierScore    float64       `json:"ptbBarrierScore"`
 	LastUpdateID       int64         `json:"lastUpdateId"`
 	LastTradeAgeMs     int64         `json:"lastTradeAgeMs"`
+	TradeRESTAgeMs     int64         `json:"tradeRestAgeMs"`
 	TradeFlowAvailable bool          `json:"tradeFlowAvailable"`
+	TradeFlowSource    string        `json:"tradeFlowSource"`
 	PTBPrice           float64       `json:"ptbPrice"`
 	PTBDistanceUSD     float64       `json:"ptbDistanceUsd"`
 	PTBCorridorCovered bool          `json:"ptbCorridorCovered"`
@@ -103,6 +108,7 @@ type MicrostructureClient struct {
 	lastUpdateID    int64
 	lastBookTime    time.Time
 	lastTradeTime   time.Time
+	lastAggRESTTime time.Time
 	lastAggTradeID  int64
 	seenAggTradeIDs map[int64]time.Time
 	source          string
@@ -528,32 +534,17 @@ func reconcileLife(old map[float64]levelLife, book map[float64]float64, now time
 }
 
 func (c *MicrostructureClient) loadRESTAggTradesFallback() error {
+	windowEnd := time.Now().UTC()
 	var lastErr error
 	for _, base := range deepRESTBases {
-		resp, err := c.httpClient.Get(base + "/api/v3/aggTrades?symbol=BTCUSDT&limit=1000")
+		rows, err := c.fetchRESTAggTradeWindow(base, windowEnd)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("aggTrades REST http status %d", resp.StatusCode)
-			_ = resp.Body.Close()
-			continue
-		}
-		var rows []aggTradeRESTEvent
-		err = json.NewDecoder(resp.Body).Decode(&rows)
-		_ = resp.Body.Close()
-		if err != nil {
+		if err := c.reconcileRESTAggTradeWindow(rows, windowEnd); err != nil {
 			lastErr = err
 			continue
-		}
-		for _, ev := range rows {
-			price, errP := strconv.ParseFloat(ev.Price, 64)
-			qty, errQ := strconv.ParseFloat(ev.Quantity, 64)
-			if errP != nil || errQ != nil || price <= 0 || qty <= 0 || ev.TradeTime <= 0 {
-				continue
-			}
-			c.recordTradeWithID(price, qty, ev.BuyerIsMaker, time.UnixMilli(ev.TradeTime).UTC(), ev.AggregateTradeID)
 		}
 		return nil
 	}
@@ -561,6 +552,160 @@ func (c *MicrostructureClient) loadRESTAggTradesFallback() error {
 		lastErr = fmt.Errorf("no Binance aggTrades REST endpoint available")
 	}
 	return lastErr
+}
+
+// fetchRESTAggTradeWindow retrieves the complete recent aggregate-trade window.
+// Binance returns the oldest rows first when startTime is supplied, so a busy
+// market can require pagination beyond the first 1000 rows. Subsequent pages
+// continue from the last aggregate ID and are clipped to the original window.
+func (c *MicrostructureClient) fetchRESTAggTradeWindow(base string, windowEnd time.Time) ([]aggTradeRESTEvent, error) {
+	windowEnd = windowEnd.UTC()
+	startMs := windowEnd.Add(-tradeFlowRetention).UnixMilli()
+	endMs := windowEnd.UnixMilli()
+	nextURL := fmt.Sprintf("%s/api/v3/aggTrades?symbol=BTCUSDT&startTime=%d&endTime=%d&limit=%d", base, startMs, endMs, aggTradeRESTPageSize)
+	all := make([]aggTradeRESTEvent, 0, 2048)
+	seen := make(map[int64]struct{}, 2048)
+	complete := false
+
+	for page := 0; page < aggTradeRESTMaxPages; page++ {
+		rows, err := c.fetchAggTradePage(nextURL)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			complete = true
+			break
+		}
+
+		lastID := int64(0)
+		reachedWindowEnd := false
+		for _, ev := range rows {
+			if ev.AggregateTradeID > lastID {
+				lastID = ev.AggregateTradeID
+			}
+			if ev.TradeTime < startMs {
+				continue
+			}
+			if ev.TradeTime > endMs {
+				reachedWindowEnd = true
+				continue
+			}
+			if ev.AggregateTradeID <= 0 {
+				continue
+			}
+			if _, exists := seen[ev.AggregateTradeID]; exists {
+				continue
+			}
+			seen[ev.AggregateTradeID] = struct{}{}
+			all = append(all, ev)
+		}
+
+		last := rows[len(rows)-1]
+		if len(rows) < aggTradeRESTPageSize || last.TradeTime >= endMs || reachedWindowEnd {
+			complete = true
+			break
+		}
+		if lastID <= 0 {
+			return nil, fmt.Errorf("aggTrades REST pagination missing aggregate ID")
+		}
+		nextURL = fmt.Sprintf("%s/api/v3/aggTrades?symbol=BTCUSDT&fromId=%d&limit=%d", base, lastID+1, aggTradeRESTPageSize)
+	}
+	if !complete {
+		return nil, fmt.Errorf("aggTrades REST window exceeds pagination cap of %d rows", aggTradeRESTPageSize*aggTradeRESTMaxPages)
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].TradeTime == all[j].TradeTime {
+			return all[i].AggregateTradeID < all[j].AggregateTradeID
+		}
+		return all[i].TradeTime < all[j].TradeTime
+	})
+	return all, nil
+}
+
+func (c *MicrostructureClient) fetchAggTradePage(url string) ([]aggTradeRESTEvent, error) {
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("aggTrades REST http status %d", resp.StatusCode)
+	}
+	var rows []aggTradeRESTEvent
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// reconcileRESTAggTradeWindow makes REST authoritative for the overlapping
+// retention window. WebSocket events newer than windowEnd are kept provisionally;
+// any overlapping WS classification is replaced by Binance's REST record. This
+// prevents a bad/partial WS side from being permanently frozen by ID dedupe.
+func (c *MicrostructureClient) reconcileRESTAggTradeWindow(rows []aggTradeRESTEvent, windowEnd time.Time) error {
+	windowEnd = windowEnd.UTC()
+	cutoff := windowEnd.Add(-tradeFlowRetention)
+	authoritative := make([]aggressiveTrade, 0, len(rows))
+	authoritativeIDs := make(map[int64]time.Time, len(rows))
+
+	for _, ev := range rows {
+		if ev.AggregateTradeID <= 0 || ev.TradeTime <= 0 {
+			continue
+		}
+		price, errP := strconv.ParseFloat(ev.Price, 64)
+		qty, errQ := strconv.ParseFloat(ev.Quantity, 64)
+		if errP != nil || errQ != nil || price <= 0 || qty <= 0 {
+			continue
+		}
+		ts := time.UnixMilli(ev.TradeTime).UTC()
+		if ts.Before(cutoff) || ts.After(windowEnd) {
+			continue
+		}
+		tr := aggressiveTrade{Time: ts}
+		if ev.BuyerIsMaker {
+			tr.SellUSD = price * qty
+		} else {
+			tr.BuyUSD = price * qty
+		}
+		authoritative = append(authoritative, tr)
+		authoritativeIDs[ev.AggregateTradeID] = ts
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Keep only WS events that happened after the REST snapshot boundary. They
+	// will themselves become REST-authoritative on the next poll.
+	future := make([]aggressiveTrade, 0, 64)
+	for _, tr := range c.trades {
+		if tr.Time.After(windowEnd) {
+			future = append(future, tr)
+		}
+	}
+	c.trades = append(authoritative, future...)
+
+	for id, seenAt := range c.seenAggTradeIDs {
+		if seenAt.After(windowEnd) {
+			authoritativeIDs[id] = seenAt
+		}
+	}
+	c.seenAggTradeIDs = authoritativeIDs
+	c.lastAggTradeID = 0
+	for id := range authoritativeIDs {
+		if id > c.lastAggTradeID {
+			c.lastAggTradeID = id
+		}
+	}
+
+	c.lastTradeTime = time.Time{}
+	for _, tr := range c.trades {
+		if c.lastTradeTime.IsZero() || tr.Time.After(c.lastTradeTime) {
+			c.lastTradeTime = tr.Time
+		}
+	}
+	c.lastAggRESTTime = time.Now().UTC()
+	return nil
 }
 
 func (c *MicrostructureClient) markDesynced(source string) {
@@ -580,7 +725,15 @@ func (c *MicrostructureClient) Snapshot(currentPrice, priceToBeat float64, now t
 	now = now.UTC()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := DeepMicroSnapshot{Synchronized: c.synchronized, Source: c.source, LastUpdateID: c.lastUpdateID, PTBPrice: priceToBeat}
+	out := DeepMicroSnapshot{
+		Synchronized:    c.synchronized,
+		Source:          c.source,
+		LastUpdateID:    c.lastUpdateID,
+		PTBPrice:        priceToBeat,
+		LastTradeAgeMs:  -1,
+		TradeRESTAgeMs:  -1,
+		TradeFlowSource: "UNVERIFIED",
+	}
 	if c.lastBookTime.IsZero() {
 		out.AgeMs = -1
 		return out
@@ -618,10 +771,13 @@ func (c *MicrostructureClient) Snapshot(currentPrice, priceToBeat float64, now t
 	out.PTBPathBidUSD, out.PTBPathAskUSD, out.PTBBeyondUSD, out.PTBBarrierScore = ptbBarrier(c.bids, c.asks, currentPrice, priceToBeat)
 	if !c.lastTradeTime.IsZero() {
 		out.LastTradeAgeMs = now.Sub(c.lastTradeTime).Milliseconds()
-		out.TradeFlowAvailable = out.LastTradeAgeMs >= 0 && out.LastTradeAgeMs <= 3000
-	} else {
-		out.LastTradeAgeMs = -1
 	}
+	if !c.lastAggRESTTime.IsZero() {
+		out.TradeRESTAgeMs = now.Sub(c.lastAggRESTTime).Milliseconds()
+		out.TradeFlowSource = "BINANCE_AGGTRADES_REST_AUTH"
+	}
+	out.TradeFlowAvailable = out.LastTradeAgeMs >= 0 && out.LastTradeAgeMs <= 3000 &&
+		out.TradeRESTAgeMs >= 0 && out.TradeRESTAgeMs <= aggTradeRESTFreshAfter.Milliseconds()
 	out.Ready = c.synchronized && age >= 0 && age <= deepBookFreshAfter && out.BidRangeUSD >= 75 && out.AskRangeUSD >= 75
 	return out
 }
