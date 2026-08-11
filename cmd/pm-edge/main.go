@@ -91,6 +91,7 @@ func main() {
 	bClient := binance.NewClient()
 	clClient := chainlink.NewClient()
 	paperEngine := paper.NewEngine(db, paper.Config{
+		Timeframe:            "5m",
 		Enabled:              cfg.PaperEnabled && !isMockMode,
 		InitialBalance:       cfg.PaperInitialBalance,
 		Stake:                cfg.PaperStake,
@@ -148,6 +149,7 @@ func main() {
 	defer cancel()
 	evaluator := engine.NewEvaluator()
 	state := &marketState{}
+	startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient)
 
 	refreshMarket := func(now time.Time) {
 		if isMockMode {
@@ -220,6 +222,7 @@ func main() {
 				m := state.Get()
 				if m == nil {
 					server.UpdateState(nil, nil)
+					server.UpdateGatesFor("5m", paperEngine.EntryGateSnapshot(nil, nil, now, quoteBudget), paperEngine.HedgeGateSnapshot(nil, nil, now, quoteShares))
 					continue
 				}
 
@@ -241,10 +244,12 @@ func main() {
 				res := evaluator.Evaluate(bClient, m, referencePrice, referenceFresh, now.Format(time.RFC3339Nano))
 				if res == nil {
 					server.UpdateState(nil, m)
+					server.UpdateGatesFor("5m", paperEngine.EntryGateSnapshot(nil, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(nil, m, now, quoteShares))
 					continue
 				}
 				server.UpdateState(res, m)
 				if isMockMode || strings.Contains(res.DataSource, "MOCK") {
+					server.UpdateGatesFor("5m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 					continue
 				}
 				if err := db.InsertSignal(res); err != nil {
@@ -268,6 +273,7 @@ func main() {
 						zap.Float64("shares", h.Shares), zap.Float64("edge", h.Edge),
 						zap.Float64("persistence", h.Persistence), zap.Float64("lockedPnL", h.LockedPnL))
 				}
+				server.UpdateGatesFor("5m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 				util.Logger.Info("Evaluated directional bias score",
 					zap.String("eventSlug", m.EventSlug), zap.String("ptbSource", m.PriceToBeatSource),
 					zap.Float64("priceToBeat", res.PriceToBeat), zap.Float64("currentPrice", res.CurrentPrice),

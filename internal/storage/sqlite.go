@@ -217,14 +217,14 @@ func (d *Database) InsertSignal(r *engine.EvaluationResult) error {
 	if r.PriceToBeat <= 0 || r.CurrentPrice <= 0 {
 		return fmt.Errorf("refusing signal with invalid prices")
 	}
-	if r.SecondsRemaining <= 0 || r.SecondsRemaining > 305 {
+	if r.SecondsRemaining <= 0 || r.SecondsRemaining > 905 {
 		return fmt.Errorf("refusing signal with invalid remaining time %.3f", r.SecondsRemaining)
 	}
 	if r.MarketStale {
 		return fmt.Errorf("refusing stale market signal")
 	}
-	if !strings.HasPrefix(r.Slug, "btc-updown-5m-") {
-		return fmt.Errorf("refusing non-canonical BTC 5m slug %q", r.Slug)
+	if !IsSupportedBTCMarketSlug(r.Slug) {
+		return fmt.Errorf("refusing unsupported BTC up/down slug %q", r.Slug)
 	}
 	if strings.Contains(strings.ToUpper(r.DataSource), "MOCK") {
 		return fmt.Errorf("refusing mock signal")
@@ -303,7 +303,7 @@ func (d *Database) CreatePaperTrade(t *PaperTrade) (bool, error) {
 	if t == nil {
 		return false, fmt.Errorf("nil paper trade")
 	}
-	if !strings.HasPrefix(t.MarketSlug, "btc-updown-5m-") {
+	if !IsSupportedBTCMarketSlug(t.MarketSlug) {
 		return false, fmt.Errorf("invalid paper market slug %q", t.MarketSlug)
 	}
 	if t.Side != "UP" && t.Side != "DOWN" {

@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 type PaperHedge struct {
@@ -94,7 +93,7 @@ func (d *Database) GetOpenPaperTradeByMarket(slug string) (*PaperTrade, error) {
 }
 
 func (d *Database) CreatePaperHedge(h *PaperHedge) (bool, error) {
-	if h == nil || h.PaperTradeID <= 0 || !strings.HasPrefix(h.MarketSlug, "btc-updown-5m-") {
+	if h == nil || h.PaperTradeID <= 0 || !IsSupportedBTCMarketSlug(h.MarketSlug) {
 		return false, fmt.Errorf("invalid paper hedge")
 	}
 	if h.Side != "UP" && h.Side != "DOWN" || h.OriginalSide == h.Side {
