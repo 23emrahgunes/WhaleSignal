@@ -17,7 +17,7 @@ import (
 	"pm-edge/internal/util"
 )
 
-func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config, db *storage.Database, server *api.Server, pmClient *polymarket.Client, bClient *binance.Client, clClient *chainlink.Client) {
+func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config, db *storage.Database, server *api.Server, pmClient *polymarket.Client, bClient *binance.Client, clClient *chainlink.Client, microClient *binance.MicrostructureClient) {
 	paperEngine := paper.NewEngine(db, paper.Config{
 		Timeframe:            "15m",
 		Enabled:              cfg.PaperEnabled && !isMockMode,
@@ -46,7 +46,7 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 		return pmClient.FetchBuyQuoteForShares(tokenID, shares, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer)
 	}
 	state := &marketState{}
-	evaluator := engine.NewEvaluator()
+	evaluator := engine.NewEvaluator(microClient)
 
 	refreshMarket := func(now time.Time) {
 		if isMockMode {
@@ -146,7 +146,7 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 					server.UpdateGatesFor("15m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 					continue
 				}
-				if err := db.InsertSignal(res); err != nil {
+				if err := db.InsertSignalWithMicro(res); err != nil {
 					util.Logger.Error("Failed to store BTC 15m signal", zap.Error(err))
 					continue
 				}
@@ -161,7 +161,7 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 					util.Logger.Info("BTC 15m PAPER SHADOW HEDGE OPENED", zap.String("market", h.MarketSlug), zap.String("originalSide", h.OriginalSide), zap.String("hedgeSide", h.Side), zap.Float64("edge", h.Edge), zap.Float64("lockedPnL", h.LockedPnL))
 				}
 				server.UpdateGatesFor("15m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
-				util.Logger.Info("Evaluated BTC 15m directional bias score", zap.String("eventSlug", m.EventSlug), zap.Float64("remaining_sec", res.SecondsRemaining), zap.Float64("pUp", res.PUp), zap.Float64("ptbZ", res.PTBZ), zap.Float64("finalScore", res.FinalScore), zap.String("decision", res.Decision), zap.Float64("confidence", res.Confidence))
+				util.Logger.Info("Evaluated BTC 15m directional bias score", zap.String("eventSlug", m.EventSlug), zap.Float64("remaining_sec", res.SecondsRemaining), zap.Float64("pUp", res.PUp), zap.Float64("ptbZ", res.PTBZ), zap.Float64("finalScore", res.FinalScore), zap.String("decision", res.Decision), zap.Float64("confidence", res.Confidence), zap.String("shadowDecision", res.ShadowDecision), zap.Float64("shadowScore", res.ShadowModelBScore), zap.Float64("microScore", res.MicrostructureScore))
 			}
 		}
 	}()

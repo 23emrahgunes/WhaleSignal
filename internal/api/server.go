@@ -39,6 +39,8 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/history", s.cors(s.handleHistory))
 	mux.HandleFunc("/api/market", s.cors(s.handleMarket))
 	mux.HandleFunc("/api/orderflow", s.cors(s.handleOrderflow))
+	mux.HandleFunc("/api/microstructure", s.cors(s.handleMicrostructure))
+	mux.HandleFunc("/api/microstructure/history", s.cors(s.handleMicrostructureHistory))
 	mux.HandleFunc("/api/paper/stats", s.cors(s.handlePaperStats))
 	mux.HandleFunc("/api/paper/trades", s.cors(s.handlePaperTrades))
 	mux.HandleFunc("/api/paper/hedges", s.cors(s.handlePaperHedges))

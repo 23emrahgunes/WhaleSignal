@@ -73,16 +73,35 @@ type EvaluationResult struct {
 	DepthSource              string         `json:"depthSource"`
 	DepthFresh               bool           `json:"depthFresh"`
 	DepthAgeMs               int64          `json:"depthAgeMs"`
+
+	DeepMicrostructure  binance.DeepMicroSnapshot `json:"deepMicrostructure"`
+	DeepBookScore       float64                   `json:"deepBookScore"`
+	TradeFlowScore      float64                   `json:"tradeFlowScore"`
+	WallDynamicsScore   float64                   `json:"wallDynamicsScore"`
+	PTBBarrierScore     float64                   `json:"ptbBarrierScore"`
+	MicrostructureScore float64                   `json:"microstructureScore"`
+	ShadowModelBScore   float64                   `json:"shadowModelBScore"`
+	ShadowDecision      string                    `json:"shadowDecision"`
+	ShadowConfidence    float64                   `json:"shadowConfidence"`
 }
 
 type Evaluator struct {
 	basis basisTracker
+	micro *binance.MicrostructureClient
 }
 
-func NewEvaluator() *Evaluator { return &Evaluator{} }
+func NewEvaluator(micro ...*binance.MicrostructureClient) *Evaluator {
+	e := &Evaluator{}
+	if len(micro) > 0 {
+		e.micro = micro[0]
+	}
+	return e
+}
 
 // Evaluate fails closed unless the Chainlink reference, Binance spot, Depth20
 // orderbook and terminal-forecast inputs are all fresh enough for research use.
+// Deep microstructure is deliberately shadow-only: an unavailable deep feed
+// never changes the established Model-A paper decision.
 func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.Market, referencePrice float64, referenceFresh bool, nowUTC string) *EvaluationResult {
 	if market == nil || market.PriceToBeat <= 0 || referencePrice <= 0 || !referenceFresh {
 		return nil
@@ -170,12 +189,30 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 	confidence := math.Min(100.0, math.Abs(finalScore)*100.0)
 
+	deep := binance.DeepMicroSnapshot{}
+	microScores := MicrostructureScores{}
+	shadowScore := 0.0
+	shadowDecision := "WAITING"
+	shadowConfidence := 0.0
+	if e.micro != nil {
+		deep = e.micro.Snapshot(binanceSpot, priceToBeat, nowTime)
+		microScores = ScoreMicrostructure(deep)
+		if microScores.Ready {
+			shadowScore = ShadowModelB(probabilityScore, technicalScore, microScores)
+			shadowDecision, shadowConfidence = ShadowDecision(shadowScore)
+		}
+	}
+
 	depthAge := binanceClient.DepthAge(nowTime)
 	depthAgeMs := int64(-1)
 	if depthAge >= 0 {
 		depthAgeMs = depthAge.Milliseconds()
 	}
 	depthSource := binanceClient.GetDepthDataSource()
+	dataSource := "CHAINLINK_RTDS+" + binanceClient.GetDataSource() + "+" + depthSource
+	if deep.Ready {
+		dataSource += "+BINANCE_DEEP_MICRO"
+	}
 
 	return &EvaluationResult{
 		Timestamp:                nowUTC,
@@ -237,10 +274,19 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		Confidence:               confidence,
 		Indicators:               indicators,
 		MarketStale:              market.MarketStale,
-		DataSource:               "CHAINLINK_RTDS+" + binanceClient.GetDataSource() + "+" + depthSource,
+		DataSource:               dataSource,
 		DepthSource:              depthSource,
 		DepthFresh:               true,
 		DepthAgeMs:               depthAgeMs,
+		DeepMicrostructure:       deep,
+		DeepBookScore:            microScores.DeepBookScore,
+		TradeFlowScore:           microScores.TradeFlowScore,
+		WallDynamicsScore:        microScores.WallDynamicsScore,
+		PTBBarrierScore:          microScores.PTBBarrierScore,
+		MicrostructureScore:      microScores.MicrostructureScore,
+		ShadowModelBScore:        shadowScore,
+		ShadowDecision:           shadowDecision,
+		ShadowConfidence:         shadowConfidence,
 	}
 }
 
