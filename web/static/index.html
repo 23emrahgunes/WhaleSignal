@@ -105,8 +105,8 @@
 
 
   <div class="gategrid">
-    <div class="card"><h2>Kağıt İşlem Giriş Kontrolü — <span id="entryTf">5 dk</span></h2><div id="entryGateBody"><div class="gate-row"><span>Status</span><b>Bekleniyor...</b></div></div></div>
-    <div class="card"><h2>Koruma İşlemi Kontrolü — <span id="hedgeTf">5 dk</span></h2><div id="hedgeGateBody"><div class="gate-row"><span>Status</span><b>Bekleniyor...</b></div></div></div>
+    <div class="card"><h2>Kağıt İşlem Giriş Kontrolü — <span id="entryTf">5 dk</span></h2><div id="entryGateBody"><div class="gate-row"><span>Durum</span><b>Bekleniyor...</b></div></div></div>
+    <div class="card"><h2>Koruma İşlemi Kontrolü — <span id="hedgeTf">5 dk</span></h2><div id="hedgeGateBody"><div class="gate-row"><span>Durum</span><b>Bekleniyor...</b></div></div></div>
   </div>
   <div class="card"><h2>BTC 5 dk ve 15 dk — Kağıt İşlem Verimlilik Karşılaştırması</h2>
     <div class="grid3">
@@ -188,11 +188,11 @@ function sourceTr(v){const m={
 'BINANCE_DEEP_REST1000':'Binance yedek veri kaynağı · Derin 1000 kademe','BINANCE_DEEP_DIFF':'Binance canlı derinlik fark akışı',
 'BINANCE_DEEP_SNAPSHOT':'Binance derinlik başlangıç görüntüsü','DEEP_WS_CONNECT_FAILED':'Derin veri bağlantısı kurulamadı',
 'DEEP_SNAPSHOT_FAILED':'Derinlik görüntüsü alınamadı','DEEP_WS_DISCONNECTED':'Derin veri bağlantısı koptu','UNINITIALIZED':'Henüz başlatılmadı'};return m[v]||'Bilinmeyen teknik veri kaynağı'}
-function indicatorTr(v){const m={ADX:'Trend Gücü (ADX)',CCI:'Emtia Kanal Endeksi (CCI)',EMA:'Üssel Hareketli Ortalama (EMA)',HMA:'Hull Hareketli Ortalama (HMA)',MACD:'Hareketli Ortalama Yakınsama/Farkı (MACD)',Momentum:'Momentum',RSI:'Göreceli Güç Endeksi (RSI)',SMA:'Basit Hareketli Ortalama (SMA)',Stochastic:'Stokastik Osilatör',VWMA:'Hacim Ağırlıklı Hareketli Ortalama (VWMA)',WilliamsR:'Williams %R'};return m[v]||v}
+function indicatorTr(v){const m={ADX:'Trend Gücü (ADX)',CCI:'Emtia Kanal Endeksi (CCI)',EMA:'Üssel Hareketli Ortalama (EMA)',HMA:'Hull Hareketli Ortalama (HMA)',MACD:'Hareketli Ortalama Yakınsama/Farkı (MACD)',Momentum:'Fiyat İvmesi (Momentum)',RSI:'Göreceli Güç Endeksi (RSI)',SMA:'Basit Hareketli Ortalama (SMA)',Stochastic:'Stokastik Osilatör',VWMA:'Hacim Ağırlıklı Hareketli Ortalama (VWMA)',WilliamsR:'Williams %R'};return m[v]||v}
 function reasonTr(v){const m={
 'NEUTRAL_SIGNAL':'Yön sinyali yeterince güçlü değil','CONFIDENCE_BELOW_THRESHOLD':'Güven skoru eşik altında','OUTSIDE_ENTRY_WINDOW':'Giriş zaman aralığı dışında',
 'DATA_NOT_FRESH_OR_MARKET_INACTIVE':'Veri güncel değil veya piyasa aktif değil','INSUFFICIENT_PAPER_BALANCE':'Kağıt işlem bakiyesi yetersiz','MIN_ORDER_SIZE_NOT_MET':'Minimum emir koşulu sağlanmadı',
-'CLOB_QUOTE_ERROR':'CLOB fiyat teklifi alınamadı','POSITION_ALREADY_RECORDED':'Bu piyasa için işlem zaten kaydedildi','NO_OPEN_POSITION':'Korunacak açık işlem yok',
+'CLOB_QUOTE_ERROR':'Polymarket emir defteri fiyat teklifi alınamadı','POSITION_ALREADY_RECORDED':'Bu piyasa için işlem zaten kaydedildi','NO_OPEN_POSITION':'Korunacak açık işlem yok',
 'ALREADY_HEDGED':'Bu işlem zaten korunmuş','OUTSIDE_HEDGE_WINDOW':'Koruma zaman aralığı dışında','REVERSE_DECISION_NOT_CONFIRMED':'Ters yön yeterince doğrulanmadı',
 'REGIME_NOT_READY':'Ters yön örnek penceresi henüz dolmadı','PERSISTENCE_BELOW_THRESHOLD':'Ters yön kalıcılığı yetersiz','CONSECUTIVE_BELOW_THRESHOLD':'Ardışık ters sinyal sayısı yetersiz',
 'PROBABILITY_BELOW_THRESHOLD':'Ters yön olasılığı eşik altında','PTB_Z_NOT_CONFIRMED':'Hedef fiyat uzaklığı ters yönü doğrulamıyor','SCORE_BELOW_THRESHOLD':'Yumuşatılmış ters yön skoru yetersiz',
@@ -232,14 +232,14 @@ async function updateLive(){
   document.getElementById('askRange').textContent=`${usd(data.askRangeUsd)} · ${Number(data.askRangeBps||0).toFixed(2)} baz puan`;
   document.getElementById('orderFlowScore').textContent=pct(data.orderFlowScore,2);
   document.getElementById('depthSource').textContent=sourceTr(data.depthSource);
-  const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`GÜNCEL · ${age>=0?age+' ms':'—'}`,'fresh'):chip('ESKİ VERİ','stale');
+  const age=Number(data.depthAgeMs);document.getElementById('depthFresh').innerHTML=data.depthFresh?chip(`GÜNCEL · ${age>=0?age+' milisaniye':'—'}`,'fresh'):chip('ESKİ VERİ','stale');
 
   const dm=data.deepMicrostructure||{};
   const bands=Object.fromEntries((dm.bands||[]).map(x=>[Number(x.distanceUsd),x]));
   const flows=Object.fromEntries((dm.trades||[]).map(x=>[Number(x.seconds),x]));
   const fmtBand=d=>{const x=bands[d];return x?`${usdCompact(x.bidUsd)} / ${usdCompact(x.askUsd)} / ${pct(x.imbalance)}`:'—'};
   const fmtFlow=d=>{const x=flows[d];return x?`${usdCompact(x.buyUsd)} / ${usdCompact(x.sellUsd)} / ${pct(x.imbalance)}`:'—'};
-  document.getElementById('deepHealth').innerHTML=dm.ready?chip(`SENKRON · ${dm.bidLevels||0}/${dm.askLevels||0} · ${dm.ageMs||0}ms`,'fresh'):chip(`${sourceTr(dm.source)} · ${dm.ageMs??'—'}ms`,'warn');
+  document.getElementById('deepHealth').innerHTML=dm.ready?chip(`SENKRON · ${dm.bidLevels||0}/${dm.askLevels||0} · ${dm.ageMs||0} milisaniye`,'fresh'):chip(`${sourceTr(dm.source)} · ${dm.ageMs??'—'} milisaniye`,'warn');
   document.getElementById('shadowDecision').innerHTML=decisionChip(data.shadowDecision||'WAITING');
   document.getElementById('shadowScore').textContent=`${Number(data.shadowModelBScore||0).toFixed(3)} / ${Number(data.shadowConfidence||0).toFixed(1)}%`;
   document.getElementById('microScore').textContent=pct(data.microstructureScore||0,1);
@@ -275,7 +275,7 @@ async function updateComparison(){
  const c=await getJSON('/api/comparison'),a=c.fiveMinute||{},b=c.fifteenMinute||{};
  document.getElementById('cmp5n').textContent=`${a.settledTrades||0} / ${Number(a.winRate||0).toFixed(1)}%`;document.getElementById('cmp5roi').textContent=`${Number(a.returnOnStakePct||0).toFixed(2)}%`;document.getElementById('cmp5avg').textContent=`${Number(a.averageReturnPct||0).toFixed(2)}% ± ${Number(a.returnSePct||0).toFixed(2)}%`;
  document.getElementById('cmp15n').textContent=`${b.settledTrades||0} / ${Number(b.winRate||0).toFixed(1)}%`;document.getElementById('cmp15roi').textContent=`${Number(b.returnOnStakePct||0).toFixed(2)}%`;document.getElementById('cmp15avg').textContent=`${Number(b.averageReturnPct||0).toFixed(2)}% ± ${Number(b.returnSePct||0).toFixed(2)}%`;
- document.getElementById('cmp5cal').textContent=`${Number(a.brierScore||0).toFixed(3)} / ${pct(a.calibrationGap||0)}`;document.getElementById('cmp15cal').textContent=`${Number(b.brierScore||0).toFixed(3)} / ${pct(b.calibrationGap||0)}`;document.getElementById('cmpInference').textContent=`${comparisonStatusTr(c.status)} · önde: ${c.leader==='5m'?'5 dk':c.leader==='15m'?'15 dk':'yok'} · z=${Number(c.zScore||0).toFixed(2)}`;
+ document.getElementById('cmp5cal').textContent=`${Number(a.brierScore||0).toFixed(3)} / ${pct(a.calibrationGap||0)}`;document.getElementById('cmp15cal').textContent=`${Number(b.brierScore||0).toFixed(3)} / ${pct(b.calibrationGap||0)}`;document.getElementById('cmpInference').textContent=`${comparisonStatusTr(c.status)} · önde: ${c.leader==='5m'?'5 dk':c.leader==='15m'?'15 dk':'yok'} · istatistik z-skoru=${Number(c.zScore||0).toFixed(2)}`;
 }
 function switchTf(tf){activeTf=tf==='15m'?'15m':'5m';hasLiveSnapshot=false;document.querySelectorAll('.tfbtn').forEach(b=>b.classList.toggle('active',b.dataset.tf===activeTf));markLiveWaiting();tickLive();tickSlow()}
 async function tickLive(){if(liveBusy)return;liveBusy=true;try{await Promise.all([updateLive(),updateGates()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}finally{liveBusy=false}}
