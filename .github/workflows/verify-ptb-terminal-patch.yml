@@ -1,0 +1,38 @@
+name: Verify PTB Terminal Patch
+
+on:
+  push:
+    branches:
+      - feature/ptb-terminal-micro-probability
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply patch
+        run: python3 .ops/apply_ptb_terminal_patch.py
+      - name: Format and verify
+        run: |
+          gofmt -w internal/binance/microstructure.go internal/binance/microstructure_test.go internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go internal/storage/microstructure.go internal/storage/microstructure_test.go
+          go test ./internal/binance ./internal/engine ./internal/storage
+          go vet ./...
+      - name: Pack verified files
+        run: |
+          mkdir -p verified/internal/binance verified/internal/engine verified/internal/storage verified/web/static
+          cp internal/binance/microstructure.go internal/binance/microstructure_test.go verified/internal/binance/
+          cp internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go verified/internal/engine/
+          cp internal/storage/microstructure.go internal/storage/microstructure_test.go verified/internal/storage/
+          cp web/static/index.html verified/web/static/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptb-terminal-verified-files
+          path: verified/
+          retention-days: 1
