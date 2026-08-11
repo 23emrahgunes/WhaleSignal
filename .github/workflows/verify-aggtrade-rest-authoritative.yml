@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify:
-    if: ${{ !startsWith(github.event.head_commit.message, 'fix: make Binance aggTrades REST authoritative') }}
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
