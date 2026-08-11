@@ -72,6 +72,22 @@ func NewDatabase(dbPath string) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
+	// modernc/sqlite opens multiple connections by default. The 5m runtime,
+	// 15m runtime, settlement loop and research writer can then contend for
+	// SQLite's single writer lock. Serialize access inside this small service
+	// and keep a busy timeout as a second line of defense.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	for _, pragma := range []string{
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite setup %q: %w", pragma, err)
+		}
+	}
 	inst := &Database{db: db}
 	if err := inst.migrate(); err != nil {
 		_ = db.Close()

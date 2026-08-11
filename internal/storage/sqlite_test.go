@@ -101,3 +101,22 @@ func TestMigrationPurgesExactLegacySyntheticFallback(t *testing.T) {
 		t.Fatalf("legacy synthetic row survived migration: %#v", history)
 	}
 }
+
+func TestDatabaseSerializesSQLiteConnectionsAndSetsBusyTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sqlite-locking.sqlite")
+	db, err := NewDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := db.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections=%d want 1", got)
+	}
+	var busy int
+	if err := db.db.QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil {
+		t.Fatal(err)
+	}
+	if busy < 5000 {
+		t.Fatalf("busy_timeout=%d want >=5000", busy)
+	}
+}
