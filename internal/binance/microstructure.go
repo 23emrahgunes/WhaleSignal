@@ -21,8 +21,15 @@ const (
 )
 
 var deepWSURLs = []string{
+	"wss://data-stream.binance.vision/stream?streams=btcusdt@depth@100ms/btcusdt@aggTrade",
 	"wss://stream.binance.com:9443/stream?streams=btcusdt@depth@100ms/btcusdt@aggTrade",
 	"wss://stream.binance.com:443/stream?streams=btcusdt@depth@100ms/btcusdt@aggTrade",
+}
+
+var deepRESTBases = []string{
+	"https://api.binance.com",
+	"https://api-gcp.binance.com",
+	"https://data-api.binance.vision",
 }
 
 type DeepBand struct {
@@ -65,6 +72,7 @@ type DeepMicroSnapshot struct {
 	LastUpdateID       int64         `json:"lastUpdateId"`
 	LastTradeAgeMs     int64         `json:"lastTradeAgeMs"`
 	TradeFlowAvailable bool          `json:"tradeFlowAvailable"`
+	PTBPrice           float64       `json:"ptbPrice"`
 }
 
 type aggressiveTrade struct {
@@ -89,11 +97,12 @@ type MicrostructureClient struct {
 	askLife    map[float64]levelLife
 	trades     []aggressiveTrade
 
-	synchronized  bool
-	lastUpdateID  int64
-	lastBookTime  time.Time
-	lastTradeTime time.Time
-	source        string
+	synchronized   bool
+	lastUpdateID   int64
+	lastBookTime   time.Time
+	lastTradeTime  time.Time
+	lastAggTradeID int64
+	source         string
 
 	stopChan chan struct{}
 	stopOnce sync.Once
@@ -116,8 +125,9 @@ func NewMicrostructureClient() *MicrostructureClient {
 }
 
 func (c *MicrostructureClient) Start() {
-	c.wg.Add(1)
+	c.wg.Add(2)
 	go c.run()
+	go c.runRESTFallback()
 }
 
 func (c *MicrostructureClient) Stop() {
@@ -263,10 +273,20 @@ type deepDiffEvent struct {
 }
 
 type aggTradeEvent struct {
-	EventTime    int64  `json:"E"`
-	Price        string `json:"p"`
-	Quantity     string `json:"q"`
-	BuyerIsMaker bool   `json:"m"`
+	EventTime        int64  `json:"E"`
+	AggregateTradeID int64  `json:"a"`
+	Price            string `json:"p"`
+	Quantity         string `json:"q"`
+	TradeTime        int64  `json:"T"`
+	BuyerIsMaker     bool   `json:"m"`
+}
+
+type aggTradeRESTEvent struct {
+	AggregateTradeID int64  `json:"a"`
+	Price            string `json:"p"`
+	Quantity         string `json:"q"`
+	TradeTime        int64  `json:"T"`
+	BuyerIsMaker     bool   `json:"m"`
 }
 
 func (c *MicrostructureClient) readLoop(conn *websocket.Conn) error {
@@ -297,7 +317,11 @@ func (c *MicrostructureClient) readLoop(conn *websocket.Conn) error {
 			price, errP := strconv.ParseFloat(ev.Price, 64)
 			qty, errQ := strconv.ParseFloat(ev.Quantity, 64)
 			if errP == nil && errQ == nil && price > 0 && qty > 0 {
-				c.recordTrade(price, qty, ev.BuyerIsMaker, time.UnixMilli(ev.EventTime).UTC())
+				ts := ev.TradeTime
+				if ts <= 0 {
+					ts = ev.EventTime
+				}
+				c.recordTradeWithID(price, qty, ev.BuyerIsMaker, time.UnixMilli(ts).UTC(), ev.AggregateTradeID)
 			}
 		}
 	}
@@ -353,6 +377,10 @@ func (c *MicrostructureClient) applySide(book map[float64]float64, life map[floa
 }
 
 func (c *MicrostructureClient) recordTrade(price, qty float64, buyerIsMaker bool, ts time.Time) {
+	c.recordTradeWithID(price, qty, buyerIsMaker, ts, 0)
+}
+
+func (c *MicrostructureClient) recordTradeWithID(price, qty float64, buyerIsMaker bool, ts time.Time, aggregateID int64) {
 	notional := price * qty
 	tr := aggressiveTrade{Time: ts}
 	if buyerIsMaker {
@@ -363,6 +391,12 @@ func (c *MicrostructureClient) recordTrade(price, qty float64, buyerIsMaker bool
 	cutoff := ts.Add(-tradeFlowRetention)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if aggregateID > 0 {
+		if aggregateID <= c.lastAggTradeID {
+			return
+		}
+		c.lastAggTradeID = aggregateID
+	}
 	c.trades = append(c.trades, tr)
 	first := 0
 	for first < len(c.trades) && c.trades[first].Time.Before(cutoff) {
@@ -371,7 +405,145 @@ func (c *MicrostructureClient) recordTrade(price, qty float64, buyerIsMaker bool
 	if first > 0 {
 		c.trades = append([]aggressiveTrade(nil), c.trades[first:]...)
 	}
-	c.lastTradeTime = ts
+	if c.lastTradeTime.IsZero() || ts.After(c.lastTradeTime) {
+		c.lastTradeTime = ts
+	}
+}
+
+func (c *MicrostructureClient) runRESTFallback() {
+	defer c.wg.Done()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	poll := func(now time.Time) {
+		if c.bookNeedsREST(now) {
+			if err := c.loadRESTBookFallback(); err != nil {
+				util.Logger.Warn("Binance deep REST book fallback failed", zap.Error(err))
+			}
+		}
+		if c.tradeNeedsREST(now) {
+			if err := c.loadRESTAggTradesFallback(); err != nil {
+				util.Logger.Warn("Binance aggTrades REST fallback failed", zap.Error(err))
+			}
+		}
+	}
+	poll(time.Now().UTC())
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		case now := <-ticker.C:
+			poll(now.UTC())
+		}
+	}
+}
+
+func (c *MicrostructureClient) bookNeedsREST(now time.Time) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.lastBookTime.IsZero() {
+		return true
+	}
+	return c.source != "BINANCE_DEEP_DIFF" || now.Sub(c.lastBookTime) > 1500*time.Millisecond
+}
+
+func (c *MicrostructureClient) tradeNeedsREST(now time.Time) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.lastTradeTime.IsZero() || now.Sub(c.lastTradeTime) > 1200*time.Millisecond
+}
+
+func (c *MicrostructureClient) loadRESTBookFallback() error {
+	var lastErr error
+	for _, base := range deepRESTBases {
+		resp, err := c.httpClient.Get(base + "/api/v3/depth?symbol=BTCUSDT&limit=1000")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("deep REST snapshot http status %d", resp.StatusCode)
+			_ = resp.Body.Close()
+			continue
+		}
+		var snap deepSnapshotResponse
+		err = json.NewDecoder(resp.Body).Decode(&snap)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		bids := parseLevels(snap.Bids)
+		asks := parseLevels(snap.Asks)
+		if snap.LastUpdateID <= 0 || len(bids) == 0 || len(asks) == 0 {
+			lastErr = fmt.Errorf("invalid deep REST snapshot")
+			continue
+		}
+		now := time.Now().UTC()
+		c.mu.Lock()
+		c.bidLife = reconcileLife(c.bidLife, bids, now)
+		c.askLife = reconcileLife(c.askLife, asks, now)
+		c.bids = bids
+		c.asks = asks
+		c.lastUpdateID = snap.LastUpdateID
+		c.lastBookTime = now
+		c.synchronized = true
+		c.source = "BINANCE_DEEP_REST1000"
+		c.mu.Unlock()
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no Binance deep REST endpoint available")
+	}
+	return lastErr
+}
+
+func reconcileLife(old map[float64]levelLife, book map[float64]float64, now time.Time) map[float64]levelLife {
+	out := make(map[float64]levelLife, len(book))
+	for p, size := range book {
+		if st, ok := old[p]; ok {
+			st.Size = size
+			out[p] = st
+		} else {
+			out[p] = levelLife{FirstSeen: now, InitialSize: size, Size: size}
+		}
+	}
+	return out
+}
+
+func (c *MicrostructureClient) loadRESTAggTradesFallback() error {
+	var lastErr error
+	for _, base := range deepRESTBases {
+		resp, err := c.httpClient.Get(base + "/api/v3/aggTrades?symbol=BTCUSDT&limit=1000")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("aggTrades REST http status %d", resp.StatusCode)
+			_ = resp.Body.Close()
+			continue
+		}
+		var rows []aggTradeRESTEvent
+		err = json.NewDecoder(resp.Body).Decode(&rows)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for _, ev := range rows {
+			price, errP := strconv.ParseFloat(ev.Price, 64)
+			qty, errQ := strconv.ParseFloat(ev.Quantity, 64)
+			if errP != nil || errQ != nil || price <= 0 || qty <= 0 || ev.TradeTime <= 0 {
+				continue
+			}
+			c.recordTradeWithID(price, qty, ev.BuyerIsMaker, time.UnixMilli(ev.TradeTime).UTC(), ev.AggregateTradeID)
+		}
+		return nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no Binance aggTrades REST endpoint available")
+	}
+	return lastErr
 }
 
 func (c *MicrostructureClient) markDesynced(source string) {
@@ -391,7 +563,7 @@ func (c *MicrostructureClient) Snapshot(currentPrice, priceToBeat float64, now t
 	now = now.UTC()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	out := DeepMicroSnapshot{Synchronized: c.synchronized, Source: c.source, LastUpdateID: c.lastUpdateID}
+	out := DeepMicroSnapshot{Synchronized: c.synchronized, Source: c.source, LastUpdateID: c.lastUpdateID, PTBPrice: priceToBeat}
 	if c.lastBookTime.IsZero() {
 		out.AgeMs = -1
 		return out

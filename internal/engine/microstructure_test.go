@@ -46,3 +46,11 @@ func TestMicrostructureNotReadyWithoutTradeFlow(t *testing.T) {
 		t.Fatal("expected shadow microstructure to wait for executed trade flow")
 	}
 }
+
+func TestBinanceEquivalentPTBRemovesChainlinkBasis(t *testing.T) {
+	got := binanceEquivalentPTB(63475, 63480, 63534)
+	want := 63529.0
+	if got != want {
+		t.Fatalf("got %.2f want %.2f", got, want)
+	}
+}

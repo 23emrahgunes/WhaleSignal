@@ -90,6 +90,13 @@ type Evaluator struct {
 	micro *binance.MicrostructureClient
 }
 
+func binanceEquivalentPTB(chainlinkPTB, chainlinkCurrent, binanceSpot float64) float64 {
+	if chainlinkPTB <= 0 || chainlinkCurrent <= 0 || binanceSpot <= 0 {
+		return chainlinkPTB
+	}
+	return chainlinkPTB - (chainlinkCurrent - binanceSpot)
+}
+
 func NewEvaluator(micro ...*binance.MicrostructureClient) *Evaluator {
 	e := &Evaluator{}
 	if len(micro) > 0 {
@@ -195,7 +202,8 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	shadowDecision := "WAITING"
 	shadowConfidence := 0.0
 	if e.micro != nil {
-		deep = e.micro.Snapshot(binanceSpot, priceToBeat, nowTime)
+		binancePTB := binanceEquivalentPTB(priceToBeat, currentPrice, binanceSpot)
+		deep = e.micro.Snapshot(binanceSpot, binancePTB, nowTime)
 		microScores = ScoreMicrostructure(deep)
 		if microScores.Ready {
 			shadowScore = ShadowModelB(probabilityScore, technicalScore, microScores)

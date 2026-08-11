@@ -64,3 +64,28 @@ func TestPTBBarrierPenalizesHeavyAskPath(t *testing.T) {
 		t.Fatalf("expected negative UP barrier score, got %.4f", score)
 	}
 }
+
+func TestRecordTradeWithIDDeduplicatesRESTAndWS(t *testing.T) {
+	c := NewMicrostructureClient()
+	now := time.Now().UTC()
+	c.recordTradeWithID(100, 1, false, now, 10)
+	c.recordTradeWithID(100, 1, false, now, 10)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.trades) != 1 {
+		t.Fatalf("duplicate aggregate trade stored: %d", len(c.trades))
+	}
+}
+
+func TestReconcileLifePreservesFirstSeen(t *testing.T) {
+	now := time.Now().UTC()
+	first := now.Add(-5 * time.Second)
+	old := map[float64]levelLife{100: {FirstSeen: first, InitialSize: 10, Size: 10}}
+	got := reconcileLife(old, map[float64]float64{100: 4, 99: 2}, now)
+	if !got[100].FirstSeen.Equal(first) || got[100].InitialSize != 10 || got[100].Size != 4 {
+		t.Fatalf("existing level lifecycle lost: %#v", got[100])
+	}
+	if !got[99].FirstSeen.Equal(now) || got[99].InitialSize != 2 {
+		t.Fatalf("new level lifecycle wrong: %#v", got[99])
+	}
+}

@@ -19,6 +19,7 @@ const (
 )
 
 var binanceWSURLs = []string{
+	"wss://data-stream.binance.vision/stream?streams=btcusdt@trade/btcusdt@depth20@100ms",
 	"wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms",
 	"wss://stream.binance.com:443/stream?streams=btcusdt@trade/btcusdt@depth20@100ms",
 }
