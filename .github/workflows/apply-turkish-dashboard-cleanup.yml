@@ -1,0 +1,23 @@
+name: Apply Turkish Dashboard Cleanup
+on:
+  push:
+    branches:
+      - feature/turkish-dashboard-20260811-v2
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Finalize Turkish dashboard') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/turkish-dashboard-20260811-v2
+      - run: python3 .github/scripts/turkish_dashboard_cleanup.py
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add web/static/index.html
+          git commit -m 'Finalize Turkish dashboard'
+          git push origin HEAD:feature/turkish-dashboard-20260811-v2
