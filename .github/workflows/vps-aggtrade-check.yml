@@ -1,0 +1,45 @@
+name: VPS AggTrade Check
+
+on:
+  push:
+    branches:
+      - ops/vps-snapshot-20260811
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Compare Binance raw aggTrades with VPS flow
+        shell: python
+        run: |
+          import json, urllib.request, time
+
+          def get(url):
+              with urllib.request.urlopen(url, timeout=20) as r:
+                  return json.load(r)
+
+          rows = get('https://data-api.binance.vision/api/v3/aggTrades?symbol=BTCUSDT&limit=1000')
+          buy = sell = 0.0
+          buy_n = sell_n = 0
+          now_ms = int(time.time()*1000)
+          for x in rows:
+              t = int(x['T'])
+              if now_ms - t > 60000:
+                  continue
+              notional = float(x['p']) * float(x['q'])
+              if bool(x['m']):
+                  sell += notional; sell_n += 1
+              else:
+                  buy += notional; buy_n += 1
+          print('RAW_BINANCE_60S', json.dumps({'buyUsd':buy,'sellUsd':sell,'buyN':buy_n,'sellN':sell_n,'imbalance': (buy-sell)/(buy+sell) if buy+sell else 0}, sort_keys=True))
+
+          for tf in ('5m','15m'):
+              try:
+                  vps = get(f'http://34.107.85.209/api/microstructure/history?tf={tf}&limit=3')
+              except Exception as e:
+                  print('VPS_ERROR', tf, e); continue
+              print('VPS', tf, json.dumps(vps[:3] if isinstance(vps,list) else vps, sort_keys=True))
