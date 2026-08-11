@@ -1,0 +1,55 @@
+name: Verify Maker Arb Paper Executor
+
+on:
+  push:
+    branches:
+      - feature/maker-arb-paper-executor
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply paper executor
+        run: python3 .ops/apply_arb_paper.py
+      - name: Format
+        run: gofmt -w internal/arb internal/storage/arb.go internal/storage/arb_test.go internal/api/arb.go internal/api/server.go internal/config/config.go cmd/pm-edge/arb_shadow.go
+      - name: Diff sanity
+        run: git diff --check
+      - name: Focused tests
+        run: go test -count=1 ./internal/arb ./internal/storage ./internal/api ./internal/polymarket
+      - name: Vet
+        run: go vet ./...
+      - name: Full unit tests
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race -p=1 ./...
+      - name: Linux build
+        run: go build ./...
+      - name: Dashboard and config smoke
+        run: |
+          grep -q 'Arbitraj Paper Bakiyesi' web/static/index.html
+          grep -q '/api/arb/paper/stats?tf=' web/static/index.html
+          grep -q 'ARB_PAPER_ENABLED=true' .env.example
+          grep -q 'CONSERVATIVE_CROSS_THROUGH_FULL_SIZE' internal/arb/paper.go
+      - name: Commit verified product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .env.example docs/maker-arb-shadow.md internal/arb internal/storage/arb.go internal/storage/arb_test.go internal/api/arb.go internal/api/server.go internal/config/config.go web/static/index.html
+          git add -f cmd/pm-edge/arb_shadow.go
+          git diff --cached --check
+          git commit -m "feat: add maker arbitrage paper executor"
+          git push origin HEAD:${GITHUB_REF_NAME}
