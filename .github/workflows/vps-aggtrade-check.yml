@@ -13,77 +13,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify VPS against raw Binance
+      - name: Compare Binance REST sources
         shell: python
         run: |
-          import json, urllib.request, urllib.parse
+          import json, urllib.request
           from datetime import datetime, timezone
 
-          VPS = 'http://34.107.85.209'
-          BINANCE = 'https://data-api.binance.vision'
+          VPS='http://34.107.85.209'
+          BASES=['https://api.binance.com','https://api-gcp.binance.com','https://data-api.binance.vision']
 
-          def get_json(url):
+          def get(url):
               with urllib.request.urlopen(url, timeout=20) as r:
                   return json.load(r)
 
-          def get_text(url):
-              with urllib.request.urlopen(url, timeout=20) as r:
-                  return r.read().decode().strip()
-
           def parse_ts(s):
-              if s.endswith('Z'):
-                  s = s[:-1] + '+00:00'
+              if s.endswith('Z'): s=s[:-1]+'+00:00'
               return datetime.fromisoformat(s).astimezone(timezone.utc)
 
-          def raw_window(end_ms, seconds=60):
-              start_ms = end_ms - seconds * 1000
-              url = f'{BINANCE}/api/v3/aggTrades?symbol=BTCUSDT&startTime={start_ms}&endTime={end_ms}&limit=1000'
-              all_rows = []
-              seen = set()
-              for _ in range(8):
-                  rows = get_json(url)
-                  if not rows:
-                      break
-                  last_id = 0
-                  for x in rows:
-                      aid = int(x['a'])
-                      last_id = max(last_id, aid)
-                      t = int(x['T'])
-                      if start_ms <= t <= end_ms and aid not in seen:
-                          seen.add(aid)
-                          all_rows.append(x)
-                  if len(rows) < 1000 or int(rows[-1]['T']) >= end_ms or last_id <= 0:
-                      break
-                  url = f'{BINANCE}/api/v3/aggTrades?symbol=BTCUSDT&fromId={last_id+1}&limit=1000'
-              buy = sell = 0.0
-              bn = sn = 0
-              for x in all_rows:
-                  notional = float(x['p']) * float(x['q'])
-                  if bool(x['m']):
-                      sell += notional; sn += 1
-                  else:
-                      buy += notional; bn += 1
-              total = buy + sell
-              return {
-                  'buyUsd': buy, 'sellUsd': sell, 'buyN': bn, 'sellN': sn,
-                  'imbalance': ((buy-sell)/total if total else 0.0),
-                  'rows': len(all_rows), 'startMs': start_ms, 'endMs': end_ms,
-              }
+          hist=get(VPS+'/api/microstructure/history?tf=5m&limit=1')
+          row=hist[0] if isinstance(hist,list) else hist
+          end_ms=int(parse_ts(row['timestamp']).timestamp()*1000)
+          start_ms=end_ms-60000
+          print('VPS_ROW', json.dumps({k:row.get(k) for k in ['timestamp','trade60BuyUsd','trade60SellUsd','trade60Imbalance']},sort_keys=True))
 
-          print('HEALTH', get_text(VPS + '/health'))
-          for tf in ('5m','15m'):
-              live = get_json(f'{VPS}/api/microstructure?tf={tf}')
-              hist = get_json(f'{VPS}/api/microstructure/history?tf={tf}&limit=1')
-              gates = get_json(f'{VPS}/api/gates?tf={tf}')
-              stats = get_json(f'{VPS}/api/paper/stats?tf={tf}')
-              row = hist[0] if isinstance(hist, list) and hist else hist
-              ts = row.get('timestamp') if isinstance(row, dict) else None
-              raw = None
-              if ts:
-                  end_ms = int(parse_ts(ts).timestamp() * 1000)
-                  raw = raw_window(end_ms, 60)
-              print('LIVE', tf, json.dumps(live, sort_keys=True))
-              print('HISTORY', tf, json.dumps(row, sort_keys=True))
-              print('RAW_EXACT_60S', tf, json.dumps(raw, sort_keys=True))
-              print('GATES', tf, json.dumps(gates, sort_keys=True))
-              print('PAPER', tf, json.dumps(stats, sort_keys=True))
+          for base in BASES:
+              try:
+                  rows=get(f'{base}/api/v3/aggTrades?symbol=BTCUSDT&startTime={start_ms}&endTime={end_ms}&limit=1000')
+                  buy=sell=0.0; bn=sn=0; mtrue=mfalse=0
+                  for x in rows:
+                      n=float(x['p'])*float(x['q'])
+                      if x.get('m') is True:
+                          sell+=n; sn+=1; mtrue+=1
+                      elif x.get('m') is False:
+                          buy+=n; bn+=1; mfalse+=1
+                  print('SOURCE', base, json.dumps({'rows':len(rows),'mTrue':mtrue,'mFalse':mfalse,'buyUsd':buy,'sellUsd':sell,'buyN':bn,'sellN':sn},sort_keys=True))
+                  print('SAMPLE', base, json.dumps(rows[:5],sort_keys=True))
+              except Exception as e:
+                  print('SOURCE_ERROR', base, repr(e))
