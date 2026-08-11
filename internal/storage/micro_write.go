@@ -9,8 +9,5 @@ func (d *Database) InsertSignalWithMicro(r *engine.EvaluationResult) error {
 	if err := d.InsertSignal(r); err != nil {
 		return err
 	}
-	if err := d.EnsureMicrostructureSchema(); err != nil {
-		return err
-	}
 	return d.InsertMicrostructureSnapshot(r)
 }

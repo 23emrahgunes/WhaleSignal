@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"database/sql"
 	"fmt"
 
 	"pm-edge/internal/engine"
@@ -217,5 +216,3 @@ func boolInt(v bool) int {
 	}
 	return 0
 }
-
-var _ *sql.DB

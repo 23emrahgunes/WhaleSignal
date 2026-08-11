@@ -22,8 +22,8 @@ func TestMicrostructureSnapshotRoundTrip(t *testing.T) {
 		Slug:      "btc-updown-5m-1786450800",
 		DeepMicrostructure: binance.DeepMicroSnapshot{
 			Ready: true, Synchronized: true, Source: "BINANCE_DEEP_DIFF", AgeMs: 25, BidLevels: 4900, AskLevels: 4800,
-			Bands: []binance.DeepBand{{DistanceUSD: 10, BidUSD: 1000, AskUSD: 800, Imbalance: 0.111}, {DistanceUSD: 50, BidUSD: 5000, AskUSD: 7000, Imbalance: -0.167}},
-			Trades: []binance.TradeWindow{{Seconds: 5, BuyUSD: 2000, SellUSD: 1000, Imbalance: 0.333}, {Seconds: 60, BuyUSD: 9000, SellUSD: 11000, Imbalance: -0.1}},
+			Bands:             []binance.DeepBand{{DistanceUSD: 10, BidUSD: 1000, AskUSD: 800, Imbalance: 0.111}, {DistanceUSD: 50, BidUSD: 5000, AskUSD: 7000, Imbalance: -0.167}},
+			Trades:            []binance.TradeWindow{{Seconds: 5, BuyUSD: 2000, SellUSD: 1000, Imbalance: 0.333}, {Seconds: 60, BuyUSD: 9000, SellUSD: 11000, Imbalance: -0.1}},
 			TradeAcceleration: 0.2, BidWallScore: 0.3, AskWallScore: 0.4, BidDepletionScore: 0.1, AskDepletionScore: 0.5,
 			PTBPathBidUSD: 3000, PTBPathAskUSD: 6000, PTBBeyondUSD: 2000,
 		},

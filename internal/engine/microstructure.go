@@ -30,7 +30,7 @@ func ScoreMicrostructure(s binance.DeepMicroSnapshot) MicrostructureScores {
 		}
 		return 0
 	}
-	out.TradeFlowScore = clampScore(0.35*trade(5) + 0.30*trade(15) + 0.20*trade(30) + 0.15*trade(60) + 0.10*s.TradeAcceleration)
+	out.TradeFlowScore = clampScore(0.30*trade(5) + 0.25*trade(15) + 0.20*trade(30) + 0.15*trade(60) + 0.10*s.TradeAcceleration)
 	wallStanding := clampScore(s.BidWallScore - s.AskWallScore)
 	wallDepletion := clampScore(s.AskDepletionScore - s.BidDepletionScore)
 	out.WallDynamicsScore = clampScore(0.55*wallStanding + 0.45*wallDepletion)

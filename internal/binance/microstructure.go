@@ -496,7 +496,7 @@ func tradeWindow(rows []aggressiveTrade, cutoff time.Time) (float64, float64) {
 	sell := 0.0
 	for i := len(rows) - 1; i >= 0; i-- {
 		if rows[i].Time.Before(cutoff) {
-			break
+			continue
 		}
 		buy += rows[i].BuyUSD
 		sell += rows[i].SellUSD

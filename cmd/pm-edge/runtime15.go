@@ -146,7 +146,7 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 					server.UpdateGatesFor("15m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 					continue
 				}
-				if err := db.InsertSignal(res); err != nil {
+				if err := db.InsertSignalWithMicro(res); err != nil {
 					util.Logger.Error("Failed to store BTC 15m signal", zap.Error(err))
 					continue
 				}
