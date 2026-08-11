@@ -39,7 +39,7 @@ func BTCEventSlug(tf string, start time.Time) string {
 }
 
 func BTC15mWindowStart(t time.Time) time.Time { return BTCWindowStart("15m", t) }
-func BTC15mEventSlug(start time.Time) string   { return BTCEventSlug("15m", start) }
+func BTC15mEventSlug(start time.Time) string  { return BTCEventSlug("15m", start) }
 
 func TimeframeFromSlug(slug string) string {
 	slug = strings.ToLower(strings.TrimSpace(slug))

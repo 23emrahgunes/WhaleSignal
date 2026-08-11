@@ -15,8 +15,9 @@ type Server struct {
 	db                  *storage.Database
 	paperInitialBalance float64
 	mu                  sync.RWMutex
-	currentResult       *engine.EvaluationResult
-	currentMarket       *polymarket.Market
+	currentResults      map[string]*engine.EvaluationResult
+	currentMarkets      map[string]*polymarket.Market
+	gates               map[string]gateState
 }
 
 func NewServer(db *storage.Database, paperInitialBalance ...float64) *Server {
@@ -24,14 +25,11 @@ func NewServer(db *storage.Database, paperInitialBalance ...float64) *Server {
 	if len(paperInitialBalance) > 0 && paperInitialBalance[0] > 0 {
 		initial = paperInitialBalance[0]
 	}
-	return &Server{db: db, paperInitialBalance: initial}
+	return &Server{db: db, paperInitialBalance: initial, currentResults: make(map[string]*engine.EvaluationResult), currentMarkets: make(map[string]*polymarket.Market), gates: make(map[string]gateState)}
 }
 
 func (s *Server) UpdateState(res *engine.EvaluationResult, market *polymarket.Market) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.currentResult = res
-	s.currentMarket = market
+	s.UpdateStateFor("5m", res, market)
 }
 
 func (s *Server) Start(port string) error {
@@ -45,6 +43,8 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/paper/trades", s.cors(s.handlePaperTrades))
 	mux.HandleFunc("/api/paper/hedges", s.cors(s.handlePaperHedges))
 	mux.HandleFunc("/api/paper/hedge/stats", s.cors(s.handlePaperHedgeStats))
+	mux.HandleFunc("/api/gates", s.cors(s.handleGates))
+	mux.HandleFunc("/api/comparison", s.cors(s.handleComparison))
 	fileServer := http.FileServer(http.Dir("web/static"))
 	mux.Handle("/", s.corsHandler(fileServer))
 	return http.ListenAndServe(":"+port, mux)
@@ -82,8 +82,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	tf := normalizeTF(r)
 	s.mu.RLock()
-	res := s.currentResult
+	res := s.currentResults[tf]
 	s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	if res == nil {
@@ -95,13 +96,14 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r, 100, 10000)
-	history, err := s.db.GetHistory(limit)
+	history, err := s.db.GetHistoryByTimeframe(limit, normalizeTF(r))
 	writeJSON(w, history, err)
 }
 
 func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
+	tf := normalizeTF(r)
 	s.mu.RLock()
-	m := s.currentMarket
+	m := s.currentMarkets[tf]
 	s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	if m == nil {
@@ -112,8 +114,9 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOrderflow(w http.ResponseWriter, r *http.Request) {
+	tf := normalizeTF(r)
 	s.mu.RLock()
-	res := s.currentResult
+	res := s.currentResults[tf]
 	s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	if res == nil {
@@ -150,24 +153,24 @@ func (s *Server) handleOrderflow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePaperStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.db.GetPaperStats(s.paperInitialBalance)
+	stats, err := s.db.GetTimeframeStats(s.paperInitialBalance, normalizeTF(r))
 	writeJSON(w, stats, err)
 }
 
 func (s *Server) handlePaperTrades(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r, 50, 1000)
-	trades, err := s.db.GetPaperTrades(limit)
+	trades, err := s.db.GetPaperTradesByTimeframe(limit, normalizeTF(r))
 	writeJSON(w, trades, err)
 }
 
 func (s *Server) handlePaperHedges(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r, 50, 1000)
-	rows, err := s.db.GetPaperHedges(limit)
+	rows, err := s.db.GetPaperHedgesByTimeframe(limit, normalizeTF(r))
 	writeJSON(w, rows, err)
 }
 
 func (s *Server) handlePaperHedgeStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.db.GetPaperHedgeStats()
+	stats, err := s.db.GetPaperHedgeStatsByTimeframe(normalizeTF(r))
 	writeJSON(w, stats, err)
 }
 

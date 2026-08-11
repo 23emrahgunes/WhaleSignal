@@ -19,7 +19,7 @@ type gateState struct {
 
 type comparisonPayload struct {
 	FiveMinute     storage.TimeframeStats `json:"fiveMinute"`
-	FifteenMinute storage.TimeframeStats `json:"fifteenMinute"`
+	FifteenMinute  storage.TimeframeStats `json:"fifteenMinute"`
 	MinSettled     int                    `json:"minSettledForInference"`
 	Status         string                 `json:"status"`
 	Leader         string                 `json:"leader"`

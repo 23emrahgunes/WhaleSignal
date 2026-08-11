@@ -11,31 +11,31 @@ import (
 )
 
 type EntryGateSnapshot struct {
-	Timeframe         string  `json:"timeframe"`
-	MarketSlug        string  `json:"marketSlug"`
-	Allowed           bool    `json:"allowed"`
-	Reason            string  `json:"reason"`
-	Decision          string  `json:"decision"`
-	DirectionPass     bool    `json:"directionPass"`
-	Confidence        float64 `json:"confidence"`
-	MinConfidence     float64 `json:"minConfidence"`
-	ConfidencePass    bool    `json:"confidencePass"`
-	SecondsRemaining  float64 `json:"secondsRemaining"`
-	MinSeconds        float64 `json:"minSeconds"`
-	MaxSeconds        float64 `json:"maxSeconds"`
-	TimePass          bool    `json:"timePass"`
-	FreshPass         bool    `json:"freshPass"`
-	CashBalance       float64 `json:"cashBalance"`
-	Stake             float64 `json:"stake"`
-	BalancePass       bool    `json:"balancePass"`
-	BestAsk           float64 `json:"bestAsk"`
-	AveragePrice      float64 `json:"averagePrice"`
-	EstimatedShares   float64 `json:"estimatedShares"`
-	MinOrderSize      float64 `json:"minOrderSize"`
-	TotalCost         float64 `json:"totalCost"`
-	QuotePass         bool    `json:"quotePass"`
-	MinSharesPass     bool    `json:"minSharesPass"`
-	PositionExists    bool    `json:"positionExists"`
+	Timeframe        string  `json:"timeframe"`
+	MarketSlug       string  `json:"marketSlug"`
+	Allowed          bool    `json:"allowed"`
+	Reason           string  `json:"reason"`
+	Decision         string  `json:"decision"`
+	DirectionPass    bool    `json:"directionPass"`
+	Confidence       float64 `json:"confidence"`
+	MinConfidence    float64 `json:"minConfidence"`
+	ConfidencePass   bool    `json:"confidencePass"`
+	SecondsRemaining float64 `json:"secondsRemaining"`
+	MinSeconds       float64 `json:"minSeconds"`
+	MaxSeconds       float64 `json:"maxSeconds"`
+	TimePass         bool    `json:"timePass"`
+	FreshPass        bool    `json:"freshPass"`
+	CashBalance      float64 `json:"cashBalance"`
+	Stake            float64 `json:"stake"`
+	BalancePass      bool    `json:"balancePass"`
+	BestAsk          float64 `json:"bestAsk"`
+	AveragePrice     float64 `json:"averagePrice"`
+	EstimatedShares  float64 `json:"estimatedShares"`
+	MinOrderSize     float64 `json:"minOrderSize"`
+	TotalCost        float64 `json:"totalCost"`
+	QuotePass        bool    `json:"quotePass"`
+	MinSharesPass    bool    `json:"minSharesPass"`
+	PositionExists   bool    `json:"positionExists"`
 }
 
 type HedgeGateSnapshot struct {

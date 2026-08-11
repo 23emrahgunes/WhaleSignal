@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	Timeframe       string
 	Enabled         bool
 	InitialBalance  float64
 	Stake           float64
@@ -84,6 +85,7 @@ func NewEngine(db *storage.Database, cfg Config) *Engine {
 	if cfg.HedgeMaxSecondsToEnd <= 0 {
 		cfg.HedgeMaxSecondsToEnd = 120
 	}
+	cfg.Timeframe = storage.NormalizeTimeframe(cfg.Timeframe)
 	return &Engine{db: db, cfg: cfg, regimes: make(map[string][]regimeSample)}
 }
 
@@ -102,6 +104,9 @@ func (e *Engine) MaybeOpenWithQuote(res *engine.EvaluationResult, market *polyma
 
 func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Market, now time.Time, quote BudgetQuoteFunc) (*storage.PaperTrade, bool, error) {
 	if !e.Enabled() || res == nil || market == nil {
+		return nil, false, nil
+	}
+	if storage.TimeframeFromMarketSlug(market.EventSlug) != storage.NormalizeTimeframe(e.cfg.Timeframe) {
 		return nil, false, nil
 	}
 	e.mu.Lock()
@@ -123,7 +128,7 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 		return nil, false, nil
 	}
 
-	stats, err := e.db.GetPaperStats(e.cfg.InitialBalance)
+	stats, err := e.db.GetPaperStatsByTimeframe(e.cfg.InitialBalance, e.cfg.Timeframe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -193,6 +198,9 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 // edge after CLOB VWAP + taker fee + latency buffer.
 func (e *Engine) MaybeHedge(res *engine.EvaluationResult, market *polymarket.Market, now time.Time, quote ShareQuoteFunc) (*storage.PaperHedge, bool, error) {
 	if !e.Enabled() || !e.cfg.HedgeEnabled || res == nil || market == nil || quote == nil {
+		return nil, false, nil
+	}
+	if storage.TimeframeFromMarketSlug(market.EventSlug) != storage.NormalizeTimeframe(e.cfg.Timeframe) {
 		return nil, false, nil
 	}
 	e.mu.Lock()
@@ -344,7 +352,7 @@ func (e *Engine) SettleReady(now time.Time, boundaryPrice func(time.Time) (float
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	openTrades, err := e.db.GetOpenPaperTrades()
+	openTrades, err := e.db.GetOpenPaperTradesByTimeframe(e.cfg.Timeframe)
 	if err != nil {
 		return 0, err
 	}
