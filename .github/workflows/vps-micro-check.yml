@@ -1,0 +1,36 @@
+name: VPS Microstructure Check
+
+on:
+  push:
+    branches:
+      - ops/vps-snapshot-20260811
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch live public APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='http://34.107.85.209'
+          mkdir -p out
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/health" -o out/health.txt
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/api/microstructure?tf=5m" -o out/micro5.json
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/api/microstructure?tf=15m" -o out/micro15.json
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/api/microstructure/history?tf=5m&limit=5" -o out/microhist5.json
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/api/microstructure/history?tf=15m&limit=5" -o out/microhist15.json
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/api/live?tf=5m" -o out/live5.json
+          echo '=== HEALTH ==='; cat out/health.txt; echo
+          echo '=== MICRO 5M ==='; cat out/micro5.json; echo
+          echo '=== MICRO 15M ==='; cat out/micro15.json; echo
+          echo '=== LIVE 5M ==='; cat out/live5.json; echo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vps-micro-check
+          path: out/
+          retention-days: 1
