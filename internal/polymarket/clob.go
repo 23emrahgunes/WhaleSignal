@@ -45,12 +45,14 @@ func (c *Client) FetchBuyQuoteForShares(tokenID string, targetShares, feeRate, l
 	return c.fetchBuyQuote(defaultCLOBBaseURL, tokenID, targetShares, 0, feeRate, latencyBuffer)
 }
 
-// FetchBuyQuoteForBudget models a Polymarket market BUY: BUY amount is supplied
+// FetchBuyQuoteForBudget models a Polymarket market BUY. BUY amount is supplied
 // in dollars/USDC and the resulting share count is an execution result. The
-// orderbook min_order_size field is retained as metadata but is deliberately
-// not treated as a minimum-share gate for a dollar-denominated market BUY.
+// orderbook min_order_size metadata applies to share-sized book orders and is
+// intentionally not exposed as an execution gate for a dollar market BUY.
 func (c *Client) FetchBuyQuoteForBudget(tokenID string, budget, feeRate, latencyBuffer float64) (BuyQuote, error) {
-	return c.fetchBuyQuote(defaultCLOBBaseURL, tokenID, 0, budget, feeRate, latencyBuffer)
+	q, err := c.fetchBuyQuote(defaultCLOBBaseURL, tokenID, 0, budget, feeRate, latencyBuffer)
+	q.MinOrderSize = 0 // not applicable to USDC-denominated market BUY gating
+	return q, err
 }
 
 func (c *Client) fetchBuyQuote(baseURL, tokenID string, targetShares, budget, feeRate, latencyBuffer float64) (BuyQuote, error) {
