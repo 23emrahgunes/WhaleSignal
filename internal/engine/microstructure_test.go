@@ -8,7 +8,7 @@ import (
 
 func TestMicrostructureScoreUsesDeepAndExecutedFlow(t *testing.T) {
 	s := binance.DeepMicroSnapshot{
-		Ready: true,
+		Ready:              true,
 		TradeFlowAvailable: true,
 		Bands: []binance.DeepBand{
 			{DistanceUSD: 10, Imbalance: 0.2},
@@ -23,11 +23,11 @@ func TestMicrostructureScoreUsesDeepAndExecutedFlow(t *testing.T) {
 			{Seconds: 60, Imbalance: 0.2},
 		},
 		TradeAcceleration: 0.4,
-		BidWallScore: 0.5,
-		AskWallScore: 0.1,
+		BidWallScore:      0.5,
+		AskWallScore:      0.1,
 		AskDepletionScore: 0.4,
 		BidDepletionScore: 0.1,
-		PTBBarrierScore: 0.3,
+		PTBBarrierScore:   0.3,
 	}
 	m := ScoreMicrostructure(s)
 	if !m.Ready || m.DeepBookScore <= 0 || m.TradeFlowScore <= 0 || m.MicrostructureScore <= 0 {

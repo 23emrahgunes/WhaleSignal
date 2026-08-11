@@ -74,7 +74,7 @@ type EvaluationResult struct {
 	DepthFresh               bool           `json:"depthFresh"`
 	DepthAgeMs               int64          `json:"depthAgeMs"`
 
-	DeepMicrostructure binance.DeepMicroSnapshot `json:"deepMicrostructure"`
+	DeepMicrostructure  binance.DeepMicroSnapshot `json:"deepMicrostructure"`
 	DeepBookScore       float64                   `json:"deepBookScore"`
 	TradeFlowScore      float64                   `json:"tradeFlowScore"`
 	WallDynamicsScore   float64                   `json:"wallDynamicsScore"`

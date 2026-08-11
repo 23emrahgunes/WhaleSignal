@@ -68,8 +68,8 @@ type DeepMicroSnapshot struct {
 }
 
 type aggressiveTrade struct {
-	Time   time.Time
-	BuyUSD float64
+	Time    time.Time
+	BuyUSD  float64
 	SellUSD float64
 }
 
@@ -89,11 +89,11 @@ type MicrostructureClient struct {
 	askLife    map[float64]levelLife
 	trades     []aggressiveTrade
 
-	synchronized bool
-	lastUpdateID int64
-	lastBookTime time.Time
+	synchronized  bool
+	lastUpdateID  int64
+	lastBookTime  time.Time
 	lastTradeTime time.Time
-	source       string
+	source        string
 
 	stopChan chan struct{}
 	stopOnce sync.Once
