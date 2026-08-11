@@ -69,6 +69,7 @@ type Snapshot struct {
 
 	DownCompletionMax float64 `json:"downCompletionMax"`
 	UpCompletionMax   float64 `json:"upCompletionMax"`
+	BookFetchMs       int64   `json:"bookFetchMs"`
 }
 
 type Engine struct{ cfg Config }

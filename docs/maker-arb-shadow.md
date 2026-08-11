@@ -19,3 +19,9 @@ SQLite table `arb_snapshots` stores every evaluated shadow snapshot. APIs:
 - `/api/arb?tf=5m|15m`
 - `/api/arb/history?tf=...&limit=...`
 - `/api/arb/stats?tf=...`
+
+
+## Paper executor
+`ARB_PAPER_ENABLED=true` adds a separate maker-arbitrage paper portfolio. It never signs or submits an order. A resting maker BUY is counted as filled only when a later public CLOB snapshot moves strictly through its limit and exposes at least the full configured order size in ask liquidity below that limit. A mere touch is not a fill. After one leg fills, only the opposite leg may be repriced, never above the economic completion ceiling and never through the current ask. If the second leg is not completed before the stranded timeout/market-end guard, the cycle is closed using the filled leg's current best bid as a conservative mark-to-market exit estimate.
+
+Endpoints: `/api/arb/paper/stats?tf=5m|15m` and `/api/arb/paper/cycles?tf=5m|15m`.

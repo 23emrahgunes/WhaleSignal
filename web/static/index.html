@@ -135,7 +135,18 @@
       <div class="mini"><span>Karşı Bacak Azami Maker Fiyatı</span><strong id="arbCompletion">—</strong></div>
       <div class="mini"><span>PTB Terminal Olasılığı</span><strong id="arbPTB">—</strong></div>
     </div>
+    <div class="grid4" style="margin-top:14px">
+      <div class="mini"><span>Arbitraj Paper Bakiyesi</span><strong id="arbPaperBalance">$1,000.00</strong></div>
+      <div class="mini"><span>Çift Bacak Tamamlanma Oranı</span><strong id="arbPaperCompletion">—</strong></div>
+      <div class="mini"><span>Kilitli Kâr / Ters Bacak K/Z</span><strong id="arbPaperSplitPnl">—</strong></div>
+      <div class="mini"><span>Net Arb Paper K/Z</span><strong id="arbPaperNetPnl">$0.00</strong></div>
+      <div class="mini"><span>Cycle / Açık / Tamamlandı</span><strong id="arbPaperCounts">0 / 0 / 0</strong></div>
+      <div class="mini"><span>Tercih Edilen İlk Bacak İsabeti</span><strong id="arbPaperFirstMatch">—</strong></div>
+      <div class="mini"><span>Ortalama Karşı Bacak Tamamlama</span><strong id="arbPaperCompletionMs">—</strong></div>
+      <div class="mini"><span>Fill Simülasyonu</span><strong style="font-size:12px">Konservatif: fiyat limitin altından geçmeli + tam pay kadar çapraz likidite</strong></div>
+    </div>
     <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Saat</th><th>Durum</th><th>UP</th><th>DOWN</th><th>Net Avantaj</th><th>Pay</th><th>Güvenli Bacak</th><th>UP Tek Bacak EV</th><th>DOWN Tek Bacak EV</th><th>Neden</th></tr></thead><tbody id="arbBody"><tr><td colspan="10">Arbitraj gölge verisi bekleniyor...</td></tr></tbody></table></div>
+    <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Başlangıç</th><th>Durum</th><th>Tercih</th><th>İlk Dolan</th><th>UP Emir/Dolum</th><th>DOWN Emir/Dolum</th><th>Pay</th><th>Reprice</th><th>Tamamlama</th><th>K/Z</th><th>Neden</th></tr></thead><tbody id="arbPaperBody"><tr><td colspan="11">Arbitraj paper cycle verisi bekleniyor...</td></tr></tbody></table></div>
   </div>
 
   <div class="card">
@@ -219,7 +230,7 @@ function reasonTr(v){const m={
 'REGIME_NOT_READY':'Ters yön örnek penceresi henüz dolmadı','PERSISTENCE_BELOW_THRESHOLD':'Ters yön kalıcılığı yetersiz','CONSECUTIVE_BELOW_THRESHOLD':'Ardışık ters sinyal sayısı yetersiz',
 'PROBABILITY_BELOW_THRESHOLD':'Ters yön olasılığı eşik altında','PTB_Z_NOT_CONFIRMED':'Hedef fiyat uzaklığı ters yönü doğrulamıyor','SCORE_BELOW_THRESHOLD':'Yumuşatılmış ters yön skoru yetersiz',
 'EDGE_BELOW_THRESHOLD':'Ekonomik avantaj eşik altında','EXPECTED_IMPROVEMENT_NOT_POSITIVE':'Koruma işlemi beklenen sonucu iyileştirmiyor','WAITING_FOR_DATA':'Veri bekleniyor',
-'PAIR_EDGE_BELOW_TARGET':'Net maker arbitraj avantajı hedefin altında','BOOK_NOT_READY':'UP/DOWN emir defteri hazır değil','BLOCKED':'ENGELLENDİ','READY':'HAZIR'};return m[v]||'Koşullardan biri henüz sağlanmadı'}
+'PAIR_EDGE_BELOW_TARGET':'Net maker arbitraj avantajı hedefin altında','BOOK_NOT_READY':'UP/DOWN emir defteri hazır değil','BOOK_FETCH_TOO_SLOW':'UP/DOWN emir defteri birlikte yeterince hızlı alınamadı','PAIR_ORDER_TTL_EXPIRED':'Maker çift emri süre içinde dolmadı','TOO_CLOSE_TO_MARKET_END_NO_FILL':'Kapanışa çok yaklaşıldı, emirler dolmadan iptal sayıldı','FIRST_LEG_FILLED':'İlk bacak doldu, karşı bacak bekleniyor','PAIR_COMPLETED_LOCKED':'İki bacak tamamlandı, arbitraj kârı kilitlendi','STRANDED_TIMEOUT_MARK_TO_BID':'Karşı bacak dolmadı; tek bacak mevcut alış fiyatından konservatif kapatıldı','MARKET_CHANGED_NO_FILL':'Piyasa değişti, dolmayan emirler iptal sayıldı','MARKET_CHANGED_MARK_TO_LAST_BID':'Piyasa değişti; tek bacak son alış fiyatından işaretlendi','BLOCKED':'ENGELLENDİ','READY':'HAZIR'};return m[v]||'Koşullardan biri henüz sağlanmadı'}
 function comparisonStatusTr(v){const m={collecting:'Veri toplanıyor',insufficient_samples:'Örnek sayısı yetersiz',no_significant_difference:'Anlamlı fark yok',significant_difference:'İstatistiksel fark var',leader:'Önde olan zaman dilimi'};return m[String(v||'').toLowerCase()]||'Veri toplanıyor'}
 async function updateLive(){
   const data=await getJSON('/api/live?tf='+activeTf);
@@ -298,6 +309,19 @@ async function updateArbHistory(){
   const rows=await getJSON('/api/arb/history?limit=20&tf='+activeTf);const body=document.getElementById('arbBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="10">Arbitraj gölge verisi bekleniyor...</td></tr>';return}
   body.innerHTML=rows.map(a=>`<tr><td>${timeOnly(a.timestamp)}</td><td>${a.status==='CANDIDATE'?chip('ADAY','fresh'):chip('BEKLE','neutral')}</td><td>${Number(a.upMakerPrice||0).toFixed(3)}</td><td>${Number(a.downMakerPrice||0).toFixed(3)}</td><td>${pct(a.netEdge||0,2)}</td><td>${Number(a.orderSize||0).toFixed(2)}</td><td>${a.firstLeg?directionText(a.firstLeg):'—'}</td><td>${Number(a.upStrandedEv||0).toFixed(3)}</td><td>${Number(a.downStrandedEv||0).toFixed(3)}</td><td>${reasonTr(a.reason)}</td></tr>`).join('');
 }
+async function updateArbPaper(){
+  const [s,rows]=await Promise.all([getJSON('/api/arb/paper/stats?tf='+activeTf),getJSON('/api/arb/paper/cycles?limit=30&tf='+activeTf)]);
+  document.getElementById('arbPaperBalance').textContent=usd(s.cashBalance||0);
+  document.getElementById('arbPaperCompletion').textContent=`${pct(s.pairCompletionRate||0,1)} · ${s.completedCycles||0}/${(s.completedCycles||0)+(s.strandedTimeout||0)}`;
+  document.getElementById('arbPaperSplitPnl').textContent=`${usd(s.lockedPnl||0)} / ${usd(s.strandedPnl||0)}`;
+  const net=document.getElementById('arbPaperNetPnl');net.textContent=usd(s.netPaperPnl||0);net.className=signClass(s.netPaperPnl||0);
+  document.getElementById('arbPaperCounts').textContent=`${s.totalCycles||0} / ${s.openCycles||0} / ${s.completedCycles||0}`;
+  document.getElementById('arbPaperFirstMatch').textContent=`${pct(s.preferredFirstMatchRate||0,1)} · ${s.preferredFirstMatches||0}/${s.firstLegFilledCycles||0}`;
+  document.getElementById('arbPaperCompletionMs').textContent=s.averageCompletionMs?`${Number(s.averageCompletionMs).toFixed(0)} ms`:'—';
+  const body=document.getElementById('arbPaperBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="11">Arbitraj paper cycle verisi bekleniyor...</td></tr>';return}
+  const st=x=>x==='COMPLETED'?chip('TAMAMLANDI','fresh'):x==='ONE_LEG_FILLED'?chip('TEK BACAK','warn'):x==='RESTING_PAIR'?chip('EMİRLER BEKLİYOR','open'):x==='STRANDED_TIMEOUT'?chip('TERS BACAK ZARARI','down'):chip('DOLMADI','neutral');
+  body.innerHTML=rows.map(c=>`<tr><td>${timeOnly(c.createdAt)}</td><td>${st(c.status)}</td><td>${c.preferredFirstLeg?directionText(c.preferredFirstLeg):'—'}</td><td>${c.actualFirstLeg?directionText(c.actualFirstLeg):'—'}</td><td>${Number(c.upOrderPrice||0).toFixed(3)} / ${c.upFillPrice?Number(c.upFillPrice).toFixed(3):'—'}</td><td>${Number(c.downOrderPrice||0).toFixed(3)} / ${c.downFillPrice?Number(c.downFillPrice).toFixed(3):'—'}</td><td>${Number(c.orderSize||0).toFixed(2)}</td><td>${c.reprices||0}</td><td>${c.completionMs?c.completionMs+' ms':'—'}</td><td class="${signClass(c.paperPnl||0)}">${usd(c.paperPnl||0)}</td><td>${reasonTr(c.reason)}</td></tr>`).join('');
+}
 async function updatePaper(){
   const [s,trades]=await Promise.all([getJSON('/api/paper/stats?tf='+activeTf),getJSON('/api/paper/trades?limit=50&tf='+activeTf)]);document.getElementById('paperBalance').textContent=usd(s.cashBalance);const pnl=document.getElementById('paperPnl');pnl.textContent=usd(s.realizedPnl);pnl.className=signClass(s.realizedPnl);document.getElementById('paperWinRate').textContent=pctDirect(s.winRate,1);document.getElementById('paperTrades').textContent=`${s.totalTrades} / ${s.openTrades}`;document.getElementById('paperOpenStake').textContent=usd(s.openStake);document.getElementById('paperPredicted').textContent=pct(s.averageEntryProbability||0,1);document.getElementById('paperActual').textContent=pct(s.actualWinProbability||0,1);const gap=document.getElementById('paperCalGap');gap.textContent=pct(s.calibrationGap||0,1);gap.className=Math.abs(Number(s.calibrationGap||0))<=0.05?'positive':'negative';document.getElementById('paperBrier').textContent=`${Number(s.brierScore||0).toFixed(3)} / ${s.calibrationN||0}`;const body=document.getElementById('paperTradeBody');if(!trades||!trades.length){body.innerHTML='<tr><td colspan="9">Henüz eşik koşullarını geçen kağıt işlem yok.</td></tr>';return}body.innerHTML=trades.map(t=>{const status=t.status==='OPEN'?chip('AÇIK','open'):t.won?chip('KAZANDI','win'):chip('KAYBETTİ','loss');return `<tr><td>${timeOnly(t.entryTime)}</td><td>${marketLabel(t.marketSlug)}</td><td>${decisionChip(t.side)}</td><td>${Number(t.entryPrice).toFixed(3)}</td><td>${usd(t.stake)}</td><td>${pctDirect(t.entryConfidence,1)}</td><td>${status}</td><td>${t.outcome?directionText(t.outcome):'—'}</td><td class="${signClass(t.pnl)}">${t.status==='OPEN'?'—':usd(t.pnl)}</td></tr>`}).join('');
 }
@@ -322,7 +346,7 @@ async function updateComparison(){
 }
 function switchTf(tf){activeTf=tf==='15m'?'15m':'5m';hasLiveSnapshot=false;document.querySelectorAll('.tfbtn').forEach(b=>b.classList.toggle('active',b.dataset.tf===activeTf));markLiveWaiting();tickLive();tickSlow()}
 async function tickLive(){if(liveBusy)return;liveBusy=true;try{await Promise.all([updateLive(),updateGates(),updateArbLive()]);setConnection(true)}catch(e){console.error(e);setConnection(false)}finally{liveBusy=false}}
-async function tickSlow(){if(slowBusy)return;slowBusy=true;try{await Promise.all([updateHistory(),updatePaper(),updateHedge(),updateComparison(),updateArbHistory()])}catch(e){console.error(e)}finally{slowBusy=false}}
+async function tickSlow(){if(slowBusy)return;slowBusy=true;try{await Promise.all([updateHistory(),updatePaper(),updateHedge(),updateComparison(),updateArbHistory(),updateArbPaper()])}catch(e){console.error(e)}finally{slowBusy=false}}
 setInterval(tickLive,1000);
 setInterval(tickSlow,5000);
 tickLive();tickSlow();
