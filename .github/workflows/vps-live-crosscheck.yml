@@ -1,0 +1,96 @@
+name: VPS Live Crosscheck
+
+on:
+  push:
+    branches:
+      - ops/vps-snapshot-20260811
+
+permissions:
+  contents: read
+
+jobs:
+  crosscheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cross-check VPS vs Binance aggTrades
+        shell: python
+        run: |
+          import json, time, urllib.request, urllib.parse
+          BASE='http://34.107.85.209'
+          BIN='https://api.binance.com/api/v3/aggTrades'
+
+          def get_json(url):
+              req=urllib.request.Request(url, headers={'User-Agent':'WhaleSignal-VPS-Crosscheck/1.0'})
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return json.load(r)
+
+          end_ms=int(time.time()*1000)
+          live5=get_json(BASE+'/api/live?tf=5m')
+          live15=get_json(BASE+'/api/live?tf=15m')
+          gates5=get_json(BASE+'/api/gates?tf=5m')
+          gates15=get_json(BASE+'/api/gates?tf=15m')
+          # Allow for HTTP fetch latency so Binance raw window fully covers the VPS snapshot.
+          raw_end=int(time.time()*1000)
+          raw_start=end_ms-65000
+
+          params=urllib.parse.urlencode({'symbol':'BTCUSDT','startTime':raw_start,'endTime':raw_end,'limit':1000})
+          rows=get_json(BIN+'?'+params)
+          all_rows=list(rows)
+          while len(rows)==1000:
+              nxt=int(rows[-1]['a'])+1
+              rows=get_json(BIN+'?'+urllib.parse.urlencode({'symbol':'BTCUSDT','fromId':nxt,'limit':1000}))
+              kept=[r for r in rows if int(r['T'])<=raw_end]
+              all_rows.extend(kept)
+              if len(kept)<len(rows) or len(rows)<1000:
+                  break
+          # De-dupe by aggregate trade id.
+          uniq={int(r['a']):r for r in all_rows if raw_start<=int(r['T'])<=raw_end}
+          rows=list(uniq.values())
+
+          def raw_window(seconds):
+              cutoff=raw_end-seconds*1000
+              buy=sell=0.0
+              nbuy=nsell=0
+              for r in rows:
+                  if int(r['T'])<cutoff: continue
+                  notion=float(r['p'])*float(r['q'])
+                  if bool(r['m']):
+                      sell+=notion; nsell+=1
+                  else:
+                      buy+=notion; nbuy+=1
+              total=buy+sell
+              imb=(buy-sell)/total if total else 0.0
+              return {'seconds':seconds,'buyUsd':buy,'sellUsd':sell,'imbalance':imb,'buyAggTrades':nbuy,'sellAggTrades':nsell}
+
+          raw=[raw_window(s) for s in (5,15,30,60)]
+          def vps(x):
+              d=x.get('deepMicrostructure') or {}
+              return {
+                'status':x.get('status'),
+                'currentPrice':x.get('currentPrice'),
+                'priceToBeat':x.get('priceToBeat'),
+                'secondsRemaining':x.get('secondsRemaining'),
+                'deepReady':d.get('ready'),
+                'tradeFlowAvailable':d.get('tradeFlowAvailable'),
+                'lastTradeAgeMs':d.get('lastTradeAgeMs'),
+                'source':d.get('source'),
+                'trades':d.get('trades'),
+                'ptbTerminal':x.get('ptbTerminal'),
+              }
+
+          out={
+            'captureStartMs':end_ms,
+            'captureEndMs':raw_end,
+            'binanceRawWindowStartMs':raw_start,
+            'binanceRawWindowEndMs':raw_end,
+            'binanceRawAggTradeCount':len(rows),
+            'binanceRaw':raw,
+            'vps5':vps(live5),
+            'vps15':vps(live15),
+            'gate5':gates5.get('entry'),
+            'gate15':gates15.get('entry'),
+          }
+          print('=== LIVE CROSSCHECK JSON ===')
+          print(json.dumps(out, indent=2, sort_keys=True))
+          print('=== END CROSSCHECK ===')
