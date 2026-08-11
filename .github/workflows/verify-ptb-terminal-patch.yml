@@ -6,14 +6,17 @@ on:
       - feature/ptb-terminal-micro-probability
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -26,15 +29,11 @@ jobs:
           gofmt -w internal/binance/microstructure.go internal/binance/microstructure_test.go internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go internal/storage/microstructure.go internal/storage/microstructure_test.go
           go test ./internal/binance ./internal/engine ./internal/storage
           go vet ./...
-      - name: Pack verified files
+      - name: Commit only verified product files and remove temporary tooling
         run: |
-          mkdir -p verified/internal/binance verified/internal/engine verified/internal/storage verified/web/static
-          cp internal/binance/microstructure.go internal/binance/microstructure_test.go verified/internal/binance/
-          cp internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go verified/internal/engine/
-          cp internal/storage/microstructure.go internal/storage/microstructure_test.go verified/internal/storage/
-          cp web/static/index.html verified/web/static/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ptb-terminal-verified-files
-          path: verified/
-          retention-days: 1
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add internal/binance/microstructure.go internal/binance/microstructure_test.go internal/engine/evaluator.go internal/engine/ptb_terminal_probability.go internal/engine/ptb_terminal_probability_test.go internal/storage/microstructure.go internal/storage/microstructure_test.go web/static/index.html
+          git rm -f .ops/apply_ptb_terminal_patch.py .ops/fix_ptb_terminal_patch.py .github/workflows/verify-ptb-terminal-patch.yml
+          git commit -m 'feat: add PTB terminal microstructure probability'
+          git push origin HEAD:feature/ptb-terminal-micro-probability
