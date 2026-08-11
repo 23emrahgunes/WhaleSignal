@@ -9,18 +9,20 @@ import (
 )
 
 type Config struct {
-	Port                 string
-	DBPath               string
-	PolymarketPollSec    int
-	LogLevel             string
-	PaperEnabled         bool
-	PaperInitialBalance  float64
-	PaperStake           float64
-	PaperMinConfidence   float64
-	PaperMinSecondsToEnd float64
-	PaperMaxSecondsToEnd float64
-	PaperTakerFeeRate    float64
-	PaperLatencyBuffer   float64
+	Port                   string
+	DBPath                 string
+	PolymarketPollSec      int
+	LogLevel               string
+	PaperEnabled           bool
+	PaperInitialBalance    float64
+	PaperStake             float64
+	PaperMinConfidence     float64
+	PaperMinSecondsToEnd   float64
+	PaperMaxSecondsToEnd   float64
+	PaperTakerFeeRate      float64
+	PaperLatencyBuffer     float64
+	PaperMaxEffectiveEntry float64
+	PaperMinEconomicEdge   float64
 
 	PaperHedgeEnabled         bool
 	PaperHedgeWindow          int
@@ -55,6 +57,8 @@ func LoadConfig() (*Config, error) {
 		PaperMaxSecondsToEnd:      envFloat("PAPER_MAX_SECONDS_TO_END", 240),
 		PaperTakerFeeRate:         envFloat("PAPER_TAKER_FEE_RATE", 0.07),
 		PaperLatencyBuffer:        envFloat("PAPER_LATENCY_BUFFER", 0.002),
+		PaperMaxEffectiveEntry:    envFloat("PAPER_MAX_EFFECTIVE_ENTRY", 0.85),
+		PaperMinEconomicEdge:      envFloat("PAPER_MIN_ECONOMIC_EDGE", 0.05),
 		PaperHedgeEnabled:         envBool("PAPER_HEDGE_ENABLED", true),
 		PaperHedgeWindow:          envInt("PAPER_HEDGE_WINDOW", 8),
 		PaperHedgeMinVotes:        envInt("PAPER_HEDGE_MIN_VOTES", 6),
