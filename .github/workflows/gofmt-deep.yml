@@ -1,0 +1,40 @@
+name: Deep Microstructure Gofmt
+
+on:
+  push:
+    branches:
+      - feat/deep-microstructure-engine-v1-20260811
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: ${{ !startsWith(github.event.head_commit.message, 'gofmt deep microstructure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/deep-microstructure-engine-v1-20260811
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format changed Go files
+        run: |
+          gofmt -w \
+            internal/binance/microstructure.go \
+            internal/binance/microstructure_test.go \
+            internal/engine/evaluator.go \
+            internal/engine/microstructure.go \
+            internal/engine/microstructure_test.go \
+            internal/storage/microstructure.go \
+            internal/storage/micro_write.go \
+            cmd/pm-edge/main.go \
+            cmd/pm-edge/runtime15.go
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          if ! git diff --quiet; then
+            git add .
+            git commit -m 'gofmt deep microstructure files'
+            git push origin HEAD:feat/deep-microstructure-engine-v1-20260811
+          fi
