@@ -83,6 +83,7 @@ type EvaluationResult struct {
 	ShadowModelBScore   float64                   `json:"shadowModelBScore"`
 	ShadowDecision      string                    `json:"shadowDecision"`
 	ShadowConfidence    float64                   `json:"shadowConfidence"`
+	PTBTerminal         PTBTerminalEstimate       `json:"ptbTerminal"`
 }
 
 type Evaluator struct {
@@ -201,6 +202,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	shadowScore := 0.0
 	shadowDecision := "WAITING"
 	shadowConfidence := 0.0
+	ptbTerminal := PTBTerminalEstimate{}
 	if e.micro != nil {
 		binancePTB := binanceEquivalentPTB(priceToBeat, currentPrice, binanceSpot)
 		deep = e.micro.Snapshot(binanceSpot, binancePTB, nowTime)
@@ -208,6 +210,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		if microScores.Ready {
 			shadowScore = ShadowModelB(probabilityScore, technicalScore, microScores)
 			shadowDecision, shadowConfidence = ShadowDecision(shadowScore)
+			ptbTerminal = EstimatePTBTerminalMicroProbability(pUp, secondsRemaining, binanceSpot, binancePTB, deep, microScores)
 		}
 	}
 
@@ -295,6 +298,7 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 		ShadowModelBScore:        shadowScore,
 		ShadowDecision:           shadowDecision,
 		ShadowConfidence:         shadowConfidence,
+		PTBTerminal:              ptbTerminal,
 	}
 }
 
