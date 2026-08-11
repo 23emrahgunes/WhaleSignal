@@ -21,7 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Apply implementation
-        run: python3 .ops/apply_maker_arb.py
+        run: |
+          python3 .ops/apply_maker_arb.py
+          python3 .ops/fix_maker_arb_validation.py
       - name: Format
         run: gofmt -w internal/arb internal/storage/arb.go internal/storage/arb_test.go internal/api/arb.go internal/api/arb_test.go internal/polymarket/clob.go internal/polymarket/book_snapshot_test.go internal/config/config.go cmd/pm-edge/arb_shadow.go cmd/pm-edge/main.go cmd/pm-edge/runtime15.go
       - name: Diff sanity
@@ -46,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+23emrahgunes@users.noreply.github.com"
           git add .env.example docs/maker-arb-shadow.md internal/arb internal/storage/arb.go internal/storage/arb_test.go internal/api/arb.go internal/api/arb_test.go internal/polymarket/clob.go internal/polymarket/book_snapshot_test.go internal/config/config.go internal/api/server.go web/static/index.html
           git add -f cmd/pm-edge/arb_shadow.go cmd/pm-edge/main.go cmd/pm-edge/runtime15.go
           git diff --cached --check
