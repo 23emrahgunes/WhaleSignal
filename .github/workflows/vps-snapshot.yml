@@ -1,0 +1,216 @@
+name: VPS Snapshot Analysis
+
+on:
+  push:
+    branches:
+      - ops/vps-snapshot-20260811
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch public VPS APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='http://34.107.85.209'
+          mkdir -p snapshot
+          get() {
+            local name="$1" path="$2"
+            echo "Fetching $path"
+            curl -fSsS --connect-timeout 8 --max-time 20 "$BASE$path" -o "snapshot/$name.json"
+            echo "$name bytes=$(wc -c < "snapshot/$name.json")"
+          }
+          curl -fSsS --connect-timeout 8 --max-time 20 "$BASE/health" -o snapshot/health.txt
+          get live5 '/api/live?tf=5m'
+          get live15 '/api/live?tf=15m'
+          get gates5 '/api/gates?tf=5m'
+          get gates15 '/api/gates?tf=15m'
+          get stats5 '/api/paper/stats?tf=5m'
+          get stats15 '/api/paper/stats?tf=15m'
+          get trades5 '/api/paper/trades?limit=5000&tf=5m'
+          get trades15 '/api/paper/trades?limit=5000&tf=15m'
+          get hstats5 '/api/paper/hedge/stats?tf=5m'
+          get hstats15 '/api/paper/hedge/stats?tf=15m'
+          get hedges5 '/api/paper/hedges?limit=5000&tf=5m'
+          get hedges15 '/api/paper/hedges?limit=5000&tf=15m'
+          get history5 '/api/history?limit=10000&tf=5m'
+          get history15 '/api/history?limit=10000&tf=15m'
+          get comparison '/api/comparison'
+
+      - name: Build statistical report
+        shell: python
+        run: |
+          import json, math, os, statistics
+          from collections import Counter, defaultdict
+          from datetime import datetime, timezone
+
+          ROOT='snapshot'
+          def load(name, default=None):
+              try:
+                  with open(f'{ROOT}/{name}.json', encoding='utf-8') as f:
+                      return json.load(f)
+              except Exception as e:
+                  print(f'LOAD_ERROR {name}: {e}')
+                  return default
+
+          def num(x, d=0.0):
+              try: return float(x)
+              except: return d
+
+          def parse_time(s):
+              if not s: return None
+              try:
+                  return datetime.fromisoformat(str(s).replace('Z','+00:00'))
+              except: return None
+
+          def pct(x): return f'{100*num(x):.2f}%'
+          def usd(x): return f'${num(x):.4f}'
+
+          live5=load('live5',{}) or {}
+          live15=load('live15',{}) or {}
+          gates5=load('gates5',{}) or {}
+          gates15=load('gates15',{}) or {}
+          stats5=load('stats5',{}) or {}
+          stats15=load('stats15',{}) or {}
+          trades5=load('trades5',[]) or []
+          trades15=load('trades15',[]) or []
+          hstats5=load('hstats5',{}) or {}
+          hstats15=load('hstats15',{}) or {}
+          hedges5=load('hedges5',[]) or []
+          hedges15=load('hedges15',[]) or []
+          history5=load('history5',[]) or []
+          history15=load('history15',[]) or []
+          comparison=load('comparison',{}) or {}
+
+          print('=== VPS SNAPSHOT REPORT ===')
+          with open(f'{ROOT}/health.txt') as f: print('HEALTH:', f.read().strip())
+          print()
+
+          def live_report(tf, x):
+              print(f'=== LIVE {tf} ===')
+              keys=['status','eventSlug','currentPrice','priceToBeat','secondsRemaining','pUp','pDown','ptbZ','forecastSigmaExpiryBps','finalScore','decision','confidence','orderFlowScore','weightedImbalance','depthSource','depthAgeMs','forecastSamples','chainlinkBinanceBasisBps']
+              for k in keys:
+                  if k in x: print(f'{k}: {x.get(k)}')
+              print()
+          live_report('5m',live5); live_report('15m',live15)
+
+          def gate_report(tf,g):
+              print(f'=== GATES {tf} ===')
+              for side in ('entry','hedge'):
+                  x=g.get(side,{}) if isinstance(g,dict) else {}
+                  print(side.upper(), 'allowed=',x.get('allowed'),'reason=',x.get('reason'))
+                  keep=['decision','confidence','minConfidence','secondsRemaining','minSeconds','maxSeconds','freshPass','cashBalance','stake','bestAsk','averagePrice','estimatedShares','minOrderSize','quotePass','minSharesPass','hasOpenPosition','originalSide','reverseSide','windowSamples','windowSize','reverseVotes','minVotes','consecutive','minConsecutive','reverseProbability','minProbability','smoothedScore','scoreThreshold','ptbZ','minAbsPtbZ','edge','minEdge','expectedImprovement']
+                  print({k:x.get(k) for k in keep if k in x})
+              print()
+          gate_report('5m',gates5); gate_report('15m',gates15)
+
+          def trade_analysis(tf, rows, stats):
+              print(f'=== PAPER {tf} ===')
+              print('API_STATS:', stats)
+              if not isinstance(rows,list): rows=[]
+              settled=[r for r in rows if str(r.get('status','')).upper()!='OPEN']
+              opens=[r for r in rows if str(r.get('status','')).upper()=='OPEN']
+              wins=[r for r in settled if bool(r.get('won'))]
+              pnl=[num(r.get('pnl')) for r in settled]
+              stake=[num(r.get('stake')) for r in settled if num(r.get('stake'))>0]
+              print(f'rows={len(rows)} settled={len(settled)} open={len(opens)} wins={len(wins)} losses={len(settled)-len(wins)}')
+              if settled:
+                  wr=len(wins)/len(settled)
+                  print(f'win_rate={wr*100:.2f}% total_pnl={sum(pnl):.4f} avg_pnl={statistics.mean(pnl):.4f} median_pnl={statistics.median(pnl):.4f}')
+                  if len(pnl)>1:
+                      print(f'pnl_sd={statistics.stdev(pnl):.4f} pnl_se={statistics.stdev(pnl)/math.sqrt(len(pnl)):.4f}')
+                  if stake and sum(stake)>0: print(f'roi_on_stake={100*sum(pnl)/sum(stake):.2f}% total_stake={sum(stake):.4f}')
+              byside=defaultdict(list); byprice=defaultdict(list); byconf=defaultdict(list); bytime=defaultdict(list)
+              probs=[]
+              for r in settled:
+                  win=1.0 if bool(r.get('won')) else 0.0
+                  p=num(r.get('entryProbability'))
+                  if 0<=p<=1: probs.append((p,win))
+                  byside[str(r.get('side','?'))].append(r)
+                  ep=num(r.get('entryPrice'))
+                  pb = '<.40' if ep<.4 else '.40-.50' if ep<.5 else '.50-.60' if ep<.6 else '.60-.70' if ep<.7 else '>=.70'
+                  byprice[pb].append(r)
+                  c=num(r.get('entryConfidence'))
+                  cb = '<55' if c<55 else '55-60' if c<60 else '60-65' if c<65 else '65-70' if c<70 else '>=70'
+                  byconf[cb].append(r)
+                  et=parse_time(r.get('entryTime')); mt=parse_time(r.get('marketEndTime'))
+                  if et and mt:
+                      s=(mt-et).total_seconds()
+                      tb='<60s' if s<60 else '60-120s' if s<120 else '120-240s' if s<240 else '240-480s' if s<480 else '>=480s'
+                      bytime[tb].append(r)
+              def show_group(title,d):
+                  print(title)
+                  for k,rr in d.items():
+                      n=len(rr); w=sum(1 for r in rr if bool(r.get('won'))); pp=sum(num(r.get('pnl')) for r in rr)
+                      print(f'  {k}: n={n} win={100*w/n:.1f}% pnl={pp:.4f}')
+              show_group('BY_SIDE',byside); show_group('BY_ENTRY_PRICE',byprice); show_group('BY_CONFIDENCE',byconf); show_group('BY_SECONDS_TO_END',bytime)
+              if probs:
+                  brier=sum((p-y)**2 for p,y in probs)/len(probs)
+                  avgp=sum(p for p,_ in probs)/len(probs); actual=sum(y for _,y in probs)/len(probs)
+                  print(f'CALIBRATION n={len(probs)} avg_pred={avgp*100:.2f}% actual={actual*100:.2f}% gap={(actual-avgp)*100:.2f}pp brier={brier:.4f}')
+                  buckets=defaultdict(list)
+                  for p,y in probs:
+                      lo=int(p*10)*10; lo=min(lo,90)
+                      buckets[f'{lo}-{lo+10}%'].append((p,y))
+                  print('CALIBRATION_BUCKETS')
+                  for k,rr in sorted(buckets.items()):
+                      print(f'  {k}: n={len(rr)} pred={100*sum(p for p,_ in rr)/len(rr):.1f}% actual={100*sum(y for _,y in rr)/len(rr):.1f}%')
+              print()
+          trade_analysis('5m',trades5,stats5); trade_analysis('15m',trades15,stats15)
+
+          def hedge_analysis(tf, rows, stats):
+              print(f'=== HEDGE {tf} ===')
+              print('API_STATS:',stats)
+              if not isinstance(rows,list): rows=[]
+              settled=[r for r in rows if str(r.get('status','')).upper()!='OPEN']
+              print(f'rows={len(rows)} settled={len(settled)} open={len(rows)-len(settled)}')
+              if settled:
+                  orig=sum(num(r.get('originalPnl')) for r in settled)
+                  hp=sum(num(r.get('hedgePnl')) for r in settled)
+                  comb=sum(num(r.get('combinedPnl')) for r in settled)
+                  locked=[num(r.get('lockedPnl')) for r in rows]
+                  print(f'original_pnl={orig:.4f} hedge_contribution={hp:.4f} combined={comb:.4f}')
+                  print(f'avg_locked_pnl={statistics.mean(locked):.4f}')
+              if rows:
+                  print(f'avg_edge={100*statistics.mean([num(r.get("edge")) for r in rows]):.2f}% avg_persistence={100*statistics.mean([num(r.get("persistence")) for r in rows]):.2f}%')
+              print()
+          hedge_analysis('5m',hedges5,hstats5); hedge_analysis('15m',hedges15,hstats15)
+
+          def history_analysis(tf, rows):
+              print(f'=== SIGNAL HISTORY {tf} ===')
+              if not isinstance(rows,list): rows=[]
+              print('rows=',len(rows))
+              if not rows: print(); return
+              dec=Counter(str(r.get('decision','?')) for r in rows)
+              print('decisions=',dict(dec))
+              conf=[num(r.get('confidence')) for r in rows]
+              z=[num(r.get('ptbZ')) for r in rows]
+              of=[num(r.get('orderFlowScore')) for r in rows]
+              p=[num(r.get('pUp')) for r in rows]
+              if conf: print(f'confidence mean={statistics.mean(conf):.2f} median={statistics.median(conf):.2f} max={max(conf):.2f}')
+              if z: print(f'ptbZ mean={statistics.mean(z):.3f} median={statistics.median(z):.3f} min={min(z):.3f} max={max(z):.3f}')
+              if of: print(f'orderflow mean={statistics.mean(of):.3f} median={statistics.median(of):.3f} min={min(of):.3f} max={max(of):.3f}')
+              high=sum(1 for x in conf if x>=55)
+              print(f'confidence>=55: {high}/{len(conf)} ({100*high/len(conf):.1f}%)')
+              print()
+          history_analysis('5m',history5); history_analysis('15m',history15)
+
+          print('=== COMPARISON API ===')
+          print(json.dumps(comparison, indent=2, sort_keys=True))
+          print('=== END REPORT ===')
+
+      - name: Upload raw VPS snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-snapshot
+          path: snapshot/
+          retention-days: 1
