@@ -28,6 +28,8 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 		MaxSecondsToEnd:      cfg.PaperMaxSecondsToEnd * 3,
 		TakerFeeRate:         cfg.PaperTakerFeeRate,
 		LatencyBuffer:        cfg.PaperLatencyBuffer,
+		MaxEffectiveEntry:    cfg.PaperMaxEffectiveEntry,
+		MinEconomicEdge:      cfg.PaperMinEconomicEdge,
 		HedgeEnabled:         cfg.PaperHedgeEnabled && !isMockMode,
 		HedgeWindow:          cfg.PaperHedgeWindow,
 		HedgeMinVotes:        cfg.PaperHedgeMinVotes,

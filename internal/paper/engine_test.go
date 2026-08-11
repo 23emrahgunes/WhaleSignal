@@ -111,3 +111,45 @@ func TestPaperEntryThresholds(t *testing.T) {
 		t.Fatalf("below threshold opened=%v err=%v", opened, err)
 	}
 }
+
+func TestProductionEntryRequiresPTBTerminalAndEconomicEdge(t *testing.T) {
+	tests := []struct {
+		name       string
+		terminal   engine.PTBTerminalEstimate
+		cost       float64
+		wantOpened bool
+	}{
+		{name: "good edge", terminal: engine.PTBTerminalEstimate{Ready: true, Decision: "UP", PAbove: .91, PBelow: .09}, cost: .80, wantOpened: true},
+		{name: "terminal not ready", terminal: engine.PTBTerminalEstimate{Ready: false, Decision: "UP", PAbove: .95}, cost: .70},
+		{name: "direction mismatch", terminal: engine.PTBTerminalEstimate{Ready: true, Decision: "DOWN", PAbove: .20, PBelow: .80}, cost: .70},
+		{name: "price too expensive", terminal: engine.PTBTerminalEstimate{Ready: true, Decision: "UP", PAbove: .97, PBelow: .03}, cost: .86},
+		{name: "edge too small", terminal: engine.PTBTerminalEstimate{Ready: true, Decision: "UP", PAbove: .83, PBelow: .17}, cost: .80},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "paper.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			now := time.Now().UTC()
+			market := &polymarket.Market{Question: "BTC", EventSlug: "btc-updown-5m-1786389900", Active: true, EndTime: now.Add(90 * time.Second), Outcomes: []string{"Up", "Down"}, Tokens: []polymarket.Token{{Outcome: "Up", Price: .5, TokenID: "up-token"}, {Outcome: "Down", Price: .5, TokenID: "down-token"}}}
+			res := &engine.EvaluationResult{PriceToBeat: 64000, CurrentPrice: 64010, SecondsRemaining: 90, PUp: .8, PDown: .2, Decision: "UP", Confidence: 70, DataSource: "CHAINLINK_RTDS+BINANCE_REST+BINANCE_REST_DEPTH20", PTBTerminal: tc.terminal}
+			pe := NewEngine(db, Config{Timeframe: "5m", Enabled: true, InitialBalance: 1000, Stake: 2.5, MinConfidence: 55, MinSecondsToEnd: 30, MaxSecondsToEnd: 240, MaxEffectiveEntry: .85, MinEconomicEdge: .05})
+			quote := func(string, float64) (polymarket.BuyQuote, error) {
+				shares := 2.5 / tc.cost
+				return polymarket.BuyQuote{BestAsk: tc.cost, AveragePrice: tc.cost, Shares: shares, TotalCost: 2.5}, nil
+			}
+			trade, opened, err := pe.MaybeOpenWithQuote(res, market, now, quote)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opened != tc.wantOpened {
+				t.Fatalf("opened=%v want=%v trade=%+v", opened, tc.wantOpened, trade)
+			}
+			if opened && math.Abs(trade.EntryProbability-tc.terminal.PAbove) > 1e-9 {
+				t.Fatalf("entry probability %.4f must store PTB terminal %.4f", trade.EntryProbability, tc.terminal.PAbove)
+			}
+		})
+	}
+}

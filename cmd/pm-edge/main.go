@@ -104,6 +104,8 @@ func main() {
 		MaxSecondsToEnd:      cfg.PaperMaxSecondsToEnd,
 		TakerFeeRate:         cfg.PaperTakerFeeRate,
 		LatencyBuffer:        cfg.PaperLatencyBuffer,
+		MaxEffectiveEntry:    cfg.PaperMaxEffectiveEntry,
+		MinEconomicEdge:      cfg.PaperMinEconomicEdge,
 		HedgeEnabled:         cfg.PaperHedgeEnabled && !isMockMode,
 		HedgeWindow:          cfg.PaperHedgeWindow,
 		HedgeMinVotes:        cfg.PaperHedgeMinVotes,

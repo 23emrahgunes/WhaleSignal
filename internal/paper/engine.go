@@ -21,8 +21,10 @@ type Config struct {
 	MinSecondsToEnd float64
 	MaxSecondsToEnd float64
 
-	TakerFeeRate  float64
-	LatencyBuffer float64
+	TakerFeeRate      float64
+	LatencyBuffer     float64
+	MaxEffectiveEntry float64
+	MinEconomicEdge   float64
 
 	HedgeEnabled         bool
 	HedgeWindow          int
@@ -57,6 +59,12 @@ func NewEngine(db *storage.Database, cfg Config) *Engine {
 	}
 	if cfg.LatencyBuffer < 0 {
 		cfg.LatencyBuffer = 0
+	}
+	if cfg.MaxEffectiveEntry <= 0 || cfg.MaxEffectiveEntry >= 1 {
+		cfg.MaxEffectiveEntry = 0.85
+	}
+	if cfg.MinEconomicEdge <= 0 {
+		cfg.MinEconomicEdge = 0.05
 	}
 	if cfg.HedgeWindow <= 0 {
 		cfg.HedgeWindow = 8
@@ -139,7 +147,21 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	entryPrice := 0.0
 	stake := e.cfg.Stake
 	shares := 0.0
+	entryProbability := res.PDown
+	if res.Decision == "UP" {
+		entryProbability = res.PUp
+	}
 	if quote != nil {
+		// Production paper entries fail closed unless the direct PTB terminal
+		// probability is available and agrees with the legacy direction.
+		if !res.PTBTerminal.Ready || res.PTBTerminal.Decision != res.Decision {
+			return nil, false, nil
+		}
+		entryProbability = res.PTBTerminal.PBelow
+		if res.Decision == "UP" {
+			entryProbability = res.PTBTerminal.PAbove
+		}
+
 		tokenID, ok := polymarket.TokenIDForOutcome(market, res.Decision)
 		if !ok {
 			return nil, false, nil
@@ -160,11 +182,16 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	if entryPrice <= 0 || entryPrice >= 1 || stake <= 0 || shares <= 0 {
 		return nil, false, nil
 	}
-
-	entryProbability := res.PDown
-	if res.Decision == "UP" {
-		entryProbability = res.PUp
+	if quote != nil {
+		effectiveCost := stake / shares
+		if effectiveCost > e.cfg.MaxEffectiveEntry+1e-12 {
+			return nil, false, nil
+		}
+		if entryProbability-effectiveCost < e.cfg.MinEconomicEdge-1e-12 {
+			return nil, false, nil
+		}
 	}
+
 	trade := &storage.PaperTrade{
 		MarketSlug:          market.EventSlug,
 		Question:            market.Question,

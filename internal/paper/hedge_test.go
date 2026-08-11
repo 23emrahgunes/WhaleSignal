@@ -259,7 +259,8 @@ func TestPaperOpenWithCLOBQuoteUsesExecutionCost(t *testing.T) {
 	res := &engine.EvaluationResult{
 		PriceToBeat: 64000, CurrentPrice: 64010, SecondsRemaining: 90,
 		PUp: 0.70, PDown: 0.30, FinalScore: 0.60, Decision: "UP", Confidence: 60,
-		DataSource: "CHAINLINK_RTDS+BINANCE_WS+BINANCE_WS_DEPTH20",
+		DataSource:  "CHAINLINK_RTDS+BINANCE_WS+BINANCE_WS_DEPTH20",
+		PTBTerminal: engine.PTBTerminalEstimate{Ready: true, Decision: "UP", PAbove: 0.80, PBelow: 0.20},
 	}
 	quote := func(tokenID string, budget float64) (polymarket.BuyQuote, error) {
 		return polymarket.BuyQuote{TokenID: tokenID, BestAsk: 0.45, AveragePrice: 0.455, Shares: 5.2, Notional: 2.366, Fee: 0.10, TotalCost: 2.466, MinOrderSize: 5, LevelsUsed: 2}, nil
