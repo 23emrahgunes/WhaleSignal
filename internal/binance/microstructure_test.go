@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -182,5 +183,41 @@ func TestTradeFlowRequiresFreshAuthoritativeREST(t *testing.T) {
 	}
 	if after.TradeFlowSource != "BINANCE_AGGTRADES_REST_AUTH" {
 		t.Fatalf("unexpected trade-flow source %q", after.TradeFlowSource)
+	}
+}
+
+func TestAggTradeJSONLowercaseMakerDoesNotGetOverwrittenByUppercaseM(t *testing.T) {
+	raw := []byte(`{"a":4032117918,"p":"63685.22000000","q":"0.00039000","T":1786483122661,"m":false,"M":true}`)
+	var rest aggTradeRESTEvent
+	if err := json.Unmarshal(raw, &rest); err != nil {
+		t.Fatal(err)
+	}
+	if rest.BuyerIsMaker {
+		t.Fatal("lowercase m=false was overwritten by uppercase M=true")
+	}
+	if !rest.BestPriceMatch {
+		t.Fatal("expected uppercase M to decode into its own field")
+	}
+
+	var ws aggTradeEvent
+	if err := json.Unmarshal(raw, &ws); err != nil {
+		t.Fatal(err)
+	}
+	if ws.BuyerIsMaker {
+		t.Fatal("websocket lowercase m=false was overwritten by uppercase M=true")
+	}
+	if !ws.BestPriceMatch {
+		t.Fatal("expected websocket uppercase M to decode separately")
+	}
+}
+
+func TestAggTradeJSONMakerTrueStillClassifiesSell(t *testing.T) {
+	raw := []byte(`{"a":4032117921,"p":"63685.21000000","q":"0.00101000","T":1786483123963,"m":true,"M":true}`)
+	var ev aggTradeRESTEvent
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatal(err)
+	}
+	if !ev.BuyerIsMaker {
+		t.Fatal("expected lowercase m=true to remain true")
 	}
 }
