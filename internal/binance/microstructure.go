@@ -289,6 +289,7 @@ type aggTradeEvent struct {
 	Quantity         string `json:"q"`
 	TradeTime        int64  `json:"T"`
 	BuyerIsMaker     bool   `json:"m"`
+	BestPriceMatch   bool   `json:"M"`
 }
 
 type aggTradeRESTEvent struct {
@@ -297,6 +298,7 @@ type aggTradeRESTEvent struct {
 	Quantity         string `json:"q"`
 	TradeTime        int64  `json:"T"`
 	BuyerIsMaker     bool   `json:"m"`
+	BestPriceMatch   bool   `json:"M"`
 }
 
 func (c *MicrostructureClient) readLoop(conn *websocket.Conn) error {
