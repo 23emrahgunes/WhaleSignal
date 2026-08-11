@@ -18,6 +18,7 @@ import (
 )
 
 func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config, db *storage.Database, server *api.Server, pmClient *polymarket.Client, bClient *binance.Client, clClient *chainlink.Client, microClient *binance.MicrostructureClient) {
+	arbShadow := newArbShadowRuntime("15m", cfg, db, pmClient, !isMockMode)
 	paperEngine := paper.NewEngine(db, paper.Config{
 		Timeframe:            "15m",
 		Enabled:              cfg.PaperEnabled && !isMockMode,
@@ -148,6 +149,7 @@ func startBTC15mRuntime(ctx context.Context, isMockMode bool, cfg *config.Config
 					server.UpdateGatesFor("15m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 					continue
 				}
+				arbShadow.Submit(res, m)
 				if err := db.InsertSignalWithMicro(res); err != nil {
 					util.Logger.Error("Failed to store BTC 15m signal", zap.Error(err))
 					continue

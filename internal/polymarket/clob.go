@@ -149,6 +149,85 @@ func (c *Client) fetchBuyQuote(baseURL, tokenID string, targetShares, budget, fe
 	return q, nil
 }
 
+type BookSnapshot struct {
+	TokenID      string      `json:"tokenId"`
+	BestBid      float64     `json:"bestBid"`
+	BestAsk      float64     `json:"bestAsk"`
+	MinOrderSize float64     `json:"minOrderSize"`
+	TickSize     float64     `json:"tickSize"`
+	Bids         []CLOBLevel `json:"bids,omitempty"`
+	Asks         []CLOBLevel `json:"asks,omitempty"`
+}
+
+type clobFullBookResponse struct {
+	Bids []struct {
+		Price string `json:"price"`
+		Size  string `json:"size"`
+	} `json:"bids"`
+	Asks []struct {
+		Price string `json:"price"`
+		Size  string `json:"size"`
+	} `json:"asks"`
+	MinOrderSize string `json:"min_order_size"`
+	TickSize     string `json:"tick_size"`
+}
+
+func (c *Client) FetchBookSnapshot(tokenID string) (BookSnapshot, error) {
+	return c.fetchBookSnapshot(defaultCLOBBaseURL, tokenID)
+}
+
+func (c *Client) fetchBookSnapshot(baseURL, tokenID string) (BookSnapshot, error) {
+	out := BookSnapshot{TokenID: tokenID}
+	if strings.TrimSpace(tokenID) == "" {
+		return out, fmt.Errorf("missing token id")
+	}
+	endpoint := strings.TrimRight(baseURL, "/") + "/book?" + url.Values{"token_id": []string{tokenID}}.Encode()
+	resp, err := c.httpClient.Get(endpoint)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("clob book status %d", resp.StatusCode)
+	}
+	var raw clobFullBookResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return out, err
+	}
+	out.MinOrderSize, _ = strconv.ParseFloat(raw.MinOrderSize, 64)
+	out.TickSize, _ = strconv.ParseFloat(raw.TickSize, 64)
+	for _, row := range raw.Bids {
+		p, ep := strconv.ParseFloat(row.Price, 64)
+		s, es := strconv.ParseFloat(row.Size, 64)
+		if ep == nil && es == nil && p > 0 && p < 1 && s > 0 {
+			out.Bids = append(out.Bids, CLOBLevel{Price: p, Size: s})
+		}
+	}
+	for _, row := range raw.Asks {
+		p, ep := strconv.ParseFloat(row.Price, 64)
+		s, es := strconv.ParseFloat(row.Size, 64)
+		if ep == nil && es == nil && p > 0 && p < 1 && s > 0 {
+			out.Asks = append(out.Asks, CLOBLevel{Price: p, Size: s})
+		}
+	}
+	sort.Slice(out.Bids, func(i, j int) bool { return out.Bids[i].Price > out.Bids[j].Price })
+	sort.Slice(out.Asks, func(i, j int) bool { return out.Asks[i].Price < out.Asks[j].Price })
+	if len(out.Bids) == 0 || len(out.Asks) == 0 {
+		return out, fmt.Errorf("incomplete CLOB book for token %s", tokenID)
+	}
+	if out.MinOrderSize <= 0 {
+		return out, fmt.Errorf("invalid min_order_size for token %s", tokenID)
+	}
+	if out.TickSize <= 0 {
+		return out, fmt.Errorf("invalid tick_size for token %s", tokenID)
+	}
+	out.BestBid, out.BestAsk = out.Bids[0].Price, out.Asks[0].Price
+	if out.BestAsk <= out.BestBid {
+		return out, fmt.Errorf("crossed CLOB book for token %s", tokenID)
+	}
+	return out, nil
+}
+
 func TokenIDForOutcome(market *Market, side string) (string, bool) {
 	if market == nil {
 		return "", false

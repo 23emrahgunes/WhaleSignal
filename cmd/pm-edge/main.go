@@ -88,12 +88,16 @@ func main() {
 	if err := db.EnsureMicrostructureSchema(); err != nil {
 		util.Logger.Fatal("Deep microstructure schema setup failed", zap.Error(err))
 	}
+	if err := db.EnsureArbSchema(); err != nil {
+		util.Logger.Fatal("Maker arb schema setup failed", zap.Error(err))
+	}
 
 	server := api.NewServer(db, cfg.PaperInitialBalance)
 	pmClient := polymarket.NewClient()
 	bClient := binance.NewClient()
 	clClient := chainlink.NewClient()
 	microClient := binance.NewMicrostructureClient()
+	arbShadow := newArbShadowRuntime("5m", cfg, db, pmClient, !isMockMode)
 	paperEngine := paper.NewEngine(db, paper.Config{
 		Timeframe:            "5m",
 		Enabled:              cfg.PaperEnabled && !isMockMode,
@@ -260,6 +264,7 @@ func main() {
 					server.UpdateGatesFor("5m", paperEngine.EntryGateSnapshot(res, m, now, quoteBudget), paperEngine.HedgeGateSnapshot(res, m, now, quoteShares))
 					continue
 				}
+				arbShadow.Submit(res, m)
 				if err := db.InsertSignalWithMicro(res); err != nil {
 					util.Logger.Error("Failed to store signal in SQLite", zap.Error(err))
 					continue
