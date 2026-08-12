@@ -2,6 +2,7 @@ from pathlib import Path
 
 p=Path('internal/arb/paper.go')
 s=p.read_text()
+s=s.replace('\t\tbook := bookForSide(c.FirstOrderSide, upBook, downBook)\n','')
 s=s.replace('\t\tc.FirstQueueAhead = math.Max(c.FirstQueueAhead, buyQueueAhead(book, c.FirstOrderPrice))\n','')
 s=s.replace('\t\tc.SecondQueueAhead = math.Max(c.SecondQueueAhead, buyQueueAhead(secondBook, c.SecondOrderPrice))\n','')
 # A public SELL print strictly below a still-resting BUY limit means matching
