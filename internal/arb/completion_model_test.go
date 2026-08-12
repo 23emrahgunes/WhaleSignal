@@ -17,7 +17,7 @@ func modelSnap() *Snapshot {
 }
 
 func trainingCycle(i int, leg, status string, completionMs int64, pnl float64, full bool) PaperCycle {
-	c := PaperCycle{ID: int64(i + 1), PreferredFirstLeg: leg, ActualFirstLeg: leg, FillModel: "WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL", StrategyMode: "SAFE_FIRST_SEQUENTIAL_MAKER", Status: status, OrderSize: 5, FirstFilledShares: 5, EntryNetEdge: .028, PaperPnL: pnl, CompletionMs: completionMs, FirstPartialAt: "2026-08-12T00:00:00Z"}
+	c := PaperCycle{ID: int64(i + 1), PreferredFirstLeg: leg, ActualFirstLeg: leg, FillModel: "WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL", StrategyMode: "COMPLETION_PROBABILITY_SAFE_FIRST_V2", Status: status, OrderSize: 5, FirstFilledShares: 5, EntryNetEdge: .028, PaperPnL: pnl, CompletionMs: completionMs, FirstPartialAt: "2026-08-12T00:00:00Z"}
 	if full {
 		c.FirstFullAt = "2026-08-12T00:00:00.100Z"
 	} else {
@@ -124,5 +124,41 @@ func TestCompletionScopeFallsBackWhenNarrowBandSparse(t *testing.T) {
 	}
 	if math.IsNaN(e.PComplete5s) {
 		t.Fatal("nan")
+	}
+}
+
+func TestLegacyTwentySecondPolicyCyclesAreExcluded(t *testing.T) {
+	s := modelSnap()
+	rows := make([]PaperCycle, 0, 40)
+	for i := 0; i < 40; i++ {
+		c := trainingCycle(i, "UP", PaperStatusCompleted, 900, .14, true)
+		c.StrategyMode = "SAFE_FIRST_SEQUENTIAL_MAKER"
+		rows = append(rows, c)
+	}
+	e := EstimateCompletionModel(rows, s, DefaultCompletionPolicy())
+	if e.FirstFillSamples != 0 || e.CompletionSamples != 0 || e.Ready {
+		t.Fatalf("legacy leaked %+v", e)
+	}
+}
+
+func TestPerfectEarlyRunUsesStressLossInsteadOfZeroStrandedRisk(t *testing.T) {
+	s := modelSnap()
+	rows := make([]PaperCycle, 0, 40)
+	for i := 0; i < 40; i++ {
+		rows = append(rows, trainingCycle(i, "UP", PaperStatusCompleted, 800, .14, true))
+	}
+	p := DefaultCompletionPolicy()
+	p.MinSamples = 30
+	p.MinStrandedSamples = 3
+	e := EstimateCompletionModel(rows, s, p)
+	if !e.Ready {
+		t.Fatalf("should be statistically ready %+v", e)
+	}
+	want := -0.08 * s.OrderSize
+	if math.Abs(e.ExpectedFullStrandedPnL-want) > 1e-9 {
+		t.Fatalf("stress %.4f want %.4f", e.ExpectedFullStrandedPnL, want)
+	}
+	if e.StrandedLossMultiple <= 0 {
+		t.Fatalf("zero stranded risk %+v", e)
 	}
 }

@@ -261,8 +261,13 @@ func EstimateCompletionModel(cycles []PaperCycle, s *Snapshot, policy Completion
 	out.PartialStrandedSamples = len(partialStranded)
 
 	currentExit := immediateExitPnL(s)
-	out.ExpectedFullStrandedPnL = conservativePnL(fullStranded, currentExit)
-	out.ExpectedPartialStrandedPnL = conservativePnL(partialStranded, currentExit)
+	// Until enough genuine 5-second stranded exits exist, use an 8c/share
+	// adverse-move stress floor. This prevents a perfect early completion run
+	// from implying that stranded inventory has zero cost. Once the minimum
+	// empirical loss sample is available, the measured distribution takes over.
+	stressExit := math.Min(currentExit, -0.08*s.OrderSize)
+	out.ExpectedFullStrandedPnL = empiricalOrStressPnL(fullStranded, currentExit, stressExit, policy.MinStrandedSamples)
+	out.ExpectedPartialStrandedPnL = empiricalOrStressPnL(partialStranded, currentExit, stressExit, policy.MinStrandedSamples)
 	out.ExpectedPairProfit = math.Max(0, s.OrderSize*s.NetEdge)
 	out.FullCycleEV = out.PComplete5s*out.ExpectedPairProfit + (1-out.PComplete5s)*out.ExpectedFullStrandedPnL
 	out.ConservativeFullCycleEV = out.PComplete5sLower95*out.ExpectedPairProfit + (1-out.PComplete5sLower95)*out.ExpectedFullStrandedPnL
@@ -276,7 +281,7 @@ func EstimateCompletionModel(cycles []PaperCycle, s *Snapshot, policy Completion
 	} else {
 		out.StrandedLossMultiple = math.Inf(1)
 	}
-	out.Ready = out.FirstFillSamples >= policy.MinSamples && out.CompletionSamples >= policy.MinSamples && out.FullStrandedSamples >= policy.MinStrandedSamples
+	out.Ready = out.FirstFillSamples >= policy.MinSamples && out.CompletionSamples >= policy.MinSamples
 	out.ProbabilityPass = out.Ready && out.PComplete5sLower95+1e-12 >= policy.MinPComplete5sLower95
 	out.CycleEVPass = out.Ready && out.ConservativeCycleEV+1e-12 >= policy.MinCycleEV
 	out.StrandedLossPass = out.Ready && out.StrandedLossMultiple <= policy.MaxStrandedLossMultiple+1e-12
@@ -361,7 +366,7 @@ func applyEstimate(s *Snapshot, e CompletionEstimate) {
 func filterTrainingCycles(cycles []PaperCycle, leg string, edge, band float64) []PaperCycle {
 	out := make([]PaperCycle, 0, len(cycles))
 	for _, c := range cycles {
-		if c.FillModel != "WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL" || !strings.EqualFold(c.PreferredFirstLeg, leg) {
+		if c.FillModel != "WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL" || c.StrategyMode != "COMPLETION_PROBABILITY_SAFE_FIRST_V2" || !strings.EqualFold(c.PreferredFirstLeg, leg) {
 			continue
 		}
 		switch c.Status {
@@ -396,6 +401,16 @@ func immediateExitPnL(s *Snapshot) float64 {
 		return s.OrderSize * (s.DownBestBid - s.DownMakerPrice)
 	}
 	return s.OrderSize * (s.UpBestBid - s.UpMakerPrice)
+}
+
+func empiricalOrStressPnL(values []float64, currentExit, stressExit float64, minSamples int) float64 {
+	if minSamples < 1 {
+		minSamples = 1
+	}
+	if len(values) < minSamples {
+		return conservativePnL(values, stressExit)
+	}
+	return conservativePnL(values, currentExit)
 }
 
 func conservativePnL(values []float64, fallback float64) float64 {
