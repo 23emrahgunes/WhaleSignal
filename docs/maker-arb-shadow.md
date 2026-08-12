@@ -29,3 +29,11 @@ Endpoints: `/api/arb/paper/stats?tf=5m|15m` and `/api/arb/paper/cycles?tf=5m|15m
 
 ### Final queue/activation audit
 `queueAhead` tracks only FIFO liquidity already resting at the exact order price. Higher-price executions never reduce that same-price queue. When the first leg becomes fully filled, the completion order is priced again from the current CLOB and constrained by both post-only and the original economic ceiling; the entry-time planned completion price is never blindly reused.
+
+
+## Arb v2: completion probability + CycleEV
+A displayed maker pair edge is not treated as locked arbitrage. It is only a planned completion path. The research/live-eligibility layer is empirical and uses only queue-aware WebSocket paper cycles. For each safe-first leg it estimates P(first fill), P(first full | fill), P(second-leg completion within 250ms/1s/2s/5s), and the Wilson 95% lower bound for 5-second completion. The model also measures conservative stranded PnL, conditional CycleEV and opportunity EV.
+
+Paper sampling remains enabled during warmup, but live-eligible status fails closed until the selected path has enough resolved first-full samples and enough stranded observations. Default live research gates are: >=30 samples, >=3 full-stranded samples, Pcomplete(<=5s) Wilson lower bound >=70%, conservative CycleEV >= $0.01 per cycle, stranded-loss multiple <=4x expected pair profit, plus the existing 2% planned live edge. No live signing/submission is added.
+
+Completion execution uses a 2-second soft maker window and a 5-second hard stranded-risk window. After the soft window, completion may move directly to the post-only economic ceiling. Completion latency is measured from order activation to actual Polymarket WebSocket execution timestamps rather than the polling interval.

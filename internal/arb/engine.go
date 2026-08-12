@@ -61,6 +61,52 @@ type Snapshot struct {
 	LiveEdgePass         bool    `json:"liveEdgePass"`
 	ExpectedLockedProfit float64 `json:"expectedLockedProfit"`
 
+	UpPathEligible          bool    `json:"upPathEligible"`
+	UpPathFirstPrice        float64 `json:"upPathFirstPrice"`
+	UpPathCompletionPrice   float64 `json:"upPathCompletionPrice"`
+	UpPathNetEdge           float64 `json:"upPathNetEdge"`
+	UpPathQueueAhead        float64 `json:"upPathQueueAhead"`
+	DownPathEligible        bool    `json:"downPathEligible"`
+	DownPathFirstPrice      float64 `json:"downPathFirstPrice"`
+	DownPathCompletionPrice float64 `json:"downPathCompletionPrice"`
+	DownPathNetEdge         float64 `json:"downPathNetEdge"`
+	DownPathQueueAhead      float64 `json:"downPathQueueAhead"`
+	UpPathModelReady        bool    `json:"upPathModelReady"`
+	DownPathModelReady      bool    `json:"downPathModelReady"`
+	UpPathOpportunityEV     float64 `json:"upPathOpportunityEv"`
+	DownPathOpportunityEV   float64 `json:"downPathOpportunityEv"`
+	SelectedBy              string  `json:"selectedBy"`
+
+	CompletionModelReady         bool    `json:"completionModelReady"`
+	CompletionModelScope         string  `json:"completionModelScope"`
+	CompletionMinSamples         int     `json:"completionMinSamples"`
+	CompletionMinStrandedSamples int     `json:"completionMinStrandedSamples"`
+	FirstFillSamples             int     `json:"firstFillSamples"`
+	FirstFillCount               int     `json:"firstFillCount"`
+	PFirstFill                   float64 `json:"pFirstFill"`
+	PFirstFullGivenFill          float64 `json:"pFirstFullGivenFill"`
+	CompletionSamples            int     `json:"completionSamples"`
+	FullStrandedSamples          int     `json:"fullStrandedSamples"`
+	PComplete250ms               float64 `json:"pComplete250ms"`
+	PComplete1s                  float64 `json:"pComplete1s"`
+	PComplete2s                  float64 `json:"pComplete2s"`
+	PComplete5s                  float64 `json:"pComplete5s"`
+	PComplete5sLower95           float64 `json:"pComplete5sLower95"`
+	AverageCompletionMs          float64 `json:"averageCompletionMs"`
+	ExpectedPairProfitEV         float64 `json:"expectedPairProfitEv"`
+	ExpectedFullStrandedPnL      float64 `json:"expectedFullStrandedPnl"`
+	ExpectedPartialStrandedPnL   float64 `json:"expectedPartialStrandedPnl"`
+	FullCycleEV                  float64 `json:"fullCycleEv"`
+	ConservativeCycleEV          float64 `json:"conservativeCycleEv"`
+	OpportunityEV                float64 `json:"opportunityEv"`
+	StrandedLossMultiple         float64 `json:"strandedLossMultiple"`
+	MinPComplete5sLower95        float64 `json:"minPComplete5sLower95"`
+	MinCycleEV                   float64 `json:"minCycleEv"`
+	MaxStrandedLossMultiple      float64 `json:"maxStrandedLossMultiple"`
+	CompletionProbabilityPass    bool    `json:"completionProbabilityPass"`
+	CycleEVPass                  bool    `json:"cycleEvPass"`
+	StrandedLossPass             bool    `json:"strandedLossPass"`
+
 	PTBReady           bool    `json:"ptbReady"`
 	PTBDecision        string  `json:"ptbDecision"`
 	PTBPUp             float64 `json:"ptbPUp"`
@@ -121,7 +167,7 @@ func (e *Engine) Evaluate(res *engine.EvaluationResult, market *polymarket.Marke
 		Reason:            "BOOK_NOT_READY",
 		ShadowOnly:        true,
 		OrderMode:         "GTC_GTD_POST_ONLY",
-		StrategyMode:      "SAFE_FIRST_SEQUENTIAL_MAKER",
+		StrategyMode:      "COMPLETION_PROBABILITY_SAFE_FIRST_V2",
 		MakerFeeRate:      0,
 		UpTokenID:         upBook.TokenID,
 		DownTokenID:       downBook.TokenID,
@@ -179,6 +225,16 @@ func (e *Engine) Evaluate(res *engine.EvaluationResult, market *polymarket.Marke
 	}
 	upEligible := upFirstNet+1e-12 >= e.cfg.PaperMinEdge
 	downEligible := downFirstNet+1e-12 >= e.cfg.PaperMinEdge
+	snap.UpPathEligible = upEligible
+	snap.UpPathFirstPrice = upFirst
+	snap.UpPathCompletionPrice = downAfterUp
+	snap.UpPathNetEdge = upFirstNet
+	snap.UpPathQueueAhead = buyQueueAhead(upBook, upFirst)
+	snap.DownPathEligible = downEligible
+	snap.DownPathFirstPrice = downFirst
+	snap.DownPathCompletionPrice = upAfterDown
+	snap.DownPathNetEdge = downFirstNet
+	snap.DownPathQueueAhead = buyQueueAhead(downBook, downFirst)
 
 	if !upEligible && !downEligible {
 		snap.NetEdge = -1
@@ -190,27 +246,10 @@ func (e *Engine) Evaluate(res *engine.EvaluationResult, market *polymarket.Marke
 	if (!upEligible && downEligible) || (upEligible == downEligible && downRisk < upRisk) {
 		first = "DOWN"
 	}
-	if first == "UP" {
-		snap.UpMakerPrice = upFirst
-		snap.DownMakerPrice = downAfterUp
-		snap.NetEdge = upFirstNet
-		snap.QuoteSkew = "SAFE_FIRST_UP_THEN_DOWN"
-		snap.FirstLegQueueAhead = buyQueueAhead(upBook, upFirst)
-	} else {
-		snap.DownMakerPrice = downFirst
-		snap.UpMakerPrice = upAfterDown
-		snap.NetEdge = downFirstNet
-		snap.QuoteSkew = "SAFE_FIRST_DOWN_THEN_UP"
-		snap.FirstLegQueueAhead = buyQueueAhead(downBook, downFirst)
-	}
 	snap.FirstLeg = first
-	snap.PairCost = snap.UpMakerPrice + snap.DownMakerPrice
-	snap.GrossEdge = 1 - snap.PairCost
-	snap.PaperEdgePass = snap.NetEdge+1e-12 >= e.cfg.PaperMinEdge
-	snap.LiveEdgePass = snap.NetEdge+1e-12 >= e.cfg.TargetEdge
-	snap.PairEdgePass = snap.LiveEdgePass
-	if snap.PaperEdgePass {
-		snap.ExpectedLockedProfit = snap.OrderSize * snap.NetEdge
+	if !setSnapshotPath(snap, first) {
+		snap.Reason = "NO_COMPETITIVE_COMPLETION_WITHIN_EDGE"
+		return snap
 	}
 
 	snap.UpStrandedEV, snap.UpExitRisk, _, snap.UpStrandedRisk = strandedMetrics(pUp, upFirst, upBook.BestBid, res.PTBTerminal.Confidence, e.cfg.UncertaintyPenalty)
@@ -233,13 +272,12 @@ func (e *Engine) Evaluate(res *engine.EvaluationResult, market *polymarket.Marke
 		snap.Reason = "PAIR_EDGE_BELOW_PAPER_MIN"
 		return snap
 	}
-	if snap.LiveEdgePass {
-		snap.Status = StatusCandidate
-		snap.Reason = "READY"
-		return snap
-	}
 	snap.Status = StatusPaperCandidate
-	snap.Reason = "PAPER_READY_LIVE_EDGE_BELOW_TARGET"
+	if snap.LiveEdgePass {
+		snap.Reason = "AWAITING_COMPLETION_MODEL"
+	} else {
+		snap.Reason = "PAPER_READY_LIVE_EDGE_BELOW_TARGET"
+	}
 	return snap
 }
 
