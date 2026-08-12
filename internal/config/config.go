@@ -9,10 +9,10 @@ import (
 )
 
 type Config struct {
-	Port                   string
-	DBPath                 string
-	PolymarketPollSec      int
-	LogLevel               string
+	Port              string
+	DBPath            string
+	PolymarketPollSec int
+	LogLevel          string
 	// Dual40Only: box-only mod. Yon-forecast (directional paper + 15m runtime)
 	// devre disi; sadece dual40 box motoru + feed'ler + REST calisir.
 	Dual40Only             bool
