@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 	"pm-edge/internal/arb"
+	"pm-edge/internal/binance"
 	"pm-edge/internal/config"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
@@ -48,8 +51,12 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 	if r.tradeStreamMaxAge <= 0 {
 		r.tradeStreamMaxAge = 20 * time.Second
 	}
-	dualCfg, dualEnabled := dual40.LoadConfigFromEnv()
-	r.dual40 = newDual40Runtime(tf, dualCfg, db, pmClient, enabled && dualEnabled, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer, r.tradeStreamMaxAge)
+	// Dual40 is a BTC 5m-only experiment. The old constructor attached it to
+	// both 5m and 15m arb runtimes, contaminating the 5m table with 15m markets.
+	if strings.EqualFold(tf, "5m") {
+		dualCfg, dualEnabled := dual40.LoadConfigFromEnv()
+		r.dual40 = newDual40Runtime(tf, dualCfg, db, pmClient, enabled && dualEnabled, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer, r.tradeStreamMaxAge)
+	}
 	if enabled && cfg.ArbShadowEnabled {
 		stream.Start()
 	}
@@ -64,12 +71,16 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 	return r
 }
 
+func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+	if r == nil || r.dual40 == nil {
+		return
+	}
+	r.dual40.StartObserver(ctx, bClient, microClient)
+}
+
 func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {
 	if r == nil || res == nil || market == nil {
 		return
-	}
-	if r.dual40 != nil {
-		r.dual40.Submit(res, market)
 	}
 	if r.engine == nil || !r.engine.Enabled() {
 		return

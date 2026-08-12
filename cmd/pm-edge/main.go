@@ -159,6 +159,9 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if !isMockMode {
+		arbShadow.StartDual40Observer(ctx, bClient, microClient)
+	}
 	evaluator := engine.NewEvaluator(microClient)
 	state := &marketState{}
 	startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient, microClient)
