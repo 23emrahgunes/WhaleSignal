@@ -128,8 +128,8 @@ func (d *Database) GetArbSnapshotsByTimeframe(limit int, tf string) ([]arb.Snaps
 func (d *Database) GetArbStatsByTimeframe(tf string) (ArbStats, error) {
 	tf = NormalizeTimeframe(tf)
 	out := ArbStats{Timeframe: tf}
-	err := d.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='CANDIDATE' THEN 1 ELSE 0 END),0),
-        COALESCE(AVG(CASE WHEN status='CANDIDATE' THEN net_edge END),0), COALESCE(MAX(net_edge),0),
+	err := d.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status IN ('CANDIDATE','PAPER_CANDIDATE') THEN 1 ELSE 0 END),0),
+        COALESCE(AVG(CASE WHEN status IN ('CANDIDATE','PAPER_CANDIDATE') THEN net_edge END),0), COALESCE(MAX(net_edge),0),
         COALESCE(SUM(CASE WHEN first_leg='UP' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN first_leg='DOWN' THEN 1 ELSE 0 END),0)
         FROM arb_snapshots WHERE timeframe=?`, tf).Scan(&out.TotalSnapshots, &out.Candidates, &out.AverageNetEdge, &out.BestNetEdge, &out.UpFirst, &out.DownFirst)
 	if err != nil {
@@ -183,6 +183,7 @@ type ArbPaperStats struct {
 	PreferredFirstMatchRate float64 `json:"preferredFirstMatchRate"`
 	AverageCompletionMs     float64 `json:"averageCompletionMs"`
 	AverageLockedProfit     float64 `json:"averageLockedProfit"`
+	InvalidDataGap          int     `json:"invalidDataGap"`
 }
 
 func (d *Database) InsertArbPaperCycle(c *arb.PaperCycle) error {
@@ -224,7 +225,7 @@ func (d *Database) UpdateArbPaperCycle(c *arb.PaperCycle) error {
 
 func (d *Database) GetOpenArbPaperCycle(tf string) (*arb.PaperCycle, error) {
 	var raw string
-	err := d.db.QueryRow(`SELECT payload FROM arb_paper_cycles WHERE timeframe=? AND status IN (?,?) ORDER BY id DESC LIMIT 1`, NormalizeTimeframe(tf), arb.PaperStatusRestingPair, arb.PaperStatusOneLegFilled).Scan(&raw)
+	err := d.db.QueryRow(`SELECT payload FROM arb_paper_cycles WHERE timeframe=? AND status IN ('RESTING_FIRST','FIRST_PARTIAL','COMPLETING','COMPLETION_PARTIAL','RESTING_PAIR','ONE_LEG_FILLED') ORDER BY id DESC LIMIT 1`, NormalizeTimeframe(tf)).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -273,7 +274,8 @@ func (d *Database) GetArbPaperStatsByTimeframe(initial float64, tf string) (ArbP
 	out := ArbPaperStats{Timeframe: tf, InitialBalance: initial}
 	err := d.db.QueryRow(`SELECT
         COUNT(*),
-        COALESCE(SUM(CASE WHEN status IN (?,?) THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status IN ('RESTING_FIRST','FIRST_PARTIAL','COMPLETING','COMPLETION_PARTIAL','RESTING_PAIR','ONE_LEG_FILLED') THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN status=? THEN 1 ELSE 0 END),0),
@@ -284,9 +286,9 @@ func (d *Database) GetArbPaperStatsByTimeframe(initial float64, tf string) (ArbP
         COALESCE(AVG(CASE WHEN status=? THEN locked_pnl END),0),
         COALESCE(SUM(CASE WHEN status=? THEN paper_pnl ELSE 0 END),0)
         FROM arb_paper_cycles WHERE timeframe=?`,
-		arb.PaperStatusRestingPair, arb.PaperStatusOneLegFilled, arb.PaperStatusCompleted, arb.PaperStatusExpiredNoFill, arb.PaperStatusStrandedTimeout,
+		arb.PaperStatusCompleted, arb.PaperStatusExpiredNoFill, arb.PaperStatusStrandedTimeout, arb.PaperStatusDataGapInvalid,
 		arb.PaperStatusCompleted, arb.PaperStatusCompleted, arb.PaperStatusStrandedTimeout, tf).Scan(
-		&out.TotalCycles, &out.OpenCycles, &out.CompletedCycles, &out.ExpiredNoFill, &out.StrandedTimeout,
+		&out.TotalCycles, &out.OpenCycles, &out.CompletedCycles, &out.ExpiredNoFill, &out.StrandedTimeout, &out.InvalidDataGap,
 		&out.FirstLegFilledCycles, &out.PreferredFirstMatches, &out.LockedPnL, &out.NetPaperPnL, &out.DeployedCost,
 		&out.AverageCompletionMs, &out.AverageLockedProfit, &out.StrandedPnL)
 	if err != nil {

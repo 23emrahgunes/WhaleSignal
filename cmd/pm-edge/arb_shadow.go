@@ -18,24 +18,34 @@ type arbShadowRuntime struct {
 	engine              *arb.Engine
 	db                  *storage.Database
 	pmClient            *polymarket.Client
+	tradeStream         *polymarket.MarketTradeStream
 	busy                atomic.Bool
 	paperEnabled        bool
 	paperCfg            arb.PaperConfig
 	paperInitialBalance float64
 	maxBookFetchMs      int64
+	tradeStreamMaxAge   time.Duration
 	active              *arb.PaperCycle
 }
 
 func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool) *arbShadowRuntime {
+	stream := polymarket.NewMarketTradeStream()
 	r := &arbShadowRuntime{engine: arb.NewEngine(arb.Config{
 		Timeframe: tf, Enabled: enabled && cfg.ArbShadowEnabled,
-		TargetEdge: cfg.ArbTargetEdge, OperationalBuffer: cfg.ArbOperationalBuffer,
+		TargetEdge: cfg.ArbTargetEdge, PaperMinEdge: cfg.ArbPaperMinEdge,
+		OperationalBuffer:  cfg.ArbOperationalBuffer,
 		UncertaintyPenalty: cfg.ArbUncertaintyPenalty, MaxStrandedUnits: cfg.ArbMaxStrandedUnits,
-	}), db: db, pmClient: pmClient, paperEnabled: enabled && cfg.ArbPaperEnabled,
+	}), db: db, pmClient: pmClient, tradeStream: stream, paperEnabled: enabled && cfg.ArbPaperEnabled,
 		paperCfg:            arb.PaperConfig{Enabled: enabled && cfg.ArbPaperEnabled, OrderTTL: time.Duration(cfg.ArbPaperOrderTTLSec) * time.Second, MaxStranded: time.Duration(cfg.ArbPaperMaxStrandedSec) * time.Second, StopBeforeEnd: time.Duration(cfg.ArbPaperStopBeforeEndSec) * time.Second},
-		paperInitialBalance: cfg.PaperInitialBalance, maxBookFetchMs: int64(cfg.ArbMaxBookFetchMs)}
+		paperInitialBalance: cfg.PaperInitialBalance, maxBookFetchMs: int64(cfg.ArbMaxBookFetchMs), tradeStreamMaxAge: time.Duration(cfg.ArbTradeStreamMaxAgeSec) * time.Second}
 	if r.maxBookFetchMs <= 0 {
 		r.maxBookFetchMs = 1000
+	}
+	if r.tradeStreamMaxAge <= 0 {
+		r.tradeStreamMaxAge = 20 * time.Second
+	}
+	if enabled && cfg.ArbShadowEnabled {
+		stream.Start()
 	}
 	if r.paperEnabled {
 		if open, err := db.GetOpenArbPaperCycle(tf); err != nil {
@@ -70,6 +80,7 @@ func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymark
 			util.Logger.Warn("Maker arb missing DOWN token", zap.String("market", mc.Slug))
 			return
 		}
+		r.tradeStream.SetAssets([]string{upID, downID})
 
 		started := time.Now()
 		upBook, downBook, err := r.fetchPairBooks(upID, downID)
@@ -83,7 +94,7 @@ func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymark
 			return
 		}
 		snap.BookFetchMs = fetchMs
-		if snap.Status == arb.StatusCandidate && fetchMs > r.maxBookFetchMs {
+		if snap.Status != arb.StatusBlocked && fetchMs > r.maxBookFetchMs {
 			snap.Status = arb.StatusBlocked
 			snap.Reason = "BOOK_FETCH_TOO_SLOW"
 		}
@@ -94,8 +105,8 @@ func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymark
 
 		now := time.Now().UTC()
 		r.processPaper(snap, upBook, downBook, &mc, now)
-		if snap.Status == arb.StatusCandidate {
-			util.Logger.Info("MAKER ARB SHADOW CANDIDATE", zap.String("market", snap.MarketSlug), zap.Float64("up", snap.UpMakerPrice), zap.Float64("down", snap.DownMakerPrice), zap.Float64("netEdge", snap.NetEdge), zap.Float64("shares", snap.OrderSize), zap.String("safeFirstLeg", snap.FirstLeg), zap.Int64("bookFetchMs", snap.BookFetchMs))
+		if snap.Status == arb.StatusCandidate || snap.Status == arb.StatusPaperCandidate {
+			util.Logger.Info("MAKER ARB SAFE-FIRST SHADOW", zap.String("market", snap.MarketSlug), zap.String("status", snap.Status), zap.String("firstLeg", snap.FirstLeg), zap.Float64("firstQueueAhead", snap.FirstLegQueueAhead), zap.Float64("up", snap.UpMakerPrice), zap.Float64("down", snap.DownMakerPrice), zap.Float64("netEdge", snap.NetEdge), zap.Float64("paperMinEdge", snap.PaperMinEdge), zap.Float64("liveTargetEdge", snap.TargetEdge), zap.Int64("bookFetchMs", snap.BookFetchMs))
 		}
 	}()
 }
@@ -137,11 +148,22 @@ func (r *arbShadowRuntime) processPaper(snap *arb.Snapshot, upBook, downBook pol
 		r.logPaperTerminal(r.active)
 		r.active = nil
 	}
+
 	if r.active != nil {
-		if arb.AdvancePaperCycle(r.active, upBook, downBook, now, market.EndTime, r.paperCfg) {
-			if err := r.db.UpdateArbPaperCycle(r.active); err != nil {
-				util.Logger.Error("Maker arb paper update failed", zap.Error(err))
-				return
+		if r.tradeStream.GapCount() != r.active.StreamGapCount {
+			if arb.InvalidatePaperCycleDataGap(r.active, now) {
+				if err := r.db.UpdateArbPaperCycle(r.active); err != nil {
+					util.Logger.Error("Maker arb data-gap invalidation failed", zap.Error(err))
+					return
+				}
+			}
+		} else if r.tradeStream.Healthy(r.tradeStreamMaxAge) {
+			trades, latest := r.tradeStream.TradesAfter(r.active.LastTradeSeq)
+			if arb.AdvancePaperCycle(r.active, upBook, downBook, trades, latest, now, market.EndTime, r.paperCfg) {
+				if err := r.db.UpdateArbPaperCycle(r.active); err != nil {
+					util.Logger.Error("Maker arb paper update failed", zap.Error(err))
+					return
+				}
 			}
 		}
 		if r.active.IsTerminal() {
@@ -149,9 +171,13 @@ func (r *arbShadowRuntime) processPaper(snap *arb.Snapshot, upBook, downBook pol
 			r.active = nil
 		}
 	}
-	if r.active != nil || snap.Status != arb.StatusCandidate {
+	if r.active != nil || snap.Status == arb.StatusBlocked || !snap.PaperEdgePass || !snap.PTBReady {
 		return
 	}
+	if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
+		return
+	}
+
 	stats, err := r.db.GetArbPaperStatsByTimeframe(r.paperInitialBalance, snap.Timeframe)
 	if err != nil {
 		util.Logger.Warn("Maker arb paper balance unavailable", zap.Error(err))
@@ -162,7 +188,7 @@ func (r *arbShadowRuntime) processPaper(snap *arb.Snapshot, upBook, downBook pol
 		util.Logger.Warn("Maker arb paper insufficient balance", zap.Float64("cash", stats.CashBalance), zap.Float64("required", required))
 		return
 	}
-	c := arb.NewPaperCycle(snap, now)
+	c := arb.NewPaperCycle(snap, upBook, downBook, now, r.tradeStream.LastSeq(), r.tradeStream.GapCount())
 	if c == nil {
 		return
 	}
@@ -171,12 +197,12 @@ func (r *arbShadowRuntime) processPaper(snap *arb.Snapshot, upBook, downBook pol
 		return
 	}
 	r.active = c
-	util.Logger.Info("MAKER ARB PAPER PAIR POSTED", zap.Int64("id", c.ID), zap.String("market", c.MarketSlug), zap.Float64("up", c.UpOrderPrice), zap.Float64("down", c.DownOrderPrice), zap.Float64("shares", c.OrderSize), zap.String("preferredFirst", c.PreferredFirstLeg))
+	util.Logger.Info("MAKER ARB PAPER SAFE-FIRST POSTED", zap.Int64("id", c.ID), zap.String("market", c.MarketSlug), zap.String("firstSide", c.FirstOrderSide), zap.Float64("firstPrice", c.FirstOrderPrice), zap.Float64("queueAhead", c.FirstQueueAhead), zap.String("completionSide", c.SecondOrderSide), zap.Float64("plannedCompletion", c.SecondOrderPrice), zap.Float64("shares", c.OrderSize), zap.Float64("entryNetEdge", c.EntryNetEdge))
 }
 
 func (r *arbShadowRuntime) logPaperTerminal(c *arb.PaperCycle) {
 	if c == nil {
 		return
 	}
-	util.Logger.Info("MAKER ARB PAPER CYCLE CLOSED", zap.Int64("id", c.ID), zap.String("market", c.MarketSlug), zap.String("status", c.Status), zap.String("firstLeg", c.ActualFirstLeg), zap.Bool("preferredMatched", c.PreferredFirstMatched), zap.Int64("completionMs", c.CompletionMs), zap.Float64("lockedPnL", c.LockedPnL), zap.Float64("paperPnL", c.PaperPnL), zap.Int("reprices", c.Reprices), zap.String("reason", c.Reason))
+	util.Logger.Info("MAKER ARB PAPER CYCLE CLOSED", zap.Int64("id", c.ID), zap.String("market", c.MarketSlug), zap.String("status", c.Status), zap.String("firstLeg", c.ActualFirstLeg), zap.Float64("firstFilled", c.FirstFilledShares), zap.Float64("secondFilled", c.SecondFilledShares), zap.Int64("completionMs", c.CompletionMs), zap.Float64("lockedPnL", c.LockedPnL), zap.Float64("paperPnL", c.PaperPnL), zap.Int("reprices", c.Reprices), zap.String("reason", c.Reason))
 }

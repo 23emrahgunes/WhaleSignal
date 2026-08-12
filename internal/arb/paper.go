@@ -64,19 +64,19 @@ type PaperCycle struct {
 	UpCompletionMax   float64 `json:"upCompletionMax"`
 	Reprices          int     `json:"reprices"`
 
-	FirstOrderSide       string  `json:"firstOrderSide"`
-	FirstOrderPrice      float64 `json:"firstOrderPrice"`
-	FirstFilledShares    float64 `json:"firstFilledShares"`
-	FirstQueueAhead      float64 `json:"firstQueueAhead"`
-	SecondOrderSide      string  `json:"secondOrderSide"`
-	SecondOrderPrice     float64 `json:"secondOrderPrice"`
-	SecondFilledShares   float64 `json:"secondFilledShares"`
-	SecondQueueAhead     float64 `json:"secondQueueAhead"`
-	FirstPartialAt       string  `json:"firstPartialAt"`
-	FirstFullAt          string  `json:"firstFullAt"`
-	CompletionPostedAt   string  `json:"completionPostedAt"`
-	LastTradeSeq         int64   `json:"lastTradeSeq"`
-	StreamGapCount       int64   `json:"streamGapCount"`
+	FirstOrderSide     string  `json:"firstOrderSide"`
+	FirstOrderPrice    float64 `json:"firstOrderPrice"`
+	FirstFilledShares  float64 `json:"firstFilledShares"`
+	FirstQueueAhead    float64 `json:"firstQueueAhead"`
+	SecondOrderSide    string  `json:"secondOrderSide"`
+	SecondOrderPrice   float64 `json:"secondOrderPrice"`
+	SecondFilledShares float64 `json:"secondFilledShares"`
+	SecondQueueAhead   float64 `json:"secondQueueAhead"`
+	FirstPartialAt     string  `json:"firstPartialAt"`
+	FirstFullAt        string  `json:"firstFullAt"`
+	CompletionPostedAt string  `json:"completionPostedAt"`
+	LastTradeSeq       int64   `json:"lastTradeSeq"`
+	StreamGapCount     int64   `json:"streamGapCount"`
 
 	EntryPTBPUp       float64 `json:"entryPtbPUp"`
 	EntryPTBPDown     float64 `json:"entryPtbPDown"`
@@ -122,7 +122,7 @@ func NewPaperCycle(s *Snapshot, upBook, downBook polymarket.BookSnapshot, now ti
 		EntryPTBPUp: s.PTBPUp, EntryPTBPDown: s.PTBPDown, EntryPTBDecision: s.PTBDecision,
 		EntryNetEdge: s.NetEdge, TargetEdge: s.TargetEdge, PaperMinEdge: s.PaperMinEdge, OperationalBuffer: s.OperationalBuffer,
 		ReservedPairCost: s.OrderSize * (s.UpMakerPrice + s.DownMakerPrice),
-		LastUpBestBid: upBook.BestBid, LastUpBestAsk: upBook.BestAsk,
+		LastUpBestBid:    upBook.BestBid, LastUpBestAsk: upBook.BestAsk,
 		LastDownBestBid: downBook.BestBid, LastDownBestAsk: downBook.BestAsk,
 		LastTradeSeq: lastTradeSeq, StreamGapCount: streamGapCount,
 	}
@@ -178,8 +178,6 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 	}
 
 	if c.Status == PaperStatusRestingFirst || c.Status == PaperStatusFirstPartial {
-		book := bookForSide(c.FirstOrderSide, upBook, downBook)
-		c.FirstQueueAhead = math.Max(c.FirstQueueAhead, buyQueueAhead(book, c.FirstOrderPrice))
 		delta, q := makerBuyFillFromTrades(tokenForSide(c.FirstOrderSide, c), c.FirstOrderPrice, c.FirstFilledShares, c.OrderSize, c.FirstQueueAhead, trades)
 		c.FirstQueueAhead = q
 		if delta > 0 {
@@ -201,7 +199,11 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 			c.CompletionPostedAt = c.FirstFullAt
 			secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
 			c.SecondQueueAhead = buyQueueAhead(secondBook, c.SecondOrderPrice)
-			changed = true
+			c.LastTradeSeq = latestSeq
+			c.UpdatedAt = now.Format(time.RFC3339Nano)
+			// The completion order did not exist during the trade batch that filled
+			// the first leg. Start evaluating it only from the next batch.
+			return true
 		} else if c.FirstFilledShares > 0 {
 			c.Status = PaperStatusFirstPartial
 			c.Reason = "FIRST_LEG_PARTIAL"
@@ -237,7 +239,6 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 
 	if c.Status == PaperStatusCompleting || c.Status == PaperStatusCompletionPartial {
 		secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
-		c.SecondQueueAhead = math.Max(c.SecondQueueAhead, buyQueueAhead(secondBook, c.SecondOrderPrice))
 		delta, q := makerBuyFillFromTrades(tokenForSide(c.SecondOrderSide, c), c.SecondOrderPrice, c.SecondFilledShares, c.OrderSize, c.SecondQueueAhead, trades)
 		c.SecondQueueAhead = q
 		if delta > 0 {
@@ -340,10 +341,12 @@ func makerBuyFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize
 			q -= consume
 			available -= consume
 		} else if tr.Price < orderPrice-1e-9 {
-			// A print below our resting BUY proves the real book swept through our
-			// price. Only the volume that actually printed beyond our level is
-			// credited, never an automatic full fill.
+			// A lower SELL print cannot occur while our higher resting BUY is
+			// still unfilled. The sweep necessarily consumed our full remainder.
 			q = 0
+			filled += remaining
+			remaining = 0
+			continue
 		}
 		if available > 0 && q <= 1e-9 {
 			f := math.Min(remaining, available)

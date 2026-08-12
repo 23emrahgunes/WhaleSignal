@@ -25,19 +25,19 @@ type MarketTrade struct {
 }
 
 type MarketTradeStream struct {
-	url      string
-	mu       sync.RWMutex
-	assets   []string
-	version  uint64
-	trades   []MarketTrade
-	lastRead time.Time
-	conn     *websocket.Conn
+	url       string
+	mu        sync.RWMutex
+	assets    []string
+	version   uint64
+	trades    []MarketTrade
+	lastRead  time.Time
+	conn      *websocket.Conn
 	connected bool
-	gapCount int64
-	nextSeq  atomic.Int64
-	stop     chan struct{}
-	stopOnce sync.Once
-	wg       sync.WaitGroup
+	gapCount  int64
+	nextSeq   atomic.Int64
+	stop      chan struct{}
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 }
 
 func NewMarketTradeStream() *MarketTradeStream {

@@ -61,19 +61,19 @@ type Snapshot struct {
 	LiveEdgePass         bool    `json:"liveEdgePass"`
 	ExpectedLockedProfit float64 `json:"expectedLockedProfit"`
 
-	PTBReady         bool    `json:"ptbReady"`
-	PTBDecision      string  `json:"ptbDecision"`
-	PTBPUp           float64 `json:"ptbPUp"`
-	PTBPDown         float64 `json:"ptbPDown"`
-	PTBConfidence    float64 `json:"ptbConfidence"`
-	UpExitRisk       float64 `json:"upExitRisk"`
-	DownExitRisk     float64 `json:"downExitRisk"`
-	UpStrandedEV     float64 `json:"upStrandedEv"`
-	DownStrandedEV   float64 `json:"downStrandedEv"`
-	UpStrandedRisk   float64 `json:"upStrandedRisk"`
-	DownStrandedRisk float64 `json:"downStrandedRisk"`
-	FirstLeg         string  `json:"firstLeg"`
-	QuoteSkew        string  `json:"quoteSkew"`
+	PTBReady           bool    `json:"ptbReady"`
+	PTBDecision        string  `json:"ptbDecision"`
+	PTBPUp             float64 `json:"ptbPUp"`
+	PTBPDown           float64 `json:"ptbPDown"`
+	PTBConfidence      float64 `json:"ptbConfidence"`
+	UpExitRisk         float64 `json:"upExitRisk"`
+	DownExitRisk       float64 `json:"downExitRisk"`
+	UpStrandedEV       float64 `json:"upStrandedEv"`
+	DownStrandedEV     float64 `json:"downStrandedEv"`
+	UpStrandedRisk     float64 `json:"upStrandedRisk"`
+	DownStrandedRisk   float64 `json:"downStrandedRisk"`
+	FirstLeg           string  `json:"firstLeg"`
+	QuoteSkew          string  `json:"quoteSkew"`
 	FirstLegQueueAhead float64 `json:"firstLegQueueAhead"`
 
 	DownCompletionMax     float64 `json:"downCompletionMax"`
@@ -180,6 +180,12 @@ func (e *Engine) Evaluate(res *engine.EvaluationResult, market *polymarket.Marke
 	upEligible := upFirstNet+1e-12 >= e.cfg.PaperMinEdge
 	downEligible := downFirstNet+1e-12 >= e.cfg.PaperMinEdge
 
+	if !upEligible && !downEligible {
+		snap.NetEdge = -1
+		snap.Reason = "NO_COMPETITIVE_COMPLETION_WITHIN_EDGE"
+		return snap
+	}
+
 	first := "UP"
 	if (!upEligible && downEligible) || (upEligible == downEligible && downRisk < upRisk) {
 		first = "DOWN"
@@ -276,8 +282,8 @@ func completionStartPrice(filledPrice, edgeFloor, operationalBuffer float64, opp
 	if !ok {
 		return 0, false
 	}
-	if price > ceiling {
-		price = floorToTick(ceiling, opposite.TickSize)
+	if price > ceiling+1e-12 {
+		return 0, false
 	}
 	postOnlyCeiling := floorToTick(opposite.BestAsk-opposite.TickSize, opposite.TickSize)
 	if price > postOnlyCeiling {
