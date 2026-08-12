@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"pm-edge/internal/engine"
@@ -55,8 +57,29 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/arb/paper/stats", s.cors(s.handleArbPaperStats))
 	mux.HandleFunc("/api/comparison", s.cors(s.handleComparison))
 	fileServer := http.FileServer(http.Dir("web/static"))
-	mux.Handle("/", s.corsHandler(fileServer))
+	mux.Handle("/", s.corsHandler(s.staticWithInverseAB(fileServer)))
 	return http.ListenAndServe(":"+port, mux)
+}
+
+// staticWithInverseAB leaves the existing dashboard file untouched and injects
+// a tiny versioned A/B overlay only on the root/index response. Other static
+// assets, including /dual40.html, keep the standard file-server path.
+func (s *Server) staticWithInverseAB(fileServer http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		data, err := os.ReadFile("web/static/index.html")
+		if err != nil {
+			http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
+			return
+		}
+		html := strings.Replace(string(data), "</body>", `<script src="/inverse-ab.js?v=1"></script></body>`, 1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(html))
+	})
 }
 
 func (s *Server) cors(h http.HandlerFunc) http.HandlerFunc {
