@@ -9,11 +9,19 @@ import (
 )
 
 const (
-	PaperStatusRestingPair     = "RESTING_PAIR"
-	PaperStatusOneLegFilled    = "ONE_LEG_FILLED"
-	PaperStatusCompleted       = "COMPLETED"
-	PaperStatusExpiredNoFill   = "EXPIRED_NO_FILL"
-	PaperStatusStrandedTimeout = "STRANDED_TIMEOUT"
+	PaperStatusRestingFirst      = "RESTING_FIRST"
+	PaperStatusFirstPartial      = "FIRST_PARTIAL"
+	PaperStatusCompleting        = "COMPLETING"
+	PaperStatusCompletionPartial = "COMPLETION_PARTIAL"
+	PaperStatusCompleted         = "COMPLETED"
+	PaperStatusExpiredNoFill     = "EXPIRED_NO_FILL"
+	PaperStatusStrandedTimeout   = "STRANDED_TIMEOUT"
+	PaperStatusDataGapInvalid    = "DATA_GAP_INVALID"
+
+	// Legacy statuses are recognized so an older open shadow row cannot wedge
+	// startup after an upgrade.
+	PaperStatusRestingPair  = "RESTING_PAIR"
+	PaperStatusOneLegFilled = "ONE_LEG_FILLED"
 )
 
 type PaperConfig struct {
@@ -33,26 +41,49 @@ type PaperCycle struct {
 	Reason                string  `json:"reason"`
 	FillModel             string  `json:"fillModel"`
 	OrderMode             string  `json:"orderMode"`
+	StrategyMode          string  `json:"strategyMode"`
 	OrderSize             float64 `json:"orderSize"`
 	PreferredFirstLeg     string  `json:"preferredFirstLeg"`
 	ActualFirstLeg        string  `json:"actualFirstLeg"`
 	PreferredFirstMatched bool    `json:"preferredFirstMatched"`
 
+	UpTokenID   string `json:"upTokenId"`
+	DownTokenID string `json:"downTokenId"`
+
 	UpOrderPrice      float64 `json:"upOrderPrice"`
 	DownOrderPrice    float64 `json:"downOrderPrice"`
 	UpFillPrice       float64 `json:"upFillPrice"`
 	DownFillPrice     float64 `json:"downFillPrice"`
+	UpFilledShares    float64 `json:"upFilledShares"`
+	DownFilledShares  float64 `json:"downFilledShares"`
+	UpFillNotional    float64 `json:"upFillNotional"`
+	DownFillNotional  float64 `json:"downFillNotional"`
 	UpFilledAt        string  `json:"upFilledAt"`
 	DownFilledAt      string  `json:"downFilledAt"`
 	DownCompletionMax float64 `json:"downCompletionMax"`
 	UpCompletionMax   float64 `json:"upCompletionMax"`
 	Reprices          int     `json:"reprices"`
 
+	FirstOrderSide       string  `json:"firstOrderSide"`
+	FirstOrderPrice      float64 `json:"firstOrderPrice"`
+	FirstFilledShares    float64 `json:"firstFilledShares"`
+	FirstQueueAhead      float64 `json:"firstQueueAhead"`
+	SecondOrderSide      string  `json:"secondOrderSide"`
+	SecondOrderPrice     float64 `json:"secondOrderPrice"`
+	SecondFilledShares   float64 `json:"secondFilledShares"`
+	SecondQueueAhead     float64 `json:"secondQueueAhead"`
+	FirstPartialAt       string  `json:"firstPartialAt"`
+	FirstFullAt          string  `json:"firstFullAt"`
+	CompletionPostedAt   string  `json:"completionPostedAt"`
+	LastTradeSeq         int64   `json:"lastTradeSeq"`
+	StreamGapCount       int64   `json:"streamGapCount"`
+
 	EntryPTBPUp       float64 `json:"entryPtbPUp"`
 	EntryPTBPDown     float64 `json:"entryPtbPDown"`
 	EntryPTBDecision  string  `json:"entryPtbDecision"`
 	EntryNetEdge      float64 `json:"entryNetEdge"`
 	TargetEdge        float64 `json:"targetEdge"`
+	PaperMinEdge      float64 `json:"paperMinEdge"`
 	OperationalBuffer float64 `json:"operationalBuffer"`
 
 	FirstFillAt      string  `json:"firstFillAt"`
@@ -74,35 +105,55 @@ func DefaultPaperConfig() PaperConfig {
 	return PaperConfig{Enabled: true, OrderTTL: 12 * time.Second, MaxStranded: 20 * time.Second, StopBeforeEnd: 12 * time.Second}
 }
 
-func NewPaperCycle(s *Snapshot, now time.Time) *PaperCycle {
-	if s == nil || s.Status != StatusCandidate || s.OrderSize <= 0 || s.UpMakerPrice <= 0 || s.DownMakerPrice <= 0 {
+func NewPaperCycle(s *Snapshot, upBook, downBook polymarket.BookSnapshot, now time.Time, lastTradeSeq, streamGapCount int64) *PaperCycle {
+	if s == nil || !s.PaperEdgePass || s.OrderSize <= 0 || s.UpMakerPrice <= 0 || s.DownMakerPrice <= 0 || !validBook(upBook) || !validBook(downBook) {
 		return nil
 	}
 	now = now.UTC()
-	return &PaperCycle{
+	c := &PaperCycle{
 		Timeframe: s.Timeframe, MarketSlug: s.MarketSlug,
 		CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano),
-		Status: PaperStatusRestingPair, Reason: "PAIR_POSTED_SHADOW",
-		FillModel: "CONSERVATIVE_CROSS_THROUGH_FULL_SIZE", OrderMode: "GTC_GTD_POST_ONLY",
+		Status: PaperStatusRestingFirst, Reason: "SAFE_FIRST_POSTED_SHADOW",
+		FillModel: "WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL", OrderMode: "GTC_GTD_POST_ONLY", StrategyMode: "SAFE_FIRST_SEQUENTIAL_MAKER",
 		OrderSize: s.OrderSize, PreferredFirstLeg: s.FirstLeg,
+		UpTokenID: s.UpTokenID, DownTokenID: s.DownTokenID,
 		UpOrderPrice: s.UpMakerPrice, DownOrderPrice: s.DownMakerPrice,
 		DownCompletionMax: s.DownCompletionMax, UpCompletionMax: s.UpCompletionMax,
 		EntryPTBPUp: s.PTBPUp, EntryPTBPDown: s.PTBPDown, EntryPTBDecision: s.PTBDecision,
-		EntryNetEdge: s.NetEdge, TargetEdge: s.TargetEdge, OperationalBuffer: s.OperationalBuffer,
+		EntryNetEdge: s.NetEdge, TargetEdge: s.TargetEdge, PaperMinEdge: s.PaperMinEdge, OperationalBuffer: s.OperationalBuffer,
 		ReservedPairCost: s.OrderSize * (s.UpMakerPrice + s.DownMakerPrice),
-		LastUpBestBid:    s.UpBestBid, LastUpBestAsk: s.UpBestAsk,
-		LastDownBestBid: s.DownBestBid, LastDownBestAsk: s.DownBestAsk,
+		LastUpBestBid: upBook.BestBid, LastUpBestAsk: upBook.BestAsk,
+		LastDownBestBid: downBook.BestBid, LastDownBestAsk: downBook.BestAsk,
+		LastTradeSeq: lastTradeSeq, StreamGapCount: streamGapCount,
 	}
+	if strings.EqualFold(s.FirstLeg, "DOWN") {
+		c.FirstOrderSide, c.FirstOrderPrice = "DOWN", s.DownMakerPrice
+		c.SecondOrderSide, c.SecondOrderPrice = "UP", s.UpMakerPrice
+		c.FirstQueueAhead = buyQueueAhead(downBook, c.FirstOrderPrice)
+	} else {
+		c.FirstOrderSide, c.FirstOrderPrice = "UP", s.UpMakerPrice
+		c.SecondOrderSide, c.SecondOrderPrice = "DOWN", s.DownMakerPrice
+		c.FirstQueueAhead = buyQueueAhead(upBook, c.FirstOrderPrice)
+	}
+	return c
 }
 
 func (c *PaperCycle) IsOpen() bool {
-	return c != nil && (c.Status == PaperStatusRestingPair || c.Status == PaperStatusOneLegFilled)
+	if c == nil {
+		return false
+	}
+	switch c.Status {
+	case PaperStatusRestingFirst, PaperStatusFirstPartial, PaperStatusCompleting, PaperStatusCompletionPartial, PaperStatusRestingPair, PaperStatusOneLegFilled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *PaperCycle) IsTerminal() bool { return c != nil && !c.IsOpen() }
 
-func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, now, marketEnd time.Time, cfg PaperConfig) bool {
-	if c == nil || !c.IsOpen() {
+func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, trades []polymarket.MarketTrade, latestSeq int64, now, marketEnd time.Time, cfg PaperConfig) bool {
+	if c == nil || !c.IsOpen() || !validBook(upBook) || !validBook(downBook) {
 		return false
 	}
 	if cfg.OrderTTL <= 0 {
@@ -114,34 +165,54 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 	if cfg.StopBeforeEnd <= 0 {
 		cfg.StopBeforeEnd = 12 * time.Second
 	}
-	if !validBook(upBook) || !validBook(downBook) {
-		return false
-	}
 	now = now.UTC()
 	changed := updateLastBook(c, upBook, downBook)
 
-	if c.Status == PaperStatusRestingPair {
-		upFill := makerCrossFill(upBook, c.UpOrderPrice, c.OrderSize)
-		downFill := makerCrossFill(downBook, c.DownOrderPrice, c.OrderSize)
-		switch {
-		case upFill && downFill:
-			fillBoth(c, now)
-			c.ActualFirstLeg = "SIMULTANEOUS"
-			c.PreferredFirstMatched = false
-			c.CompletionMs = 0
-			completeCycle(c, now)
-			return true
-		case upFill:
-			fillFirst(c, "UP", now)
+	// Old executor rows are not replay-compatible with the queue model.
+	if c.Status == PaperStatusRestingPair || c.Status == PaperStatusOneLegFilled {
+		c.Status = PaperStatusDataGapInvalid
+		c.Reason = "LEGACY_FILL_MODEL_INVALIDATED"
+		c.PaperPnL = 0
+		c.UpdatedAt = now.Format(time.RFC3339Nano)
+		return true
+	}
+
+	if c.Status == PaperStatusRestingFirst || c.Status == PaperStatusFirstPartial {
+		book := bookForSide(c.FirstOrderSide, upBook, downBook)
+		c.FirstQueueAhead = math.Max(c.FirstQueueAhead, buyQueueAhead(book, c.FirstOrderPrice))
+		delta, q := makerBuyFillFromTrades(tokenForSide(c.FirstOrderSide, c), c.FirstOrderPrice, c.FirstFilledShares, c.OrderSize, c.FirstQueueAhead, trades)
+		c.FirstQueueAhead = q
+		if delta > 0 {
+			addFill(c, c.FirstOrderSide, delta, c.FirstOrderPrice, now)
+			c.FirstFilledShares += delta
+			if c.FirstPartialAt == "" {
+				c.FirstPartialAt = now.Format(time.RFC3339Nano)
+				c.FirstFillAt = c.FirstPartialAt
+				c.ActualFirstLeg = c.FirstOrderSide
+				c.PreferredFirstMatched = strings.EqualFold(c.PreferredFirstLeg, c.ActualFirstLeg)
+			}
 			changed = true
-		case downFill:
-			fillFirst(c, "DOWN", now)
+		}
+		if c.FirstFilledShares+1e-9 >= c.OrderSize {
+			c.FirstFilledShares = c.OrderSize
+			c.FirstFullAt = now.Format(time.RFC3339Nano)
+			c.Status = PaperStatusCompleting
+			c.Reason = "FIRST_LEG_FULL_COMPLETION_POSTED"
+			c.CompletionPostedAt = c.FirstFullAt
+			secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
+			c.SecondQueueAhead = buyQueueAhead(secondBook, c.SecondOrderPrice)
 			changed = true
-		default:
+		} else if c.FirstFilledShares > 0 {
+			c.Status = PaperStatusFirstPartial
+			c.Reason = "FIRST_LEG_PARTIAL"
+		}
+		c.LastTradeSeq = latestSeq
+
+		if c.Status == PaperStatusRestingFirst {
 			created, ok := parseTime(c.CreatedAt)
 			if ok && now.Sub(created) >= cfg.OrderTTL {
 				c.Status = PaperStatusExpiredNoFill
-				c.Reason = "PAIR_ORDER_TTL_EXPIRED"
+				c.Reason = "SAFE_FIRST_ORDER_TTL_EXPIRED"
 				c.UpdatedAt = now.Format(time.RFC3339Nano)
 				return true
 			}
@@ -151,6 +222,12 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 				c.UpdatedAt = now.Format(time.RFC3339Nano)
 				return true
 			}
+		}
+		if c.Status == PaperStatusFirstPartial && strandedExpired(c, now, marketEnd, cfg) {
+			timeoutStranded(c, upBook, downBook, now)
+			return true
+		}
+		if c.Status != PaperStatusCompleting {
 			if changed {
 				c.UpdatedAt = now.Format(time.RFC3339Nano)
 			}
@@ -158,56 +235,54 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 		}
 	}
 
-	if c.Status != PaperStatusOneLegFilled {
-		return changed
+	if c.Status == PaperStatusCompleting || c.Status == PaperStatusCompletionPartial {
+		secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
+		c.SecondQueueAhead = math.Max(c.SecondQueueAhead, buyQueueAhead(secondBook, c.SecondOrderPrice))
+		delta, q := makerBuyFillFromTrades(tokenForSide(c.SecondOrderSide, c), c.SecondOrderPrice, c.SecondFilledShares, c.OrderSize, c.SecondQueueAhead, trades)
+		c.SecondQueueAhead = q
+		if delta > 0 {
+			addFill(c, c.SecondOrderSide, delta, c.SecondOrderPrice, now)
+			c.SecondFilledShares += delta
+			changed = true
+		}
+		c.LastTradeSeq = latestSeq
+		if c.SecondFilledShares+1e-9 >= c.OrderSize {
+			c.SecondFilledShares = c.OrderSize
+			firstAt, _ := parseTime(c.FirstPartialAt)
+			if !firstAt.IsZero() {
+				c.CompletionMs = now.Sub(firstAt).Milliseconds()
+			}
+			completeCycle(c, now)
+			return true
+		}
+		if c.SecondFilledShares > 0 {
+			c.Status = PaperStatusCompletionPartial
+			c.Reason = "COMPLETION_PARTIAL"
+		}
+		if strandedExpired(c, now, marketEnd, cfg) {
+			timeoutStranded(c, upBook, downBook, now)
+			return true
+		}
+
+		ceiling := c.DownCompletionMax
+		if strings.EqualFold(c.SecondOrderSide, "UP") {
+			ceiling = c.UpCompletionMax
+		}
+		if p, ok := completionReprice(c.SecondOrderPrice, ceiling, secondBook); ok && p > c.SecondOrderPrice+1e-12 {
+			c.SecondOrderPrice = p
+			if strings.EqualFold(c.SecondOrderSide, "UP") {
+				c.UpOrderPrice = p
+			} else {
+				c.DownOrderPrice = p
+			}
+			c.SecondQueueAhead = buyQueueAhead(secondBook, p)
+			c.Reprices++
+			changed = true
+		}
 	}
 
-	firstAt, _ := parseTime(c.FirstFillAt)
-	if !firstAt.IsZero() {
+	if firstAt, ok := parseTime(c.FirstPartialAt); ok {
 		c.StrandedSeconds = math.Max(0, now.Sub(firstAt).Seconds())
-	}
-
-	if c.ActualFirstLeg == "UP" {
-		if makerCrossFill(downBook, c.DownOrderPrice, c.OrderSize) {
-			c.DownFillPrice = c.DownOrderPrice
-			c.DownFilledAt = now.Format(time.RFC3339Nano)
-			c.DeployedCost += c.OrderSize * c.DownFillPrice
-			if !firstAt.IsZero() {
-				c.CompletionMs = now.Sub(firstAt).Milliseconds()
-			}
-			completeCycle(c, now)
-			return true
-		}
-	} else if c.ActualFirstLeg == "DOWN" {
-		if makerCrossFill(upBook, c.UpOrderPrice, c.OrderSize) {
-			c.UpFillPrice = c.UpOrderPrice
-			c.UpFilledAt = now.Format(time.RFC3339Nano)
-			c.DeployedCost += c.OrderSize * c.UpFillPrice
-			if !firstAt.IsZero() {
-				c.CompletionMs = now.Sub(firstAt).Milliseconds()
-			}
-			completeCycle(c, now)
-			return true
-		}
-	}
-
-	if (!marketEnd.IsZero() && marketEnd.Sub(now) <= cfg.StopBeforeEnd) || (!firstAt.IsZero() && now.Sub(firstAt) >= cfg.MaxStranded) {
-		timeoutStranded(c, upBook, downBook, now)
-		return true
-	}
-
-	if c.ActualFirstLeg == "UP" {
-		if p, ok := completionReprice(c.DownOrderPrice, c.DownCompletionMax, downBook); ok && p > c.DownOrderPrice+1e-12 {
-			c.DownOrderPrice = p
-			c.Reprices++
-			changed = true
-		}
-	} else if c.ActualFirstLeg == "DOWN" {
-		if p, ok := completionReprice(c.UpOrderPrice, c.UpCompletionMax, upBook); ok && p > c.UpOrderPrice+1e-12 {
-			c.UpOrderPrice = p
-			c.Reprices++
-			changed = true
-		}
 	}
 	if changed {
 		c.UpdatedAt = now.Format(time.RFC3339Nano)
@@ -215,96 +290,172 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 	return changed
 }
 
+func InvalidatePaperCycleDataGap(c *PaperCycle, now time.Time) bool {
+	if c == nil || !c.IsOpen() {
+		return false
+	}
+	c.Status = PaperStatusDataGapInvalid
+	c.Reason = "MARKET_TRADE_STREAM_GAP"
+	c.PaperPnL = 0
+	c.LockedPnL = 0
+	c.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+	return true
+}
+
 func ClosePaperCycleForMarketChange(c *PaperCycle, now time.Time) bool {
 	if c == nil || !c.IsOpen() {
 		return false
 	}
 	now = now.UTC()
-	if c.Status == PaperStatusRestingPair {
+	if c.UpFilledShares <= 0 && c.DownFilledShares <= 0 {
 		c.Status = PaperStatusExpiredNoFill
 		c.Reason = "MARKET_CHANGED_NO_FILL"
 		c.UpdatedAt = now.Format(time.RFC3339Nano)
 		return true
 	}
-	if c.ActualFirstLeg == "UP" {
-		c.ExitMarkPrice = c.LastUpBestBid
-		c.PaperPnL = c.OrderSize * (c.ExitMarkPrice - c.UpFillPrice)
-	} else if c.ActualFirstLeg == "DOWN" {
-		c.ExitMarkPrice = c.LastDownBestBid
-		c.PaperPnL = c.OrderSize * (c.ExitMarkPrice - c.DownFillPrice)
-	}
+	markPaperPnLWithPrices(c, c.LastUpBestBid, c.LastDownBestBid)
 	c.Status = PaperStatusStrandedTimeout
 	c.Reason = "MARKET_CHANGED_MARK_TO_LAST_BID"
 	c.UpdatedAt = now.Format(time.RFC3339Nano)
 	return true
 }
 
-func fillFirst(c *PaperCycle, side string, now time.Time) {
-	c.Status = PaperStatusOneLegFilled
-	c.Reason = "FIRST_LEG_FILLED"
-	c.ActualFirstLeg = side
-	c.PreferredFirstMatched = strings.EqualFold(c.PreferredFirstLeg, side)
-	c.FirstFillAt = now.Format(time.RFC3339Nano)
-	if side == "UP" {
-		c.UpFillPrice = c.UpOrderPrice
-		c.UpFilledAt = c.FirstFillAt
-		c.DeployedCost = c.OrderSize * c.UpFillPrice
-	} else {
-		c.DownFillPrice = c.DownOrderPrice
-		c.DownFilledAt = c.FirstFillAt
-		c.DeployedCost = c.OrderSize * c.DownFillPrice
+func makerBuyFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize, queueAhead float64, trades []polymarket.MarketTrade) (float64, float64) {
+	remaining := math.Max(0, orderSize-alreadyFilled)
+	filled := 0.0
+	q := math.Max(0, queueAhead)
+	for _, tr := range trades {
+		if remaining <= 1e-9 || tr.TokenID != tokenID || !strings.EqualFold(tr.Side, "SELL") || tr.Size <= 0 {
+			continue
+		}
+		if tr.Price > orderPrice+1e-9 {
+			// Better-priced bids execute before us. Their executed volume can only
+			// reduce queue ahead; it cannot fill our lower bid.
+			q = math.Max(0, q-tr.Size)
+			continue
+		}
+		available := tr.Size
+		if math.Abs(tr.Price-orderPrice) <= 1e-9 {
+			consume := math.Min(q, available)
+			q -= consume
+			available -= consume
+		} else if tr.Price < orderPrice-1e-9 {
+			// A print below our resting BUY proves the real book swept through our
+			// price. Only the volume that actually printed beyond our level is
+			// credited, never an automatic full fill.
+			q = 0
+		}
+		if available > 0 && q <= 1e-9 {
+			f := math.Min(remaining, available)
+			filled += f
+			remaining -= f
+		}
 	}
-	c.UpdatedAt = c.FirstFillAt
+	return filled, q
 }
 
-func fillBoth(c *PaperCycle, now time.Time) {
-	ts := now.Format(time.RFC3339Nano)
-	c.UpFillPrice, c.DownFillPrice = c.UpOrderPrice, c.DownOrderPrice
-	c.UpFilledAt, c.DownFilledAt = ts, ts
-	c.FirstFillAt = ts
-	c.DeployedCost = c.OrderSize * (c.UpFillPrice + c.DownFillPrice)
+func addFill(c *PaperCycle, side string, qty, price float64, now time.Time) {
+	if qty <= 0 {
+		return
+	}
+	ts := now.UTC().Format(time.RFC3339Nano)
+	if strings.EqualFold(side, "UP") {
+		c.UpFilledShares += qty
+		c.UpFillNotional += qty * price
+		c.UpFillPrice = c.UpFillNotional / c.UpFilledShares
+		c.UpFilledAt = ts
+	} else {
+		c.DownFilledShares += qty
+		c.DownFillNotional += qty * price
+		c.DownFillPrice = c.DownFillNotional / c.DownFilledShares
+		c.DownFilledAt = ts
+	}
+	c.DeployedCost += qty * price
 }
 
 func completeCycle(c *PaperCycle, now time.Time) {
 	c.Status = PaperStatusCompleted
 	c.Reason = "PAIR_COMPLETED_LOCKED"
-	c.LockedPnL = c.OrderSize * (1 - c.UpFillPrice - c.DownFillPrice)
+	matched := math.Min(c.UpFilledShares, c.DownFilledShares)
+	c.LockedPnL = matched * (1 - c.UpFillPrice - c.DownFillPrice)
 	c.PaperPnL = c.LockedPnL
-	c.StrandedSeconds = float64(c.CompletionMs) / 1000
+	if firstAt, ok := parseTime(c.FirstPartialAt); ok {
+		c.StrandedSeconds = now.UTC().Sub(firstAt).Seconds()
+	}
 	c.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 }
 
 func timeoutStranded(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, now time.Time) {
-	if c.ActualFirstLeg == "UP" {
-		c.ExitMarkPrice = upBook.BestBid
-		c.PaperPnL = c.OrderSize * (c.ExitMarkPrice - c.UpFillPrice)
-	} else {
-		c.ExitMarkPrice = downBook.BestBid
-		c.PaperPnL = c.OrderSize * (c.ExitMarkPrice - c.DownFillPrice)
+	upExit, upAvg := bidProceeds(upBook, math.Max(0, c.UpFilledShares-math.Min(c.UpFilledShares, c.DownFilledShares)))
+	downExit, downAvg := bidProceeds(downBook, math.Max(0, c.DownFilledShares-math.Min(c.UpFilledShares, c.DownFilledShares)))
+	matched := math.Min(c.UpFilledShares, c.DownFilledShares)
+	c.LockedPnL = matched * (1 - c.UpFillPrice - c.DownFillPrice)
+	unmatchedUp := math.Max(0, c.UpFilledShares-matched)
+	unmatchedDown := math.Max(0, c.DownFilledShares-matched)
+	c.PaperPnL = c.LockedPnL + upExit - unmatchedUp*c.UpFillPrice + downExit - unmatchedDown*c.DownFillPrice
+	if unmatchedUp > 0 {
+		c.ExitMarkPrice = upAvg
+	} else if unmatchedDown > 0 {
+		c.ExitMarkPrice = downAvg
 	}
 	c.Status = PaperStatusStrandedTimeout
-	c.Reason = "STRANDED_TIMEOUT_MARK_TO_BID"
+	c.Reason = "STRANDED_TIMEOUT_MARK_TO_BID_VWAP"
+	if firstAt, ok := parseTime(c.FirstPartialAt); ok {
+		c.StrandedSeconds = now.UTC().Sub(firstAt).Seconds()
+	}
 	c.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 }
 
-func makerCrossFill(book polymarket.BookSnapshot, orderPrice, orderSize float64) bool {
-	if orderPrice <= 0 || orderSize <= 0 || !validBook(book) {
-		return false
+func markPaperPnLWithPrices(c *PaperCycle, upBid, downBid float64) {
+	matched := math.Min(c.UpFilledShares, c.DownFilledShares)
+	c.LockedPnL = matched * (1 - c.UpFillPrice - c.DownFillPrice)
+	unmatchedUp := math.Max(0, c.UpFilledShares-matched)
+	unmatchedDown := math.Max(0, c.DownFilledShares-matched)
+	c.PaperPnL = c.LockedPnL + unmatchedUp*(upBid-c.UpFillPrice) + unmatchedDown*(downBid-c.DownFillPrice)
+	if unmatchedUp > 0 {
+		c.ExitMarkPrice = upBid
+	} else if unmatchedDown > 0 {
+		c.ExitMarkPrice = downBid
 	}
-	// Conservative: merely touching our hypothetical maker limit is not enough.
-	// We require the public ask book to move strictly THROUGH the resting limit
-	// and show at least one full order unit of sell liquidity below that limit.
-	qty := 0.0
-	for _, level := range book.Asks {
-		if level.Price >= orderPrice-1e-12 {
+}
+
+func bidProceeds(book polymarket.BookSnapshot, shares float64) (float64, float64) {
+	if shares <= 0 {
+		return 0, 0
+	}
+	remaining := shares
+	proceeds := 0.0
+	filled := 0.0
+	for _, level := range book.Bids {
+		if remaining <= 1e-9 {
 			break
 		}
-		qty += level.Size
-		if qty+1e-9 >= orderSize {
-			return true
+		q := math.Min(remaining, level.Size)
+		if q <= 0 {
+			continue
 		}
+		proceeds += q * level.Price
+		filled += q
+		remaining -= q
 	}
-	return false
+	// Missing bid depth is conservatively valued at zero.
+	avg := 0.0
+	if shares > 0 {
+		avg = proceeds / shares
+	}
+	_ = filled
+	return proceeds, avg
+}
+
+func strandedExpired(c *PaperCycle, now, marketEnd time.Time, cfg PaperConfig) bool {
+	firstAt, ok := parseTime(c.FirstPartialAt)
+	if !ok {
+		return false
+	}
+	if now.Sub(firstAt) >= cfg.MaxStranded {
+		return true
+	}
+	return !marketEnd.IsZero() && marketEnd.Sub(now) <= cfg.StopBeforeEnd
 }
 
 func completionReprice(current, economicCeiling float64, book polymarket.BookSnapshot) (float64, bool) {
@@ -323,6 +474,20 @@ func completionReprice(current, economicCeiling float64, book polymarket.BookSna
 		return current, false
 	}
 	return candidate, true
+}
+
+func bookForSide(side string, upBook, downBook polymarket.BookSnapshot) polymarket.BookSnapshot {
+	if strings.EqualFold(side, "DOWN") {
+		return downBook
+	}
+	return upBook
+}
+
+func tokenForSide(side string, c *PaperCycle) string {
+	if strings.EqualFold(side, "DOWN") {
+		return c.DownTokenID
+	}
+	return c.UpTokenID
 }
 
 func updateLastBook(c *PaperCycle, upBook, downBook polymarket.BookSnapshot) bool {
