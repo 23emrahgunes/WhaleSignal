@@ -123,17 +123,27 @@
   </div>
 
   <div class="card">
-    <h2>Maker Arbitraj — SAFE-FIRST Ters Bacak Motoru (Gölge)</h2>
+    <h2>Maker Completion Arb v2 — Queue + P(Tamamlama) + CycleEV</h2>
     <div class="banner" style="margin:-4px 0 14px;border-radius:7px;border:1px solid #80500a"><b>CANLI EMİR YOK</b> — Aynı anda iki bacak açılmaz. PTB/risk motorunun seçtiği güvenli ilk bacak post-only maker olarak simüle edilir; tam dolunca karşı bacak devreye girer. Fill kanıtı Polymarket public trade WebSocket + fiyat-zaman kuyruğu + partial fill modelidir.</div>
     <div class="grid4">
       <div class="mini"><span>Durum</span><strong id="arbStatus">BEKLENİYOR</strong></div>
       <div class="mini"><span>Maker Fiyatları (Yukarı + Aşağı)</span><strong id="arbPair">—</strong></div>
-      <div class="mini"><span>Net Arbitraj Avantajı / Hedef</span><strong id="arbEdge">—</strong></div>
+      <div class="mini"><span>Planlanan Pair Edge / Live Hedef</span><strong id="arbEdge">—</strong></div>
       <div class="mini"><span>Emir Birimi / Azami Ters Bacak</span><strong id="arbSize">—</strong></div>
       <div class="mini"><span>Daha Güvenli İlk Bacak</span><strong id="arbFirstLeg">—</strong></div>
       <div class="mini"><span>Tek Bacak Beklenen Değeri (Yukarı / Aşağı)</span><strong id="arbStranded">—</strong></div>
       <div class="mini"><span>Karşı Bacak Azami Maker Fiyatı</span><strong id="arbCompletion">—</strong></div>
       <div class="mini"><span>PTB Terminal Olasılığı</span><strong id="arbPTB">—</strong></div>
+    </div>
+    <div class="grid4" style="margin-top:14px">
+      <div class="mini"><span>P(İlk Fill) / P(Full | Fill)</span><strong id="arbFirstFillProb">—</strong></div>
+      <div class="mini"><span>P(Tamamlama) 250ms / 1s</span><strong id="arbPCompleteFast">—</strong></div>
+      <div class="mini"><span>P(Tamamlama) 2s / 5s</span><strong id="arbPCompleteSlow">—</strong></div>
+      <div class="mini"><span>5s %95 Alt Sınır / Örnek</span><strong id="arbPCompleteLower">—</strong></div>
+      <div class="mini"><span>Pair Kârı / Stranded Beklenti</span><strong id="arbEVInputs">—</strong></div>
+      <div class="mini"><span>Konservatif CycleEV</span><strong id="arbCycleEV">—</strong></div>
+      <div class="mini"><span>Opportunity EV</span><strong id="arbOpportunityEV">—</strong></div>
+      <div class="mini"><span>Model / Seçim</span><strong id="arbModelGate">—</strong></div>
     </div>
     <div class="grid4" style="margin-top:14px">
       <div class="mini"><span>Arbitraj Paper Bakiyesi</span><strong id="arbPaperBalance">$1,000.00</strong></div>
@@ -143,7 +153,7 @@
       <div class="mini"><span>Cycle / Açık / Tamamlandı</span><strong id="arbPaperCounts">0 / 0 / 0</strong></div>
       <div class="mini"><span>İlk Bacak Dolum Oranı</span><strong id="arbPaperFirstMatch">—</strong></div>
       <div class="mini"><span>Ortalama Karşı Bacak Tamamlama</span><strong id="arbPaperCompletionMs">—</strong></div>
-      <div class="mini"><span>Fill Simülasyonu</span><strong style="font-size:12px">Konservatif: fiyat limitin altından geçmeli + tam pay kadar çapraz likidite</strong></div>
+      <div class="mini"><span>Fill Simülasyonu</span><strong style="font-size:12px">WS execution + exact-price FIFO + partial fill; ilk bacak dolmadan karşı bacak yok</strong></div>
     </div>
     <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Saat</th><th>Durum</th><th>UP</th><th>DOWN</th><th>Net Avantaj</th><th>Pay</th><th>Güvenli Bacak</th><th>UP Tek Bacak EV</th><th>DOWN Tek Bacak EV</th><th>Neden</th></tr></thead><tbody id="arbBody"><tr><td colspan="10">Arbitraj gölge verisi bekleniyor...</td></tr></tbody></table></div>
     <div class="scroll" style="margin-top:14px"><table><thead><tr><th>Başlangıç</th><th>Durum</th><th>Tercih</th><th>İlk Dolan</th><th>UP Emir/Dolum</th><th>DOWN Emir/Dolum</th><th>Pay</th><th>Reprice</th><th>Tamamlama</th><th>K/Z</th><th>Neden</th></tr></thead><tbody id="arbPaperBody"><tr><td colspan="11">Arbitraj paper cycle verisi bekleniyor...</td></tr></tbody></table></div>
@@ -230,7 +240,7 @@ function reasonTr(v){const m={
 'REGIME_NOT_READY':'Ters yön örnek penceresi henüz dolmadı','PERSISTENCE_BELOW_THRESHOLD':'Ters yön kalıcılığı yetersiz','CONSECUTIVE_BELOW_THRESHOLD':'Ardışık ters sinyal sayısı yetersiz',
 'PROBABILITY_BELOW_THRESHOLD':'Ters yön olasılığı eşik altında','PTB_Z_NOT_CONFIRMED':'Hedef fiyat uzaklığı ters yönü doğrulamıyor','SCORE_BELOW_THRESHOLD':'Yumuşatılmış ters yön skoru yetersiz',
 'EDGE_BELOW_THRESHOLD':'Ekonomik avantaj eşik altında','EXPECTED_IMPROVEMENT_NOT_POSITIVE':'Koruma işlemi beklenen sonucu iyileştirmiyor','WAITING_FOR_DATA':'Veri bekleniyor',
-'PAIR_EDGE_BELOW_TARGET':'Net maker arbitraj avantajı hedefin altında','PAIR_EDGE_BELOW_PAPER_MIN':'Net maker avantajı paper araştırma eşiğinin altında','NO_COMPETITIVE_COMPLETION_WITHIN_EDGE':'Karşı bacağın rekabetçi maker fiyatı ekonomik tavana sığmıyor','PAPER_READY_LIVE_EDGE_BELOW_TARGET':'Paper adayı; canlı hedefin altında','MARKET_TRADE_STREAM_GAP':'Trade WebSocket veri boşluğu; cycle geçersiz','SAFE_FIRST_ORDER_TTL_EXPIRED':'Güvenli ilk bacak süre içinde dolmadı','STRANDED_TIMEOUT_MARK_TO_BID_VWAP':'Ters bacak süresi doldu; bid VWAP ile kapatıldı','BOOK_NOT_READY':'UP/DOWN emir defteri hazır değil','BOOK_FETCH_TOO_SLOW':'UP/DOWN emir defteri birlikte yeterince hızlı alınamadı','PAIR_ORDER_TTL_EXPIRED':'Maker çift emri süre içinde dolmadı','TOO_CLOSE_TO_MARKET_END_NO_FILL':'Kapanışa çok yaklaşıldı, emirler dolmadan iptal sayıldı','FIRST_LEG_FILLED':'İlk bacak doldu, karşı bacak bekleniyor','PAIR_COMPLETED_LOCKED':'İki bacak tamamlandı, arbitraj kârı kilitlendi','STRANDED_TIMEOUT_MARK_TO_BID':'Karşı bacak dolmadı; tek bacak mevcut alış fiyatından konservatif kapatıldı','MARKET_CHANGED_NO_FILL':'Piyasa değişti, dolmayan emirler iptal sayıldı','MARKET_CHANGED_MARK_TO_LAST_BID':'Piyasa değişti; tek bacak son alış fiyatından işaretlendi','BLOCKED':'ENGELLENDİ','READY':'HAZIR'};return m[v]||'Koşullardan biri henüz sağlanmadı'}
+'PAIR_EDGE_BELOW_TARGET':'Planlanan maker pair edge hedefin altında','AWAITING_COMPLETION_MODEL':'Completion modeli uygulanıyor','COMPLETION_MODEL_WARMUP':'Completion modeli örnek topluyor; live fail-closed','PCOMPLETE_5S_BELOW_THRESHOLD':'5 sn completion olasılığının %95 alt sınırı yetersiz','CYCLE_EV_BELOW_THRESHOLD':'Konservatif CycleEV eşiğin altında','STRANDED_LOSS_MULTIPLE_TOO_HIGH':'Ters-bacak zarar katsayısı fazla','READY_COMPLETION_EV':'P(complete) + CycleEV kapıları geçti','PAPER_READY_MODEL_PATH_NOT_LIVE_SELECTED':'Paper araştırma yolu; live model kapıları tamamlanmadı','PAIR_EDGE_BELOW_PAPER_MIN':'Net maker avantajı paper araştırma eşiğinin altında','NO_COMPETITIVE_COMPLETION_WITHIN_EDGE':'Karşı bacağın rekabetçi maker fiyatı ekonomik tavana sığmıyor','PAPER_READY_LIVE_EDGE_BELOW_TARGET':'Paper adayı; canlı hedefin altında','MARKET_TRADE_STREAM_GAP':'Trade WebSocket veri boşluğu; cycle geçersiz','SAFE_FIRST_ORDER_TTL_EXPIRED':'Güvenli ilk bacak süre içinde dolmadı','STRANDED_TIMEOUT_MARK_TO_BID_VWAP':'Ters bacak süresi doldu; bid VWAP ile kapatıldı','BOOK_NOT_READY':'UP/DOWN emir defteri hazır değil','BOOK_FETCH_TOO_SLOW':'UP/DOWN emir defteri birlikte yeterince hızlı alınamadı','PAIR_ORDER_TTL_EXPIRED':'Maker çift emri süre içinde dolmadı','TOO_CLOSE_TO_MARKET_END_NO_FILL':'Kapanışa çok yaklaşıldı, emirler dolmadan iptal sayıldı','FIRST_LEG_FILLED':'İlk bacak doldu, karşı bacak bekleniyor','PAIR_COMPLETED_LOCKED':'İki bacak tamamlandı, arbitraj kârı kilitlendi','STRANDED_TIMEOUT_MARK_TO_BID':'Karşı bacak dolmadı; tek bacak mevcut alış fiyatından konservatif kapatıldı','MARKET_CHANGED_NO_FILL':'Piyasa değişti, dolmayan emirler iptal sayıldı','MARKET_CHANGED_MARK_TO_LAST_BID':'Piyasa değişti; tek bacak son alış fiyatından işaretlendi','BLOCKED':'ENGELLENDİ','READY':'HAZIR'};return m[v]||'Koşullardan biri henüz sağlanmadı'}
 function comparisonStatusTr(v){const m={collecting:'Veri toplanıyor',insufficient_samples:'Örnek sayısı yetersiz',no_significant_difference:'Anlamlı fark yok',significant_difference:'İstatistiksel fark var',leader:'Önde olan zaman dilimi'};return m[String(v||'').toLowerCase()]||'Veri toplanıyor'}
 async function updateLive(){
   const data=await getJSON('/api/live?tf='+activeTf);
@@ -304,6 +314,14 @@ async function updateArbLive(){
   document.getElementById('arbStranded').textContent=`${Number(a.upStrandedEv||0).toFixed(3)} / ${Number(a.downStrandedEv||0).toFixed(3)}`;
   document.getElementById('arbCompletion').textContent=`UP dolarsa DOWN ≤ ${Number(a.downCompletionMax||0).toFixed(3)} · DOWN dolarsa UP ≤ ${Number(a.upCompletionMax||0).toFixed(3)}`;
   document.getElementById('arbPTB').textContent=a.ptbReady?`${pct(a.ptbPUp,1)} / ${pct(a.ptbPDown,1)} · ${directionText(a.ptbDecision)}`:'Hazır değil';
+  document.getElementById('arbFirstFillProb').textContent=`${pct(a.pFirstFill||0,1)} / ${pct(a.pFirstFullGivenFill||0,1)} · n=${a.firstFillSamples||0}`;
+  document.getElementById('arbPCompleteFast').textContent=`${pct(a.pComplete250ms||0,1)} / ${pct(a.pComplete1s||0,1)}`;
+  document.getElementById('arbPCompleteSlow').textContent=`${pct(a.pComplete2s||0,1)} / ${pct(a.pComplete5s||0,1)}`;
+  document.getElementById('arbPCompleteLower').textContent=`${pct(a.pComplete5sLower95||0,1)} / min ${pct(a.minPComplete5sLower95||0,1)} · n=${a.completionSamples||0}`;
+  document.getElementById('arbEVInputs').textContent=`${usd(a.expectedPairProfitEv||0)} / ${usd(a.expectedFullStrandedPnl||0)}`;
+  const cev=document.getElementById('arbCycleEV');cev.textContent=`${usd(a.conservativeCycleEv||0)} / min ${usd(a.minCycleEv||0)}`;cev.className=signClass(a.conservativeCycleEv||0);
+  const oev=document.getElementById('arbOpportunityEV');oev.textContent=usd(a.opportunityEv||0);oev.className=signClass(a.opportunityEv||0);
+  document.getElementById('arbModelGate').innerHTML=a.completionModelReady?`${chip('HAZIR','fresh')} · ${a.completionModelScope||'—'} · ${a.selectedBy||'—'}`:`${chip('WARMUP','warn')} · ${a.completionModelScope||'—'} · n=${a.completionSamples||0}/${a.completionMinSamples||0}`;
 }
 async function updateArbHistory(){
   const rows=await getJSON('/api/arb/history?limit=20&tf='+activeTf);const body=document.getElementById('arbBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="10">Arbitraj gölge verisi bekleniyor...</td></tr>';return}

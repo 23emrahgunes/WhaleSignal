@@ -25,7 +25,11 @@ func paperSnap() *Snapshot {
 }
 
 func sellTrade(seq int64, token string, price, size float64) polymarket.MarketTrade {
-	return polymarket.MarketTrade{Seq: seq, TokenID: token, Price: price, Size: size, Side: "SELL", Timestamp: time.Now().UTC()}
+	return sellTradeAt(seq, token, price, size, time.Now().UTC())
+}
+
+func sellTradeAt(seq int64, token string, price, size float64, ts time.Time) polymarket.MarketTrade {
+	return polymarket.MarketTrade{Seq: seq, TokenID: token, Price: price, Size: size, Side: "SELL", Timestamp: ts.UTC()}
 }
 
 func TestSafeFirstOnlyAndPartialFill(t *testing.T) {
@@ -188,5 +192,33 @@ func TestCompletionActivationCanRestAtEconomicCeilingBehindBestBid(t *testing.T)
 	}
 	if c.SecondOrderPrice >= downNow.BestAsk {
 		t.Fatalf("not post-only %+v", c)
+	}
+}
+
+func TestCompletionMsUsesExecutionTimestampNotPollingInterval(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	up := paperBook("up", .40, .44, 100)
+	down := paperBook("down", .53, .58, 100)
+	c := NewPaperCycle(paperSnap(), up, down, now, 0, 0)
+	AdvancePaperCycle(c, up, down, []polymarket.MarketTrade{sellTradeAt(1, "up", .41, 5, now.Add(100*time.Millisecond))}, 1, now.Add(time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if c.Status != PaperStatusCompleting {
+		t.Fatalf("first %+v", c)
+	}
+	AdvancePaperCycle(c, up, down, []polymarket.MarketTrade{sellTradeAt(2, "down", .54, 5, now.Add(1180*time.Millisecond))}, 2, now.Add(2*time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if c.Status != PaperStatusCompleted || c.CompletionMs != 180 {
+		t.Fatalf("completionMs=%d %+v", c.CompletionMs, c)
+	}
+}
+
+func TestSoftCompletionJumpsToEconomicCeiling(t *testing.T) {
+	book := paperBook("d", .53, .58, 100)
+	if got, ok := completionRepriceWithUrgency(.54, .56, book, false); !ok || got != .54 { // bestBid+tick equals current; no move
+		if ok || got != .54 {
+			t.Fatalf("soft pre-window %.4f %v", got, ok)
+		}
+	}
+	got, ok := completionRepriceWithUrgency(.54, .56, book, true)
+	if !ok || got != .56 {
+		t.Fatalf("urgent %.4f %v", got, ok)
 	}
 }

@@ -36,11 +36,11 @@ func TestSafeFirstSequentialAndDynamicMinSize(t *testing.T) {
 	if s.OrderSize != 7 || s.FirstLeg != "UP" {
 		t.Fatalf("%+v", s)
 	}
-	if s.StrategyMode != "SAFE_FIRST_SEQUENTIAL_MAKER" || s.UpMakerPrice != .41 || s.DownMakerPrice != .54 {
+	if s.StrategyMode != "COMPLETION_PROBABILITY_SAFE_FIRST_V2" || s.UpMakerPrice != .41 || s.DownMakerPrice != .54 {
 		t.Fatalf("sequential %+v", s)
 	}
-	if !s.PaperEdgePass || !s.LiveEdgePass || s.Status != StatusCandidate {
-		t.Fatalf("candidate %+v", s)
+	if !s.PaperEdgePass || !s.LiveEdgePass || s.Status != StatusPaperCandidate || s.Reason != "AWAITING_COMPLETION_MODEL" {
+		t.Fatalf("await completion model %+v", s)
 	}
 }
 

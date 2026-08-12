@@ -26,6 +26,7 @@ type arbShadowRuntime struct {
 	maxBookFetchMs      int64
 	tradeStreamMaxAge   time.Duration
 	active              *arb.PaperCycle
+	completionPolicy    arb.CompletionPolicy
 }
 
 func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool) *arbShadowRuntime {
@@ -36,8 +37,9 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 		OperationalBuffer:  cfg.ArbOperationalBuffer,
 		UncertaintyPenalty: cfg.ArbUncertaintyPenalty, MaxStrandedUnits: cfg.ArbMaxStrandedUnits,
 	}), db: db, pmClient: pmClient, tradeStream: stream, paperEnabled: enabled && cfg.ArbPaperEnabled,
-		paperCfg:            arb.PaperConfig{Enabled: enabled && cfg.ArbPaperEnabled, OrderTTL: time.Duration(cfg.ArbPaperOrderTTLSec) * time.Second, MaxStranded: time.Duration(cfg.ArbPaperMaxStrandedSec) * time.Second, StopBeforeEnd: time.Duration(cfg.ArbPaperStopBeforeEndSec) * time.Second},
-		paperInitialBalance: cfg.PaperInitialBalance, maxBookFetchMs: int64(cfg.ArbMaxBookFetchMs), tradeStreamMaxAge: time.Duration(cfg.ArbTradeStreamMaxAgeSec) * time.Second}
+		paperCfg:            arb.PaperConfig{Enabled: enabled && cfg.ArbPaperEnabled, OrderTTL: time.Duration(cfg.ArbPaperOrderTTLSec) * time.Second, SoftCompletion: time.Duration(cfg.ArbPaperSoftCompletionSec) * time.Second, MaxStranded: time.Duration(cfg.ArbPaperMaxStrandedSec) * time.Second, StopBeforeEnd: time.Duration(cfg.ArbPaperStopBeforeEndSec) * time.Second},
+		paperInitialBalance: cfg.PaperInitialBalance, maxBookFetchMs: int64(cfg.ArbMaxBookFetchMs), tradeStreamMaxAge: time.Duration(cfg.ArbTradeStreamMaxAgeSec) * time.Second,
+		completionPolicy: arb.CompletionPolicy{Lookback: cfg.ArbCompletionLookback, MinSamples: cfg.ArbCompletionMinSamples, MinStrandedSamples: cfg.ArbCompletionMinStrandedSamples, MinPComplete5sLower95: cfg.ArbCompletionMinP5Lower, MinCycleEV: cfg.ArbCompletionMinCycleEV, MaxStrandedLossMultiple: cfg.ArbCompletionMaxLossMultiple}}
 	if r.maxBookFetchMs <= 0 {
 		r.maxBookFetchMs = 1000
 	}
@@ -94,6 +96,11 @@ func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymark
 			return
 		}
 		snap.BookFetchMs = fetchMs
+		training, trainErr := r.db.GetArbPaperCyclesByTimeframe(r.completionPolicy.Lookback, snap.Timeframe)
+		if trainErr != nil {
+			util.Logger.Warn("Maker arb completion training read failed", zap.String("tf", snap.Timeframe), zap.Error(trainErr))
+		}
+		arb.ApplyCompletionModel(snap, training, r.completionPolicy)
 		if snap.Status != arb.StatusBlocked && fetchMs > r.maxBookFetchMs {
 			snap.Status = arb.StatusBlocked
 			snap.Reason = "BOOK_FETCH_TOO_SLOW"
@@ -106,7 +113,7 @@ func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymark
 		now := time.Now().UTC()
 		r.processPaper(snap, upBook, downBook, &mc, now)
 		if snap.Status == arb.StatusCandidate || snap.Status == arb.StatusPaperCandidate {
-			util.Logger.Info("MAKER ARB SAFE-FIRST SHADOW", zap.String("market", snap.MarketSlug), zap.String("status", snap.Status), zap.String("firstLeg", snap.FirstLeg), zap.Float64("firstQueueAhead", snap.FirstLegQueueAhead), zap.Float64("up", snap.UpMakerPrice), zap.Float64("down", snap.DownMakerPrice), zap.Float64("netEdge", snap.NetEdge), zap.Float64("paperMinEdge", snap.PaperMinEdge), zap.Float64("liveTargetEdge", snap.TargetEdge), zap.Int64("bookFetchMs", snap.BookFetchMs))
+			util.Logger.Info("MAKER ARB SAFE-FIRST SHADOW", zap.String("market", snap.MarketSlug), zap.String("status", snap.Status), zap.String("firstLeg", snap.FirstLeg), zap.Float64("firstQueueAhead", snap.FirstLegQueueAhead), zap.Float64("up", snap.UpMakerPrice), zap.Float64("down", snap.DownMakerPrice), zap.Float64("netEdge", snap.NetEdge), zap.Float64("paperMinEdge", snap.PaperMinEdge), zap.Float64("liveTargetEdge", snap.TargetEdge), zap.Bool("completionReady", snap.CompletionModelReady), zap.Float64("pComplete5sLower95", snap.PComplete5sLower95), zap.Float64("cycleEV", snap.ConservativeCycleEV), zap.Float64("opportunityEV", snap.OpportunityEV), zap.Int64("bookFetchMs", snap.BookFetchMs))
 		}
 	}()
 }
