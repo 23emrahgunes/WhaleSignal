@@ -26,11 +26,21 @@ func (s *Server) handleArbStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArbPaperCycles(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("strategy") == "dual40" {
+		rows, err := s.db.GetDual40TrialsByTimeframe(parseLimit(r, 50, 2000), normalizeTF(r))
+		writeJSON(w, rows, err)
+		return
+	}
 	rows, err := s.db.GetArbPaperCyclesByTimeframe(parseLimit(r, 50, 1000), normalizeTF(r))
 	writeJSON(w, rows, err)
 }
 
 func (s *Server) handleArbPaperStats(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("strategy") == "dual40" {
+		stats, err := s.db.GetDual40StatsByTimeframe(normalizeTF(r))
+		writeJSON(w, stats, err)
+		return
+	}
 	stats, err := s.db.GetArbPaperStatsByTimeframe(s.paperInitialBalance, normalizeTF(r))
 	writeJSON(w, stats, err)
 }
