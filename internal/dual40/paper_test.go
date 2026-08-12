@@ -16,6 +16,40 @@ func dualBook(token string, queue, bestAsk float64) polymarket.BookSnapshot {
 	}
 }
 
+func TestNewRestingTrialGateMode(t *testing.T) {
+	now := time.Date(2026, 8, 12, 20, 0, 0, 0, time.UTC)
+	upBook := dualBook("UP", 5, 0.50)
+	downBook := dualBook("DOWN", 0, 0.50)
+	notEligible := Metrics{Eligible: false, Regime: "POLY_SKEWED", Reason: "POLYMARKET_SKEW"}
+
+	// feature modu: eligible olmasa da POST eder (mekanik kitap gate gecince)
+	featureCfg := NormalizeConfig(Config{GateMode: "feature"})
+	if _, err := NewRestingTrial("5m", "m", 10, notEligible, "UP", "DOWN", upBook, downBook, featureCfg, now, 0, 0); err != nil {
+		t.Fatalf("feature modu non-eligible'i POST etmeli, hata: %v", err)
+	}
+
+	// hard modu: eligible degilse reddeder (eski davranis)
+	hardCfg := NormalizeConfig(Config{GateMode: "hard"})
+	if _, err := NewRestingTrial("5m", "m", 10, notEligible, "UP", "DOWN", upBook, downBook, hardCfg, now, 0, 0); err == nil {
+		t.Fatal("hard modu non-eligible'i reddetmeli")
+	}
+
+	// feature modda BILE mekanik post-only gate calisir: ask <= 0.40 -> red
+	crossBook := dualBook("UP", 0, 0.40)
+	if _, err := NewRestingTrial("5m", "m", 10, notEligible, "UP", "DOWN", crossBook, downBook, featureCfg, now, 0, 0); err == nil {
+		t.Fatal("post-only gate: 0.40 ask'te POST etmemeli")
+	}
+}
+
+func TestRecordFirstFillContext(t *testing.T) {
+	tr := &Trial{}
+	m := Metrics{MeanFlow: 0.3, DriftBps: 5.5, Regime: "TREND_UP", ChopScore: 42}
+	RecordFirstFillContext(tr, m, 18.0)
+	if tr.FirstFillRegime != "TREND_UP" || tr.FirstFillDriftBps != 5.5 || tr.FirstFillFlow != 0.3 || tr.FirstFillSecond != 18.0 {
+		t.Fatalf("first-fill context yazilmadi: %+v", tr)
+	}
+}
+
 func TestDual40QueueAwareBothFillLocksOneDollar(t *testing.T) {
 	cfg := DefaultConfig()
 	m := Metrics{Eligible: true, Regime: "CHOP", Reason: "ELIGIBLE_CHOP", ChopScore: 88}

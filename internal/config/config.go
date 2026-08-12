@@ -13,6 +13,9 @@ type Config struct {
 	DBPath                 string
 	PolymarketPollSec      int
 	LogLevel               string
+	// Dual40Only: box-only mod. Yon-forecast (directional paper + 15m runtime)
+	// devre disi; sadece dual40 box motoru + feed'ler + REST calisir.
+	Dual40Only             bool
 	PaperEnabled           bool
 	PaperInitialBalance    float64
 	PaperStake             float64
@@ -69,6 +72,7 @@ func LoadConfig() (*Config, error) {
 		DBPath:                          dbPath,
 		PolymarketPollSec:               pollSec,
 		LogLevel:                        envString("LOG_LEVEL", "info"),
+		Dual40Only:                      envBool("PMEDGE_DUAL40_ONLY", true),
 		PaperEnabled:                    envBool("PAPER_ENABLED", true),
 		PaperInitialBalance:             envFloat("PAPER_INITIAL_BALANCE", 1000),
 		PaperStake:                      envFloat("PAPER_STAKE", 2.50),

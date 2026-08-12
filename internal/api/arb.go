@@ -1,6 +1,10 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"pm-edge/internal/dual40"
+)
 
 func (s *Server) handleArbLive(w http.ResponseWriter, r *http.Request) {
 	row, err := s.db.GetLatestArbSnapshot(normalizeTF(r))
@@ -43,4 +47,20 @@ func (s *Server) handleArbPaperStats(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := s.db.GetArbPaperStatsByTimeframe(s.paperInitialBalance, normalizeTF(r))
 	writeJSON(w, stats, err)
+}
+
+// handleArbPaperAnalysis: dual40 ISTATISTIKSEL KANIT — net EV ± SE, t-stat,
+// P(second|first) first-fill feature bucket'larinda. GET
+// /api/arb/paper/analysis?strategy=dual40&tf=5m
+func (s *Server) handleArbPaperAnalysis(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("strategy") != "dual40" {
+		writeJSON(w, map[string]string{"error": "analysis yalnizca strategy=dual40 icin"}, nil)
+		return
+	}
+	trials, err := s.db.GetDual40TrialsByTimeframe(parseLimit(r, 5000, 100000), normalizeTF(r))
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, dual40.AnalyzeTrials(trials), nil)
 }

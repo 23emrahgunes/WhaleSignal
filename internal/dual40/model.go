@@ -21,6 +21,10 @@ type Config struct {
 	HedgeMaxWaitSec     int
 	HedgeTriggerPrice   float64
 	StopBeforeEndSec    int
+	// GateMode: "feature" (varsayilan) => ChopScore/skew/drift/flow VETO DEGIL,
+	// yalnizca feature olarak loglanir; trial kitap-gate gecince POST edilir
+	// (genis-shadow veri toplamak icin). "hard" => eski davranis (Eligible veto).
+	GateMode string
 }
 
 func DefaultConfig() Config {
@@ -38,6 +42,7 @@ func DefaultConfig() Config {
 		HedgeMaxWaitSec:     12,
 		HedgeTriggerPrice:   0.70,
 		StopBeforeEndSec:    20,
+		GateMode:            "feature",
 	}
 }
 
@@ -123,6 +128,9 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.StopBeforeEndSec <= 0 {
 		cfg.StopBeforeEndSec = def.StopBeforeEndSec
+	}
+	if cfg.GateMode != "hard" {
+		cfg.GateMode = "feature"
 	}
 	return cfg
 }

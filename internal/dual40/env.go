@@ -23,7 +23,16 @@ func LoadConfigFromEnv() (Config, bool) {
 	cfg.HedgeMaxWaitSec = envInt("DUAL40_HEDGE_MAX_WAIT_SEC", cfg.HedgeMaxWaitSec)
 	cfg.HedgeTriggerPrice = envFloat("DUAL40_HEDGE_TRIGGER_PRICE", cfg.HedgeTriggerPrice)
 	cfg.StopBeforeEndSec = envInt("DUAL40_STOP_BEFORE_END_SEC", cfg.StopBeforeEndSec)
+	cfg.GateMode = envStr("DUAL40_GATE_MODE", cfg.GateMode)
 	return NormalizeConfig(cfg), enabled
+}
+
+func envStr(key, fallback string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 func envFloat(key string, fallback float64) float64 {

@@ -72,6 +72,12 @@ func main() {
 	}
 	util.InitLogger(cfg.LogLevel)
 	defer func() { _ = util.Logger.Sync() }()
+	// BOX-ONLY (Faz 0): yon-forecast directional paper motorunu kapat. dual40
+	// box motoru bagimsiz calisir; 15m directional runtime asagida atlanir.
+	if cfg.Dual40Only {
+		cfg.PaperEnabled = false
+		util.Logger.Info("DUAL40-ONLY box modu: directional forecast paper DEVRE DISI")
+	}
 	util.Logger.Info("Initializing PM-Edge TV-Direction Real-Time Research Engine",
 		zap.Bool("mockMode", isMockMode), zap.Bool("paperEnabled", cfg.PaperEnabled),
 		zap.Bool("paperHedgeEnabled", cfg.PaperHedgeEnabled), zap.Float64("paperStake", cfg.PaperStake),
@@ -164,7 +170,9 @@ func main() {
 	}
 	evaluator := engine.NewEvaluator(microClient)
 	state := &marketState{}
-	startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient, microClient)
+	if !cfg.Dual40Only {
+		startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient, microClient)
+	}
 
 	refreshMarket := func(now time.Time) {
 		if isMockMode {

@@ -50,6 +50,15 @@ type Trial struct {
 	FirstLeg    string `json:"firstLeg"`
 	FirstFillAt string `json:"firstFillAt"`
 
+	// Ilk bacak DOLDUGU ANIN mikroyapisi (koşullu completion analizi icin):
+	// dolan ilk bacak gurultuden mi (mean-revert -> ikinci dolar) yoksa yonlu
+	// akistan mi (trend -> dolmaz) ayrimini besler.
+	FirstFillFlow      float64 `json:"firstFillFlow"`
+	FirstFillDriftBps  float64 `json:"firstFillDriftBps"`
+	FirstFillRegime    string  `json:"firstFillRegime"`
+	FirstFillChopScore float64 `json:"firstFillChopScore"`
+	FirstFillSecond    float64 `json:"firstFillSecond"`
+
 	HedgeSide         string  `json:"hedgeSide"`
 	HedgeShares       float64 `json:"hedgeShares"`
 	HedgeAvgPrice     float64 `json:"hedgeAvgPrice"`
@@ -93,7 +102,9 @@ func NewSkippedTrial(tf, marketSlug string, entrySecond int, metrics Metrics, re
 
 func NewRestingTrial(tf, marketSlug string, entrySecond int, metrics Metrics, upTokenID, downTokenID string, upBook, downBook polymarket.BookSnapshot, cfg Config, now time.Time, lastTradeSeq, gapCount int64) (*Trial, error) {
 	cfg = NormalizeConfig(cfg)
-	if !metrics.Eligible {
+	// "hard" modda regime veto uygulanir; "feature" modda ChopScore/skew VETO
+	// DEGIL (yalnizca feature) — trial mekanik kitap-gate gecince POST edilir.
+	if cfg.GateMode == "hard" && !metrics.Eligible {
 		return nil, fmt.Errorf("regime not eligible: %s", metrics.Reason)
 	}
 	if !validBook(upBook) || !validBook(downBook) {
@@ -317,6 +328,20 @@ func InvalidateDataGap(t *Trial, now time.Time, reason string) bool {
 
 func CloseForMarketChange(t *Trial, now time.Time) bool {
 	return InvalidateDataGap(t, now, "MARKET_CHANGED_BEFORE_RESOLUTION")
+}
+
+// RecordFirstFillContext, ilk bacak dolar dolmaz o anin mikroyapisini trial'e
+// yazar. P(second fill | first fill, first-fill features) analizinin girdisi.
+// Yalnizca bir kez (ilk dolumda) cagrilmalidir.
+func RecordFirstFillContext(t *Trial, m Metrics, fillElapsedSec float64) {
+	if t == nil {
+		return
+	}
+	t.FirstFillFlow = m.MeanFlow
+	t.FirstFillDriftBps = m.DriftBps
+	t.FirstFillRegime = m.Regime
+	t.FirstFillChopScore = m.ChopScore
+	t.FirstFillSecond = fillElapsedSec
 }
 
 type makerFillResult struct {

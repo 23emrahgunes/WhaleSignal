@@ -212,7 +212,14 @@ func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, 
 			changed = dual40.InvalidateDataGap(t, now, "TRADE_STREAM_DATA_GAP")
 		} else if r.tradeStream.Healthy(r.tradeStreamMaxAge) {
 			trades, latest := r.tradeStream.TradesAfter(t.LastTradeSeq)
+			hadFirstFill := t.FirstFillAt != ""
 			changed = dual40.Advance(t, upBook, downBook, trades, latest, now, market.EndTime, r.cfg)
+			// Ilk bacak bu tick'te doldu -> o anin mikroyapisini koşulla (bir kez).
+			if !hadFirstFill && t.FirstFillAt != "" {
+				fillElapsed := now.Sub(market.StartTime.UTC()).Seconds()
+				dual40.RecordFirstFillContext(t, metrics, fillElapsed)
+				changed = true
+			}
 			if t.IsOpen() {
 				req := dual40.HedgeNeeded(t, metrics, upBook, downBook, now, market.EndTime, r.cfg)
 				if req.Needed {
@@ -257,7 +264,9 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "INSUFFICIENT_OPENING_WINDOW", now)
 		} else if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "TRADE_STREAM_UNHEALTHY", now)
-		} else if !metrics.Eligible {
+		} else if r.cfg.GateMode == "hard" && !metrics.Eligible {
+			// Yalnizca "hard" modda regime veto. "feature" modda genis-shadow:
+			// kitap-gate gecen her market POST edilir, regime feature olarak loglanir.
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, metrics.Reason, now)
 		} else {
 			created, err := dual40.NewRestingTrial("5m", market.Slug, sec, metrics, upID, downID, upBook, downBook, r.cfg, now, r.tradeStream.LastSeq(), r.tradeStream.GapCount())
