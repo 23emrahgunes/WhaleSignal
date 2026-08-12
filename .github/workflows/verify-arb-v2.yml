@@ -51,7 +51,8 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .env.example docs/maker-arb-shadow.md cmd/pm-edge/arb_shadow.go internal/arb internal/config/config.go web/static/index.html
+          git add .env.example docs/maker-arb-shadow.md internal/arb internal/config/config.go web/static/index.html
+          git add -f cmd/pm-edge/arb_shadow.go
           git diff --cached --check
           git commit -m "feat: add empirical completion probability and CycleEV arb v2"
           git push origin HEAD:${GITHUB_REF_NAME}
