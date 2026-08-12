@@ -43,6 +43,8 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/microstructure/history", s.cors(s.handleMicrostructureHistory))
 	mux.HandleFunc("/api/paper/stats", s.cors(s.handlePaperStats))
 	mux.HandleFunc("/api/paper/trades", s.cors(s.handlePaperTrades))
+	mux.HandleFunc("/api/paper/inverse/trades", s.cors(s.handlePaperInverseTrades))
+	mux.HandleFunc("/api/paper/inverse/stats", s.cors(s.handlePaperInverseStats))
 	mux.HandleFunc("/api/paper/hedges", s.cors(s.handlePaperHedges))
 	mux.HandleFunc("/api/paper/hedge/stats", s.cors(s.handlePaperHedgeStats))
 	mux.HandleFunc("/api/gates", s.cors(s.handleGates))
@@ -168,6 +170,17 @@ func (s *Server) handlePaperTrades(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r, 50, 1000)
 	trades, err := s.db.GetPaperTradesByTimeframe(limit, normalizeTF(r))
 	writeJSON(w, trades, err)
+}
+
+func (s *Server) handlePaperInverseTrades(w http.ResponseWriter, r *http.Request) {
+	limit := parseLimit(r, 50, 1000)
+	rows, err := s.db.GetPaperInverseTradesByTimeframe(limit, normalizeTF(r))
+	writeJSON(w, rows, err)
+}
+
+func (s *Server) handlePaperInverseStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.db.GetPaperInverseStatsByTimeframe(normalizeTF(r))
+	writeJSON(w, stats, err)
 }
 
 func (s *Server) handlePaperHedges(w http.ResponseWriter, r *http.Request) {
