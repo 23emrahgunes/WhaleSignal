@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sync"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"pm-edge/internal/binance"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/polymarket"
@@ -64,6 +66,58 @@ func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClie
 		}
 	}
 	return r
+}
+
+// StartObserver is deliberately independent from the directional/PTB evaluator.
+// Dual40 needs the true first 5/10/20 seconds of each market. The old implementation
+// sampled only after the full evaluator became ready, which could be 10-20 seconds
+// into the market and made every opening window fail closed as INSUFFICIENT.
+func (r *dual40Runtime) StartObserver(ctx context.Context, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+	if r == nil || !r.enabled || ctx == nil || bClient == nil || microClient == nil {
+		return
+	}
+	util.Logger.Info("DUAL40 INDEPENDENT OPENING OBSERVER STARTED", zap.Duration("cadence", time.Second))
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		observe := func(now time.Time) {
+			if !bClient.IsPriceFresh(3 * time.Second) {
+				return
+			}
+			spot := bClient.GetPrice()
+			if spot <= 0 {
+				return
+			}
+			market, err := r.pmClient.FetchActiveBTC5mMarket()
+			if err != nil || market == nil {
+				return
+			}
+			deep := microClient.Snapshot(spot, spot, now)
+			if !deep.TradeFlowAvailable || len(deep.Trades) == 0 {
+				return
+			}
+			res := &engine.EvaluationResult{
+				Timestamp:          now.UTC().Format(time.RFC3339Nano),
+				BinancePrice:       spot,
+				OrderFlowScore:     deep.Trades[0].Imbalance,
+				DeepMicrostructure: deep,
+			}
+			if err := r.tick(res, market); err != nil {
+				util.Logger.Debug("Dual40 opening observer tick skipped", zap.Error(err), zap.String("market", market.Slug))
+			}
+		}
+
+		observe(time.Now().UTC())
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				observe(now.UTC())
+			}
+		}
+	}()
 }
 
 func (r *dual40Runtime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {
