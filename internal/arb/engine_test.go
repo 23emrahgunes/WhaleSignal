@@ -71,11 +71,11 @@ func TestPTBNotReadyFailsClosed(t *testing.T) {
 	}
 }
 
-func TestQueueAheadCountsDisplayedPriority(t *testing.T) {
+func TestQueueAheadCountsOnlySamePriceFIFO(t *testing.T) {
 	b := book("u", .40, .44)
 	b.Bids = []polymarket.CLOBLevel{{Price: .41, Size: 3}, {Price: .40, Size: 7}}
-	if q := buyQueueAhead(b, .40); q != 10 {
-		t.Fatalf("q %.2f", q)
+	if q := buyQueueAhead(b, .40); q != 7 {
+		t.Fatalf("same-price q %.2f", q)
 	}
 	if q := buyQueueAhead(b, .42); q != 0 {
 		t.Fatalf("improved q %.2f", q)

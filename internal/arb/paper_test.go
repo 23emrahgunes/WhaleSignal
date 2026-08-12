@@ -135,3 +135,58 @@ func TestCompletionRepriceNeverBreaksCeilingOrPostOnly(t *testing.T) {
 		t.Fatalf("ceiling %.4f %v", got, ok)
 	}
 }
+
+func TestBetterPriceTradeDoesNotConsumeOurSamePriceQueue(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	s := paperSnap()
+	s.UpMakerPrice = .40
+	up := paperBook("up", .40, .44, 7)
+	down := paperBook("down", .53, .58, 100)
+	c := NewPaperCycle(s, up, down, now, 0, 0)
+	if c.FirstQueueAhead != 7 {
+		t.Fatalf("queue %.2f", c.FirstQueueAhead)
+	}
+	AdvancePaperCycle(c, up, down, []polymarket.MarketTrade{sellTrade(1, "up", .41, 50)}, 1, now.Add(time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if c.FirstQueueAhead != 7 || c.FirstFilledShares != 0 {
+		t.Fatalf("better-price print changed FIFO %+v", c)
+	}
+	AdvancePaperCycle(c, up, down, []polymarket.MarketTrade{sellTrade(2, "up", .40, 8)}, 2, now.Add(2*time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if math.Abs(c.FirstFilledShares-1) > 1e-9 {
+		t.Fatalf("expected 1 share after 7 ahead %+v", c)
+	}
+}
+
+func TestCompletionActivationRepricesFromCurrentBookPostOnly(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	up := paperBook("up", .40, .44, 100)
+	down := paperBook("down", .53, .58, 100)
+	c := NewPaperCycle(paperSnap(), up, down, now, 0, 0)
+	// The entry-time planned DOWN price is .54. Before UP fills, DOWN moves to
+	// .50/.53. Reusing .54 would cross the ask and a real post-only order would
+	// be rejected. Activation must recompute .51 from the current book.
+	downNow := paperBook("down", .50, .53, 100)
+	AdvancePaperCycle(c, up, downNow, []polymarket.MarketTrade{sellTrade(1, "up", .41, 5)}, 1, now.Add(time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if c.Status != PaperStatusCompleting || math.Abs(c.SecondOrderPrice-.51) > 1e-9 {
+		t.Fatalf("stale completion price %+v", c)
+	}
+	if c.SecondOrderPrice >= downNow.BestAsk {
+		t.Fatalf("completion must remain post-only %+v", c)
+	}
+}
+
+func TestCompletionActivationCanRestAtEconomicCeilingBehindBestBid(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	up := paperBook("up", .40, .44, 100)
+	down := paperBook("down", .53, .58, 100)
+	c := NewPaperCycle(paperSnap(), up, down, now, 0, 0)
+	// Competitive maker is now .58 but our paper economic ceiling is .56.
+	// We may rest at .56; we must not manufacture a competitive .58 completion.
+	downNow := paperBook("down", .57, .60, 100)
+	AdvancePaperCycle(c, up, downNow, []polymarket.MarketTrade{sellTrade(1, "up", .41, 5)}, 1, now.Add(time.Second), now.Add(time.Minute), DefaultPaperConfig())
+	if math.Abs(c.SecondOrderPrice-.56) > 1e-9 {
+		t.Fatalf("expected economic-ceiling order %+v", c)
+	}
+	if c.SecondOrderPrice >= downNow.BestAsk {
+		t.Fatalf("not post-only %+v", c)
+	}
+}

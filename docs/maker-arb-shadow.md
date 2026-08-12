@@ -26,3 +26,6 @@ SQLite table `arb_snapshots` stores every evaluated shadow snapshot. APIs:
 
 Endpoints: `/api/arb/paper/stats?tf=5m|15m` and `/api/arb/paper/cycles?tf=5m|15m`.
 \n\n## Safe-first queue-aware paper model\nThe paper executor no longer pretends that a resting BUY fills when a REST ask snapshot crosses its limit. It posts only the PTB/risk-selected first leg, observes public Polymarket `last_trade_price` SELL executions from the market WebSocket, debits displayed price-time queue ahead, supports partial fills, and only activates the opposite completion order after the first leg is fully filled. Trades from the batch that completed the first leg cannot retroactively fill the second leg. A WebSocket data gap invalidates the cycle instead of inventing PnL. `ARB_PAPER_MIN_EDGE` controls research sampling separately from the future-live `ARB_TARGET_EDGE`.\n
+
+### Final queue/activation audit
+`queueAhead` tracks only FIFO liquidity already resting at the exact order price. Higher-price executions never reduce that same-price queue. When the first leg becomes fully filled, the completion order is priced again from the current CLOB and constrained by both post-only and the original economic ceiling; the entry-time planned completion price is never blindly reused.
