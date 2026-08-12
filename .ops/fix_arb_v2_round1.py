@@ -34,3 +34,8 @@ replace_once('internal/arb/engine_test.go',
 '''if !s.PaperEdgePass || !s.LiveEdgePass || s.Status != StatusPaperCandidate || s.Reason != "AWAITING_COMPLETION_MODEL" {
 		t.Fatalf("await completion model %+v", s)
 	}''')
+
+# PR31 renamed the card after the first Arb-v2 draft marker was written.
+replace_once('web/static/index.html',
+'''<h2>Maker Arbitraj — SAFE-FIRST Ters Bacak Motoru (Gölge)</h2>''',
+'''<h2>Maker Completion Arb v2 — Queue + P(Tamamlama) + CycleEV</h2>''')
