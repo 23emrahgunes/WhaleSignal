@@ -21,7 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Apply integration patch
-        run: python3 .ops/apply_safe_first_arb.py
+        run: |
+          python3 .ops/apply_safe_first_arb.py
+          python3 .ops/fix_safe_first_queue.py
       - name: Format
         run: gofmt -w internal/arb internal/polymarket/market_stream.go internal/polymarket/market_stream_test.go internal/storage/arb.go internal/config/config.go cmd/pm-edge/arb_shadow.go
       - name: Diff sanity
@@ -43,6 +45,7 @@ jobs:
           grep -q 'ARB_PAPER_MIN_EDGE=0.002' .env.example
           grep -q 'PAPER_CANDIDATE' web/static/index.html
           grep -q 'wss://ws-subscriptions-clob.polymarket.com/ws/market' internal/polymarket/market_stream.go
+          grep -q 'lower SELL print cannot occur' internal/arb/paper.go
       - name: Commit verified product files
         shell: bash
         run: |
