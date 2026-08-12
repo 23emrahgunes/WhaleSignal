@@ -1,0 +1,55 @@
+name: Verify Arb v2 Completion Probability
+
+on:
+  push:
+    branches:
+      - feature/arb-v2-completion-probability-cycle-ev
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply Arb v2 patch
+        run: python3 .ops/apply_arb_v2.py
+      - name: Format
+        run: gofmt -w internal/arb internal/config/config.go cmd/pm-edge/arb_shadow.go
+      - name: Diff sanity
+        run: git diff --check
+      - name: Focused tests
+        run: go test -count=1 ./internal/arb ./internal/polymarket ./internal/storage ./internal/api
+      - name: Vet
+        run: go vet ./...
+      - name: Full unit tests
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race -p=1 ./...
+      - name: Linux build
+        run: go build ./...
+      - name: Dashboard and config smoke
+        run: |
+          grep -q 'Maker Completion Arb v2' web/static/index.html
+          grep -q 'pComplete5sLower95' web/static/index.html
+          grep -q 'ARB_COMPLETION_MIN_SAMPLES=30' .env.example
+          grep -q 'COMPLETION_MODEL_WARMUP' internal/arb/completion_model.go
+          grep -q 'COMPLETION_PROBABILITY_SAFE_FIRST_V2' internal/arb/engine.go
+      - name: Commit verified product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .env.example docs/maker-arb-shadow.md cmd/pm-edge/arb_shadow.go internal/arb internal/config/config.go web/static/index.html
+          git diff --cached --check
+          git commit -m "feat: add empirical completion probability and CycleEV arb v2"
+          git push origin HEAD:${GITHUB_REF_NAME}
