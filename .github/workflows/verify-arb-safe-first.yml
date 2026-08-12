@@ -1,0 +1,56 @@
+name: Verify Safe First Arb Redesign
+
+on:
+  push:
+    branches:
+      - feature/arb-safe-first-queue-paper
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply integration patch
+        run: python3 .ops/apply_safe_first_arb.py
+      - name: Format
+        run: gofmt -w internal/arb internal/polymarket/market_stream.go internal/polymarket/market_stream_test.go internal/storage/arb.go internal/config/config.go cmd/pm-edge/arb_shadow.go
+      - name: Diff sanity
+        run: git diff --check
+      - name: Focused tests
+        run: go test -count=1 ./internal/arb ./internal/polymarket ./internal/storage ./internal/api
+      - name: Vet
+        run: go vet ./...
+      - name: Full unit tests
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race -p=1 ./...
+      - name: Linux build
+        run: go build ./...
+      - name: Smoke new architecture markers
+        run: |
+          grep -q 'SAFE_FIRST_SEQUENTIAL_MAKER' internal/arb/engine.go
+          grep -q 'WS_SELL_TRADES_PRICE_TIME_QUEUE_PARTIAL' internal/arb/paper.go
+          grep -q 'ARB_PAPER_MIN_EDGE=0.002' .env.example
+          grep -q 'PAPER_CANDIDATE' web/static/index.html
+          grep -q 'wss://ws-subscriptions-clob.polymarket.com/ws/market' internal/polymarket/market_stream.go
+      - name: Commit verified product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .env.example docs/maker-arb-shadow.md internal/arb internal/polymarket/market_stream.go internal/polymarket/market_stream_test.go internal/storage/arb.go internal/config/config.go web/static/index.html
+          git add -f cmd/pm-edge/arb_shadow.go
+          git diff --cached --check
+          git commit -m "fix: rebuild maker arb as safe-first queue-aware paper"
+          git push origin HEAD:${GITHUB_REF_NAME}
