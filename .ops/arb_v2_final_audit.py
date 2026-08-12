@@ -20,8 +20,8 @@ replace_once('internal/arb/completion_model.go',
 
 # Training fixtures must represent the new policy; legacy strategy rows are intentionally excluded.
 replace_once('internal/arb/completion_model_test.go',
-'''StrategyMode:"SAFE_FIRST_SEQUENTIAL_MAKER"''',
-'''StrategyMode:"COMPLETION_PROBABILITY_SAFE_FIRST_V2"''')
+'''StrategyMode: "SAFE_FIRST_SEQUENTIAL_MAKER"''',
+'''StrategyMode: "COMPLETION_PROBABILITY_SAFE_FIRST_V2"''')
 
 p=Path('internal/arb/completion_model_test.go')
 p.write_text(p.read_text()+r'''
