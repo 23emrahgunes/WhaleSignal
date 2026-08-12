@@ -9,9 +9,7 @@ def replace_once(path, old, new):
 # clock is fixed. Real WS trades should not be accepted as future executions.
 replace_once('internal/arb/paper.go',
 '''func eventOrNow(t, now time.Time) time.Time {
-	if t.IsZero() {
-		return now.UTC()
-	}
+	if t.IsZero() { return now.UTC() }
 	return t.UTC()
 }
 ''',
