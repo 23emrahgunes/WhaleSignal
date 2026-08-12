@@ -145,17 +145,31 @@ replace_once('internal/arb/paper.go', insert_marker, helper + insert_marker)
 # Engine queue test: only same-price displayed liquidity existed before us.
 p = Path('internal/arb/engine_test.go')
 s = p.read_text()
-s = s.replace('''func TestQueueAheadCountsDisplayedPriority(t *testing.T){
-    b:=book("u",.40,.44); b.Bids=[]polymarket.CLOBLevel{{Price:.41,Size:3},{Price:.40,Size:7}}
-    if q:=buyQueueAhead(b,.40); q!=10 {t.Fatalf("q %.2f",q)}
-    if q:=buyQueueAhead(b,.42); q!=0 {t.Fatalf("improved q %.2f",q)}
+old_test = '''func TestQueueAheadCountsDisplayedPriority(t *testing.T) {
+	b := book("u", .40, .44)
+	b.Bids = []polymarket.CLOBLevel{{Price: .41, Size: 3}, {Price: .40, Size: 7}}
+	if q := buyQueueAhead(b, .40); q != 10 {
+		t.Fatalf("q %.2f", q)
+	}
+	if q := buyQueueAhead(b, .42); q != 0 {
+		t.Fatalf("improved q %.2f", q)
+	}
 }
-''', '''func TestQueueAheadCountsOnlySamePriceFIFO(t *testing.T){
-    b:=book("u",.40,.44); b.Bids=[]polymarket.CLOBLevel{{Price:.41,Size:3},{Price:.40,Size:7}}
-    if q:=buyQueueAhead(b,.40); q!=7 {t.Fatalf("same-price q %.2f",q)}
-    if q:=buyQueueAhead(b,.42); q!=0 {t.Fatalf("improved q %.2f",q)}
+'''
+new_test = '''func TestQueueAheadCountsOnlySamePriceFIFO(t *testing.T) {
+	b := book("u", .40, .44)
+	b.Bids = []polymarket.CLOBLevel{{Price: .41, Size: 3}, {Price: .40, Size: 7}}
+	if q := buyQueueAhead(b, .40); q != 7 {
+		t.Fatalf("same-price q %.2f", q)
+	}
+	if q := buyQueueAhead(b, .42); q != 0 {
+		t.Fatalf("improved q %.2f", q)
+	}
 }
-''')
+'''
+if old_test not in s:
+    raise SystemExit('queue regression test marker not found')
+s = s.replace(old_test, new_test, 1)
 p.write_text(s)
 
 # Paper regressions: higher-price executions do not eat same-price FIFO; and
