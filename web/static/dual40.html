@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dual 40¢ Regime + Hedge Shadow</title>
+  <style>
+    :root{--bg:#0b1020;--card:#121a2d;--card2:#172138;--text:#eef4ff;--muted:#8fa0bd;--line:#26334e;--good:#37d39a;--bad:#ff6b7a;--warn:#ffca5c;--accent:#77a7ff}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#09101e,#0e1423 40%,#0b1020);color:var(--text);font:14px/1.45 Inter,system-ui,Segoe UI,Arial,sans-serif}
+    .wrap{max-width:1500px;margin:0 auto;padding:24px}.top{display:flex;gap:18px;align-items:flex-start;justify-content:space-between;margin-bottom:18px}.title h1{margin:0;font-size:28px}.title p{margin:6px 0 0;color:var(--muted)}
+    .badge{padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:#121a2d;color:var(--warn);font-weight:700;white-space:nowrap}.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:14px}.card{background:rgba(18,26,45,.94);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.16)}.k{color:var(--muted);font-size:12px}.v{font-size:24px;font-weight:800;margin-top:4px}.sub{color:var(--muted);font-size:12px;margin-top:2px}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+    .live{display:grid;grid-template-columns:1.25fr 1fr 1fr 1fr;gap:12px;margin-bottom:14px}.live .v{font-size:19px}.section{background:rgba(18,26,45,.94);border:1px solid var(--line);border-radius:14px;overflow:hidden}.section-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}.section-head h2{margin:0;font-size:16px}.section-head span{color:var(--muted);font-size:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid rgba(38,51,78,.7);white-space:nowrap}th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:#10182a;position:sticky;top:0}tbody tr:hover{background:#16223a}.state{font-weight:800}.scroll{overflow:auto;max-height:610px}.foot{color:var(--muted);padding:14px 2px;font-size:12px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#1c2944;border:1px solid #2d4065;font-size:11px}.reason{max-width:300px;overflow:hidden;text-overflow:ellipsis}.entry{color:var(--accent);font-weight:800}
+    @media(max-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}.live{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.wrap{padding:12px}.grid,.live{grid-template-columns:1fr 1fr}.top{flex-direction:column}.title h1{font-size:22px}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="title">
+      <h1>Dual 40¢ Regime + Adaptive Hedge</h1>
+      <p>5 / 10 / 20 saniyelik açılış rejimini ölçer; yalnız CHOP koşulunda 5 UP @ 0.40 + 5 DOWN @ 0.40 queue-aware paper dener.</p>
+    </div>
+    <div class="badge">PAPER / SHADOW ONLY · CANLI EMİR YOK</div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">Toplam deneme</div><div class="v" id="total">—</div><div class="sub" id="eligible">—</div></div>
+    <div class="card"><div class="k">İki bacak 0.40 doldu</div><div class="v good" id="completed">—</div><div class="sub" id="dualRate">—</div></div>
+    <div class="card"><div class="k">Adaptive hedge</div><div class="v warn" id="hedged">—</div><div class="sub" id="hedgeRate">—</div></div>
+    <div class="card"><div class="k">Net paper PnL</div><div class="v" id="pnl">—</div><div class="sub">fee + latency hedge maliyeti dahil</div></div>
+    <div class="card"><div class="k">Ortalama CHOP skor</div><div class="v" id="avgChop">—</div><div class="sub">yalnız girişe uygun trial'lar</div></div>
+    <div class="card"><div class="k">Ortalama hedge fiyatı</div><div class="v" id="avgHedge">—</div><div class="sub" id="lastState">—</div></div>
+  </div>
+
+  <div class="live">
+    <div class="card"><div class="k">Aktif market</div><div class="v mono" id="market">—</div><div class="sub" id="remaining">—</div></div>
+    <div class="card"><div class="k">BTC / PTB</div><div class="v" id="btc">—</div><div class="sub" id="ptb">—</div></div>
+    <div class="card"><div class="k">PTB yön olasılığı</div><div class="v" id="prob">—</div><div class="sub" id="decision">—</div></div>
+    <div class="card"><div class="k">Strateji</div><div class="v">0.40 + 0.40</div><div class="sub">5 share / taraf · hedge trigger varsayılan 0.70</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Dual40 trial geçmişi</h2><span>2 saniyede bir yenilenir · 5s / 10s / 20s karşılaştırmalı</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>ID</th><th>Market</th><th>Giriş</th><th>Rejim</th><th>CHOP</th><th>Drift</th><th>Range</th><th>Reversal</th><th>Flow</th><th>Durum</th><th>UP fill</th><th>DOWN fill</th><th>Hedge</th><th>PnL</th><th>Sebep</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </div>
+  <div class="foot">Bu ekran araştırma motorudur. SKIPPED satırları özellikle değerlidir: trend, aşırı volatilite, düşük range, flow imbalance veya yetersiz açılış gözlemi nedeniyle neden girmediğini gösterir.</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const n=(v,d=2)=>Number.isFinite(+v)?(+v).toFixed(d):'—';
+const pct=v=>Number.isFinite(+v)?(100*(+v)).toFixed(1)+'%':'—';
+const money=v=>Number.isFinite(+v)?((+v)>=0?'+':'')+'$'+(+v).toFixed(3):'—';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function stateClass(s){return s==='COMPLETED'?'good':s==='HEDGED'?'warn':s==='DATA_GAP_INVALID'?'bad':''}
+async function j(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.json()}
+async function refresh(){
+  try{
+    const [stats,trials,live,market]=await Promise.all([
+      j('/api/arb/paper/stats?strategy=dual40&tf=5m'),
+      j('/api/arb/paper/cycles?strategy=dual40&tf=5m&limit=200'),
+      j('/api/live?tf=5m'),j('/api/market?tf=5m')
+    ]);
+    $('total').textContent=stats.totalTrials??0;
+    $('eligible').textContent=`uygun/post edilen: ${stats.eligibleTrials??0} · skip: ${stats.skippedTrials??0} · açık: ${stats.openTrials??0}`;
+    $('completed').textContent=stats.completed??0;$('dualRate').textContent=`resolved dual-fill: ${pct(stats.dualFillRate)}`;
+    $('hedged').textContent=stats.hedged??0;$('hedgeRate').textContent=`resolved hedge: ${pct(stats.hedgeRate)}`;
+    $('pnl').textContent=money(stats.netPaperPnl);$('pnl').className='v '+((stats.netPaperPnl??0)>=0?'good':'bad');
+    $('avgChop').textContent=n(stats.averageChop,1);$('avgHedge').textContent=stats.averageHedgePrice?n(stats.averageHedgePrice,3):'—';
+    $('lastState').textContent=`son: ${stats.lastState||'—'} · ${stats.lastReason||'—'}`;
+    $('market').textContent=market.slug||market.eventSlug||'—';$('remaining').textContent=live.secondsRemaining!=null?`${n(live.secondsRemaining,0)} sn kaldı`:'veri bekleniyor';
+    $('btc').textContent=live.binancePrice?('$'+n(live.binancePrice,2)):'—';$('ptb').textContent=live.priceToBeat?`PTB $${n(live.priceToBeat,2)} · fark $${n(live.spotMinusPriceToBeat,2)}`:'PTB bekleniyor';
+    $('prob').textContent=live.pUp!=null?`UP ${pct(live.pUp)} / DOWN ${pct(live.pDown)}`:'—';$('decision').textContent=live.decision?`Model A: ${live.decision} · PTB-Z ${n(live.ptbZ,2)}`:'—';
+    $('rows').innerHTML=(Array.isArray(trials)?trials:[]).map(t=>{
+      const m=t.metrics||{}; const hedge=t.hedgeAvgPrice?`${esc(t.hedgeSide)} @ ${n(t.hedgeAvgPrice,3)}`:'—';
+      return `<tr><td>${t.id??''}</td><td class="mono">${esc(t.marketSlug)}</td><td class="entry">${esc(t.entrySecond)}s</td><td><span class="pill">${esc(t.regime)}</span></td><td>${n(m.chopScore,1)}</td><td>${n(m.driftBps,2)} bps</td><td>${n(m.rangeBps,2)} bps</td><td>${pct(m.reversalRate)}</td><td>${n(m.meanFlow,2)}</td><td class="state ${stateClass(t.state)}">${esc(t.state)}</td><td>${n(t.upMakerFilled,2)}</td><td>${n(t.downMakerFilled,2)}</td><td>${hedge}</td><td class="${(t.paperPnl??0)>=0?'good':'bad'}">${money(t.paperPnl)}</td><td class="reason" title="${esc(t.reason)}">${esc(t.reason)}</td></tr>`
+    }).join('');
+  }catch(e){$('lastState').textContent='API bekleniyor / '+e.message}
+}
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>
