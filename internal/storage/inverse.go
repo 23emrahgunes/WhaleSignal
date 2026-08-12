@@ -26,14 +26,14 @@ type PaperInverseTrade struct {
 }
 
 type PaperInverseStats struct {
-	TotalTrades  int     `json:"totalTrades"`
-	SettledTrades int    `json:"settledTrades"`
-	OpenTrades   int     `json:"openTrades"`
-	Wins         int     `json:"wins"`
-	Losses       int     `json:"losses"`
-	WinRate      float64 `json:"winRate"`
-	RealizedPnL  float64 `json:"realizedPnl"`
-	OpenStake    float64 `json:"openStake"`
+	TotalTrades   int     `json:"totalTrades"`
+	SettledTrades int     `json:"settledTrades"`
+	OpenTrades    int     `json:"openTrades"`
+	Wins          int     `json:"wins"`
+	Losses        int     `json:"losses"`
+	WinRate       float64 `json:"winRate"`
+	RealizedPnL   float64 `json:"realizedPnl"`
+	OpenStake     float64 `json:"openStake"`
 }
 
 func (d *Database) EnsurePaperInverseSchema() error {
