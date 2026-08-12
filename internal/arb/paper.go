@@ -195,10 +195,14 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 			c.FirstFilledShares = c.OrderSize
 			c.FirstFullAt = now.Format(time.RFC3339Nano)
 			c.Status = PaperStatusCompleting
-			c.Reason = "FIRST_LEG_FULL_COMPLETION_POSTED"
 			c.CompletionPostedAt = c.FirstFullAt
 			secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
-			c.SecondQueueAhead = buyQueueAhead(secondBook, c.SecondOrderPrice)
+			c.SecondOrderPrice = 0
+			if activateCompletion(c, secondBook) {
+				c.Reason = "FIRST_LEG_FULL_COMPLETION_POSTED"
+			} else {
+				c.Reason = "COMPLETION_WAITING_POST_ONLY_PRICE"
+			}
 			c.LastTradeSeq = latestSeq
 			c.UpdatedAt = now.Format(time.RFC3339Nano)
 			// The completion order did not exist during the trade batch that filled
@@ -239,6 +243,23 @@ func AdvancePaperCycle(c *PaperCycle, upBook, downBook polymarket.BookSnapshot, 
 
 	if c.Status == PaperStatusCompleting || c.Status == PaperStatusCompletionPartial {
 		secondBook := bookForSide(c.SecondOrderSide, upBook, downBook)
+		if c.SecondOrderPrice <= 0 {
+			if !activateCompletion(c, secondBook) {
+				if strandedExpired(c, now, marketEnd, cfg) {
+					timeoutStranded(c, upBook, downBook, now)
+					return true
+				}
+				c.Reason = "COMPLETION_WAITING_POST_ONLY_PRICE"
+				c.LastTradeSeq = latestSeq
+				c.UpdatedAt = now.Format(time.RFC3339Nano)
+				return true
+			}
+			c.Reason = "COMPLETION_POSTED_FROM_CURRENT_BOOK"
+			c.LastTradeSeq = latestSeq
+			c.UpdatedAt = now.Format(time.RFC3339Nano)
+			// It was not resting during this batch; start fill accounting next batch.
+			return true
+		}
 		delta, q := makerBuyFillFromTrades(tokenForSide(c.SecondOrderSide, c), c.SecondOrderPrice, c.SecondFilledShares, c.OrderSize, c.SecondQueueAhead, trades)
 		c.SecondQueueAhead = q
 		if delta > 0 {
@@ -330,9 +351,8 @@ func makerBuyFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize
 			continue
 		}
 		if tr.Price > orderPrice+1e-9 {
-			// Better-priced bids execute before us. Their executed volume can only
-			// reduce queue ahead; it cannot fill our lower bid.
-			q = math.Max(0, q-tr.Size)
+			// This execution occurred at a better bid. It says nothing about the
+			// FIFO volume already ahead of us at our own price.
 			continue
 		}
 		available := tr.Size
@@ -459,6 +479,41 @@ func strandedExpired(c *PaperCycle, now, marketEnd time.Time, cfg PaperConfig) b
 		return true
 	}
 	return !marketEnd.IsZero() && marketEnd.Sub(now) <= cfg.StopBeforeEnd
+}
+
+func activateCompletion(c *PaperCycle, book polymarket.BookSnapshot) bool {
+	if c == nil || !validBook(book) {
+		return false
+	}
+	ceiling := c.DownCompletionMax
+	if strings.EqualFold(c.SecondOrderSide, "UP") {
+		ceiling = c.UpCompletionMax
+	}
+	if ceiling <= 0 {
+		return false
+	}
+	postOnlyCeiling := floorToTick(book.BestAsk-book.TickSize, book.TickSize)
+	if postOnlyCeiling <= 0 {
+		return false
+	}
+	price, ok := MakerBuyPrice(book, true)
+	if !ok {
+		price, ok = MakerBuyPrice(book, false)
+	}
+	if !ok || price > ceiling+1e-12 {
+		price = floorToTick(math.Min(ceiling, postOnlyCeiling), book.TickSize)
+	}
+	if price <= 0 || price >= book.BestAsk-1e-12 || price > ceiling+1e-12 {
+		return false
+	}
+	c.SecondOrderPrice = price
+	if strings.EqualFold(c.SecondOrderSide, "UP") {
+		c.UpOrderPrice = price
+	} else {
+		c.DownOrderPrice = price
+	}
+	c.SecondQueueAhead = buyQueueAhead(book, price)
+	return true
 }
 
 func completionReprice(current, economicCeiling float64, book polymarket.BookSnapshot) (float64, bool) {

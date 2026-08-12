@@ -328,7 +328,7 @@ func buyQueueAhead(book polymarket.BookSnapshot, price float64) float64 {
 	}
 	q := 0.0
 	for _, level := range book.Bids {
-		if level.Price+1e-12 >= price {
+		if math.Abs(level.Price-price) <= 1e-9 {
 			q += level.Size
 		}
 	}

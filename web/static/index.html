@@ -141,7 +141,7 @@
       <div class="mini"><span>Kilitli Kâr / Ters Bacak K/Z</span><strong id="arbPaperSplitPnl">—</strong></div>
       <div class="mini"><span>Net Arb Paper K/Z</span><strong id="arbPaperNetPnl">$0.00</strong></div>
       <div class="mini"><span>Cycle / Açık / Tamamlandı</span><strong id="arbPaperCounts">0 / 0 / 0</strong></div>
-      <div class="mini"><span>Tercih Edilen İlk Bacak İsabeti</span><strong id="arbPaperFirstMatch">—</strong></div>
+      <div class="mini"><span>İlk Bacak Dolum Oranı</span><strong id="arbPaperFirstMatch">—</strong></div>
       <div class="mini"><span>Ortalama Karşı Bacak Tamamlama</span><strong id="arbPaperCompletionMs">—</strong></div>
       <div class="mini"><span>Fill Simülasyonu</span><strong style="font-size:12px">Konservatif: fiyat limitin altından geçmeli + tam pay kadar çapraz likidite</strong></div>
     </div>
@@ -316,7 +316,7 @@ async function updateArbPaper(){
   document.getElementById('arbPaperSplitPnl').textContent=`${usd(s.lockedPnl||0)} / ${usd(s.strandedPnl||0)}`;
   const net=document.getElementById('arbPaperNetPnl');net.textContent=usd(s.netPaperPnl||0);net.className=signClass(s.netPaperPnl||0);
   document.getElementById('arbPaperCounts').textContent=`${s.totalCycles||0} / ${s.openCycles||0} / ${s.completedCycles||0}`;
-  document.getElementById('arbPaperFirstMatch').textContent=`${pct(s.preferredFirstMatchRate||0,1)} · ${s.preferredFirstMatches||0}/${s.firstLegFilledCycles||0}`;
+  document.getElementById('arbPaperFirstMatch').textContent=`${pct((s.totalCycles||0)?(s.firstLegFilledCycles||0)/(s.totalCycles||1):0,1)} · ${s.firstLegFilledCycles||0}/${s.totalCycles||0}`;
   document.getElementById('arbPaperCompletionMs').textContent=s.averageCompletionMs?`${Number(s.averageCompletionMs).toFixed(0)} ms`:'—';
   const body=document.getElementById('arbPaperBody');if(!rows||!rows.length){body.innerHTML='<tr><td colspan="11">Arbitraj paper cycle verisi bekleniyor...</td></tr>';return}
   const st=x=>x==='COMPLETED'?chip('TAMAMLANDI','fresh'):x==='FIRST_PARTIAL'?chip('İLK BACAK PARTIAL','warn'):x==='COMPLETING'?chip('KARŞI BACAK BEKLİYOR','open'):x==='COMPLETION_PARTIAL'?chip('KARŞI BACAK PARTIAL','warn'):x==='RESTING_FIRST'?chip('GÜVENLİ İLK EMİR','open'):x==='STRANDED_TIMEOUT'?chip('TERS BACAK ZARARI','down'):x==='DATA_GAP_INVALID'?chip('VERİ GAP · GEÇERSİZ','neutral'):chip('DOLMADI','neutral');
