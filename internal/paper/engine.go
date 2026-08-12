@@ -94,6 +94,9 @@ func NewEngine(db *storage.Database, cfg Config) *Engine {
 		cfg.HedgeMaxSecondsToEnd = 120
 	}
 	cfg.Timeframe = storage.NormalizeTimeframe(cfg.Timeframe)
+	if db != nil {
+		_ = db.EnsurePaperInverseSchema()
+	}
 	return &Engine{db: db, cfg: cfg, regimes: make(map[string][]regimeSample)}
 }
 
@@ -213,10 +216,64 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	if err != nil || !created {
 		return trade, false, err
 	}
+	if stored, lookupErr := e.db.GetOpenPaperTradeByMarket(market.EventSlug); lookupErr == nil && stored != nil {
+		trade.ID = stored.ID
+		e.createInverseShadow(stored, market, now, quote)
+	}
 	// Hedge evidence must start after the original position exists. Pre-entry
 	// signal noise is not allowed to satisfy the reverse-regime gate.
 	delete(e.regimes, market.EventSlug)
 	return trade, true, nil
+}
+
+// createInverseShadow opens the exact opposite side at the same decision time
+// and the same nominal budget. It bypasses the model's economic-edge gate on
+// purpose: this is a counterfactual A/B arm used to test whether systematically
+// reversing the directional model has positive out-of-sample value.
+func (e *Engine) createInverseShadow(original *storage.PaperTrade, market *polymarket.Market, now time.Time, quote BudgetQuoteFunc) {
+	if original == nil || original.ID <= 0 || market == nil {
+		return
+	}
+	reverseSide := "DOWN"
+	if original.Side == "DOWN" {
+		reverseSide = "UP"
+	}
+	inv := &storage.PaperInverseTrade{
+		PaperTradeID: original.ID,
+		MarketSlug:   original.MarketSlug,
+		OriginalSide: original.Side,
+		Side:         reverseSide,
+		EntryTime:    now.UTC().Format(time.RFC3339Nano),
+		Status:       "OPEN",
+	}
+	if quote != nil {
+		tokenID, ok := polymarket.TokenIDForOutcome(market, reverseSide)
+		if !ok {
+			return
+		}
+		q, err := quote(tokenID, e.cfg.Stake)
+		if err != nil || q.AveragePrice <= 0 || q.AveragePrice >= 1 || q.Shares <= 0 || q.TotalCost <= 0 {
+			return
+		}
+		inv.EntryPrice = q.AveragePrice
+		inv.Shares = q.Shares
+		inv.Notional = q.Notional
+		if inv.Notional <= 0 {
+			inv.Notional = q.AveragePrice * q.Shares
+		}
+		inv.Fee = q.Fee
+		inv.TotalCost = q.TotalCost
+	} else {
+		price, ok := outcomePrice(market, reverseSide)
+		if !ok || price <= 0 || price >= 1 {
+			return
+		}
+		inv.EntryPrice = price
+		inv.TotalCost = e.cfg.Stake
+		inv.Notional = e.cfg.Stake
+		inv.Shares = e.cfg.Stake / price
+	}
+	_, _ = e.db.CreatePaperInverseTrade(inv)
 }
 
 // MaybeHedge evaluates a full-share shadow hedge. It never uses a single last
@@ -370,9 +427,8 @@ func (e *Engine) regimeMetrics(slug, reverseSide string) (persistence float64, c
 	return persistence, consecutive, smoothedScore, true
 }
 
-// SettleReady closes OPEN original positions and any attached shadow hedge at
-// the exact Chainlink five-minute boundary. Original PnL remains untouched so
-// A/B comparison (hold vs hedge) is measurable.
+// SettleReady closes OPEN original positions, the simultaneous inverse A/B arm,
+// and any attached later hedge at the exact Chainlink boundary.
 func (e *Engine) SettleReady(now time.Time, boundaryPrice func(time.Time) (float64, bool)) (int, error) {
 	if !e.Enabled() || boundaryPrice == nil {
 		return 0, nil
@@ -409,6 +465,19 @@ func (e *Engine) SettleReady(now time.Time, boundaryPrice func(time.Time) (float
 		settlementTime := now.UTC().Format(time.RFC3339Nano)
 		if err := e.db.SettlePaperTrade(trade.ID, settlementTime, closePrice, outcome, won, payout, pnl); err != nil {
 			return settled, err
+		}
+
+		if inv, err := e.db.GetPaperInverseByTradeID(trade.ID); err != nil {
+			return settled, err
+		} else if inv != nil && inv.Status == "OPEN" {
+			invPayout := 0.0
+			if outcome == inv.Side {
+				invPayout = inv.Shares
+			}
+			invPnL := invPayout - inv.TotalCost
+			if err := e.db.SettlePaperInverseTrade(trade.ID, settlementTime, outcome, invPayout, invPnL); err != nil {
+				return settled, err
+			}
 		}
 
 		if h, err := e.db.GetPaperHedgeByTradeID(trade.ID); err != nil {
