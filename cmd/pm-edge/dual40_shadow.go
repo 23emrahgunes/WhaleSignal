@@ -1,0 +1,278 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"go.uber.org/zap"
+	"pm-edge/internal/dual40"
+	"pm-edge/internal/engine"
+	"pm-edge/internal/polymarket"
+	"pm-edge/internal/storage"
+	"pm-edge/internal/util"
+)
+
+type dual40Runtime struct {
+	db                *storage.Database
+	pmClient          *polymarket.Client
+	tradeStream       *polymarket.MarketTradeStream
+	enabled           bool
+	cfg               dual40.Config
+	feeRate           float64
+	latencyBuffer     float64
+	tradeStreamMaxAge time.Duration
+	busy              atomic.Bool
+
+	marketSlug string
+	samples    []dual40.Sample
+	evaluated  map[int]bool
+	active     map[int]*dual40.Trial
+}
+
+func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool, feeRate, latencyBuffer float64, tradeStreamMaxAge time.Duration) *dual40Runtime {
+	cfg = dual40.NormalizeConfig(cfg)
+	if tradeStreamMaxAge <= 0 {
+		tradeStreamMaxAge = 20 * time.Second
+	}
+	r := &dual40Runtime{
+		db: db, pmClient: pmClient, tradeStream: polymarket.NewMarketTradeStream(), enabled: enabled,
+		cfg: cfg, feeRate: feeRate, latencyBuffer: latencyBuffer, tradeStreamMaxAge: tradeStreamMaxAge,
+		evaluated: make(map[int]bool), active: make(map[int]*dual40.Trial),
+	}
+	if err := db.EnsureDual40Schema(); err != nil {
+		util.Logger.Error("Dual40 schema setup failed; shadow engine disabled", zap.Error(err))
+		r.enabled = false
+		return r
+	}
+	if enabled {
+		r.tradeStream.Start()
+		if open, err := db.GetOpenDual40TrialsByTimeframe(tf); err != nil {
+			util.Logger.Warn("Dual40 open-trial restore read failed", zap.Error(err))
+		} else {
+			now := time.Now().UTC()
+			for i := range open {
+				t := &open[i]
+				if dual40.InvalidateDataGap(t, now, "PROCESS_RESTART_DATA_GAP") {
+					if err := db.UpdateDual40Trial(t); err != nil {
+						util.Logger.Warn("Dual40 stale open trial invalidation failed", zap.Int64("id", t.ID), zap.Error(err))
+					}
+				}
+			}
+		}
+	}
+	return r
+}
+
+func (r *dual40Runtime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {
+	if r == nil || !r.enabled || res == nil || market == nil || !r.busy.CompareAndSwap(false, true) {
+		return
+	}
+	rc := *res
+	mc := *market
+	mc.Tokens = append([]polymarket.Token(nil), market.Tokens...)
+	go func() {
+		defer r.busy.Store(false)
+		if err := r.tick(&rc, &mc); err != nil {
+			util.Logger.Warn("Dual40 shadow tick skipped", zap.Error(err), zap.String("market", mc.Slug))
+		}
+	}()
+}
+
+func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Market) error {
+	now := time.Now().UTC()
+	if parsed, err := time.Parse(time.RFC3339Nano, res.Timestamp); err == nil {
+		now = parsed.UTC()
+	}
+	upID, ok := polymarket.TokenIDForOutcome(market, "UP")
+	if !ok {
+		return fmt.Errorf("missing UP token")
+	}
+	downID, ok := polymarket.TokenIDForOutcome(market, "DOWN")
+	if !ok {
+		return fmt.Errorf("missing DOWN token")
+	}
+	if r.marketSlug != market.Slug {
+		r.rollMarket(market.Slug, []string{upID, downID}, now)
+	}
+
+	upBook, downBook, err := r.fetchPairBooks(upID, downID)
+	if err != nil {
+		return err
+	}
+	elapsed := now.Sub(market.StartTime.UTC()).Seconds()
+	if elapsed < -1 {
+		return nil
+	}
+	if res.BinancePrice > 0 {
+		r.addSample(dual40.Sample{
+			ElapsedSec:    elapsed,
+			Price:         res.BinancePrice,
+			FlowImbalance: dual40FlowImbalance(res),
+			UpMid:         0.5 * (upBook.BestBid + upBook.BestAsk),
+			DownMid:       0.5 * (downBook.BestBid + downBook.BestAsk),
+		})
+	}
+
+	currentMetrics := dual40.Classify(recentDual40Samples(r.samples, 15), r.cfg)
+	r.advanceTrials(upBook, downBook, currentMetrics, market, now)
+	r.evaluateOpeningWindows(upID, downID, upBook, downBook, market, now, elapsed)
+	return nil
+}
+
+func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) {
+	for sec, t := range r.active {
+		if dual40.CloseForMarketChange(t, now) {
+			if err := r.db.UpdateDual40Trial(t); err != nil {
+				util.Logger.Warn("Dual40 market-change close failed", zap.Int64("id", t.ID), zap.Error(err))
+			}
+		}
+		delete(r.active, sec)
+	}
+	r.marketSlug = slug
+	r.samples = nil
+	r.evaluated = make(map[int]bool)
+	r.tradeStream.SetAssets(assets)
+	util.Logger.Info("DUAL40 NEW MARKET", zap.String("market", slug))
+}
+
+func (r *dual40Runtime) addSample(s dual40.Sample) {
+	if len(r.samples) > 0 {
+		last := r.samples[len(r.samples)-1]
+		if s.ElapsedSec-last.ElapsedSec < 0.50 {
+			return
+		}
+	}
+	r.samples = append(r.samples, s)
+	if len(r.samples) > 360 {
+		r.samples = append([]dual40.Sample(nil), r.samples[len(r.samples)-360:]...)
+	}
+}
+
+func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, metrics dual40.Metrics, market *polymarket.Market, now time.Time) {
+	for sec, t := range r.active {
+		changed := false
+		if r.tradeStream.GapCount() != t.StreamGapCount {
+			changed = dual40.InvalidateDataGap(t, now, "TRADE_STREAM_DATA_GAP")
+		} else if r.tradeStream.Healthy(r.tradeStreamMaxAge) {
+			trades, latest := r.tradeStream.TradesAfter(t.LastTradeSeq)
+			changed = dual40.Advance(t, upBook, downBook, trades, latest, now, market.EndTime, r.cfg)
+			if t.IsOpen() {
+				req := dual40.HedgeNeeded(t, metrics, upBook, downBook, now, market.EndTime, r.cfg)
+				if req.Needed {
+					tokenID := t.UpTokenID
+					if req.Side == "DOWN" {
+						tokenID = t.DownTokenID
+					}
+					quote, err := r.pmClient.FetchBuyQuoteForShares(tokenID, req.Shares, r.feeRate, r.latencyBuffer)
+					if err != nil {
+						util.Logger.Warn("Dual40 hedge quote unavailable", zap.Int64("id", t.ID), zap.String("side", req.Side), zap.Float64("shares", req.Shares), zap.Error(err))
+					} else if err := dual40.ApplyHedge(t, req.Side, quote, req.TriggerPrice, req.Reason, now); err != nil {
+						util.Logger.Warn("Dual40 hedge apply failed", zap.Int64("id", t.ID), zap.Error(err))
+					} else {
+						changed = true
+						util.Logger.Info("DUAL40 ADAPTIVE HEDGE", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("side", t.HedgeSide), zap.Float64("avgPrice", t.HedgeAvgPrice), zap.Float64("cost", t.HedgeTotalCost), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
+					}
+				}
+			}
+		}
+		if changed {
+			if err := r.db.UpdateDual40Trial(t); err != nil {
+				util.Logger.Warn("Dual40 trial update failed", zap.Int64("id", t.ID), zap.Error(err))
+			}
+		}
+		if t.IsTerminal() {
+			util.Logger.Info("DUAL40 TRIAL CLOSED", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("state", t.State), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
+			delete(r.active, sec)
+		}
+	}
+}
+
+func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, downBook polymarket.BookSnapshot, market *polymarket.Market, now time.Time, elapsed float64) {
+	for _, sec := range r.cfg.EntrySeconds {
+		if r.evaluated[sec] || elapsed+0.25 < float64(sec) {
+			continue
+		}
+		r.evaluated[sec] = true
+		window := dual40.SamplesThrough(r.samples, float64(sec))
+		metrics := dual40.Classify(window, r.cfg)
+		var trial *dual40.Trial
+		if !dual40.OpeningWindowCovered(window, sec) {
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "INSUFFICIENT_OPENING_WINDOW", now)
+		} else if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "TRADE_STREAM_UNHEALTHY", now)
+		} else if !metrics.Eligible {
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, metrics.Reason, now)
+		} else {
+			created, err := dual40.NewRestingTrial("5m", market.Slug, sec, metrics, upID, downID, upBook, downBook, r.cfg, now, r.tradeStream.LastSeq(), r.tradeStream.GapCount())
+			if err != nil {
+				trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "BOOK_GATE: "+err.Error(), now)
+			} else {
+				trial = created
+			}
+		}
+		if err := r.db.InsertDual40Trial(trial); err != nil {
+			util.Logger.Warn("Dual40 trial insert failed", zap.Int("entrySec", sec), zap.Error(err))
+			continue
+		}
+		if trial.IsOpen() {
+			r.active[sec] = trial
+			util.Logger.Info("DUAL40 40C/40C POSTED SHADOW", zap.Int64("id", trial.ID), zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.Float64("chopScore", trial.Metrics.ChopScore), zap.Float64("driftBps", trial.Metrics.DriftBps), zap.Float64("rangeBps", trial.Metrics.RangeBps), zap.Float64("flow", trial.Metrics.MeanFlow), zap.Float64("upQueue", trial.UpQueueAhead), zap.Float64("downQueue", trial.DownQueueAhead))
+		} else {
+			util.Logger.Info("DUAL40 ENTRY SKIPPED", zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.String("regime", trial.Regime), zap.Float64("chopScore", trial.Metrics.ChopScore), zap.String("reason", trial.Reason))
+		}
+	}
+}
+
+func (r *dual40Runtime) fetchPairBooks(upID, downID string) (polymarket.BookSnapshot, polymarket.BookSnapshot, error) {
+	type result struct {
+		book polymarket.BookSnapshot
+		err  error
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	upCh, downCh := make(chan result, 1), make(chan result, 1)
+	go func() { defer wg.Done(); b, e := r.pmClient.FetchBookSnapshot(upID); upCh <- result{b, e} }()
+	go func() { defer wg.Done(); b, e := r.pmClient.FetchBookSnapshot(downID); downCh <- result{b, e} }()
+	wg.Wait()
+	close(upCh)
+	close(downCh)
+	u, d := <-upCh, <-downCh
+	if u.err != nil {
+		return polymarket.BookSnapshot{}, polymarket.BookSnapshot{}, u.err
+	}
+	if d.err != nil {
+		return polymarket.BookSnapshot{}, polymarket.BookSnapshot{}, d.err
+	}
+	return u.book, d.book, nil
+}
+
+func dual40FlowImbalance(res *engine.EvaluationResult) float64 {
+	if res == nil {
+		return 0
+	}
+	bestSec := math.MaxInt
+	flow := res.OrderFlowScore
+	for _, w := range res.DeepMicrostructure.Trades {
+		if w.Seconds > 0 && w.Seconds < bestSec {
+			bestSec = w.Seconds
+			flow = w.Imbalance
+		}
+	}
+	if flow > 1 {
+		return 1
+	}
+	if flow < -1 {
+		return -1
+	}
+	return flow
+}
+
+func recentDual40Samples(samples []dual40.Sample, n int) []dual40.Sample {
+	if n <= 0 || len(samples) <= n {
+		return samples
+	}
+	return samples[len(samples)-n:]
+}

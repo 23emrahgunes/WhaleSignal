@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"pm-edge/internal/arb"
 	"pm-edge/internal/config"
+	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/polymarket"
 	"pm-edge/internal/storage"
@@ -27,6 +28,7 @@ type arbShadowRuntime struct {
 	tradeStreamMaxAge   time.Duration
 	active              *arb.PaperCycle
 	completionPolicy    arb.CompletionPolicy
+	dual40              *dual40Runtime
 }
 
 func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool) *arbShadowRuntime {
@@ -46,6 +48,8 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 	if r.tradeStreamMaxAge <= 0 {
 		r.tradeStreamMaxAge = 20 * time.Second
 	}
+	dualCfg, dualEnabled := dual40.LoadConfigFromEnv()
+	r.dual40 = newDual40Runtime(tf, dualCfg, db, pmClient, enabled && dualEnabled, cfg.PaperTakerFeeRate, cfg.PaperLatencyBuffer, r.tradeStreamMaxAge)
 	if enabled && cfg.ArbShadowEnabled {
 		stream.Start()
 	}
@@ -61,7 +65,13 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 }
 
 func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {
-	if r == nil || r.engine == nil || !r.engine.Enabled() || res == nil || market == nil {
+	if r == nil || res == nil || market == nil {
+		return
+	}
+	if r.dual40 != nil {
+		r.dual40.Submit(res, market)
+	}
+	if r.engine == nil || !r.engine.Enabled() {
 		return
 	}
 	if !r.busy.CompareAndSwap(false, true) {
