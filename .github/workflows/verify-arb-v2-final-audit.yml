@@ -1,0 +1,54 @@
+name: Verify Arb v2 Final Audit
+
+on:
+  push:
+    branches:
+      - feature/arb-v2-completion-probability-cycle-ev
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Apply final audit
+        run: python3 .ops/arb_v2_final_audit.py
+      - name: Format
+        run: gofmt -w internal/arb
+      - name: Diff sanity
+        run: git diff --check
+      - name: Focused tests
+        run: go test -count=1 ./internal/arb ./internal/polymarket ./internal/storage ./internal/api
+      - name: Vet
+        run: go vet ./...
+      - name: Full unit tests
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race -p=1 ./...
+      - name: Linux build
+        run: go build ./...
+      - name: Final model smoke
+        run: |
+          grep -q 'COMPLETION_PROBABILITY_SAFE_FIRST_V2' internal/arb/completion_model.go
+          grep -q 'stressExit := math.Min(currentExit, -0.08\*s.OrderSize)' internal/arb/completion_model.go
+          grep -q 'wilsonLower95' internal/arb/completion_model.go
+          grep -q 'StrategyMode != "COMPLETION_PROBABILITY_SAFE_FIRST_V2"' internal/arb/completion_model.go
+      - name: Commit final audited product
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add internal/arb/completion_model.go internal/arb/completion_model_test.go
+          git diff --cached --check
+          git commit -m "fix: harden Arb v2 completion model warmup risk"
+          git push origin HEAD:${GITHUB_REF_NAME}
