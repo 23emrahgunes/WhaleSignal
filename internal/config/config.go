@@ -29,7 +29,9 @@ type Config struct {
 	ArbOperationalBuffer     float64
 	ArbUncertaintyPenalty    float64
 	ArbMaxStrandedUnits      int
+	ArbPaperMinEdge          float64
 	ArbMaxBookFetchMs        int
+	ArbTradeStreamMaxAgeSec  int
 	ArbPaperEnabled          bool
 	ArbPaperOrderTTLSec      int
 	ArbPaperMaxStrandedSec   int
@@ -75,7 +77,9 @@ func LoadConfig() (*Config, error) {
 		ArbOperationalBuffer:      envFloat("ARB_OPERATIONAL_BUFFER", 0.002),
 		ArbUncertaintyPenalty:     envFloat("ARB_UNCERTAINTY_PENALTY", 0.02),
 		ArbMaxStrandedUnits:       envInt("ARB_MAX_STRANDED_UNITS", 1),
+		ArbPaperMinEdge:           envFloat("ARB_PAPER_MIN_EDGE", 0.002),
 		ArbMaxBookFetchMs:         envInt("ARB_MAX_BOOK_FETCH_MS", 1000),
+		ArbTradeStreamMaxAgeSec:   envInt("ARB_TRADE_STREAM_MAX_AGE_SEC", 20),
 		ArbPaperEnabled:           envBool("ARB_PAPER_ENABLED", true),
 		ArbPaperOrderTTLSec:       envInt("ARB_PAPER_ORDER_TTL_SEC", 12),
 		ArbPaperMaxStrandedSec:    envInt("ARB_PAPER_MAX_STRANDED_SEC", 20),
