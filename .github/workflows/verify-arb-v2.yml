@@ -21,7 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Apply Arb v2 patch
-        run: python3 .ops/apply_arb_v2.py
+        run: |
+          python3 .ops/apply_arb_v2.py
+          python3 .ops/fix_arb_v2_round1.py
       - name: Format
         run: gofmt -w internal/arb internal/config/config.go cmd/pm-edge/arb_shadow.go
       - name: Diff sanity
