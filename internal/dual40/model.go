@@ -29,9 +29,11 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		EntryPrice:          0.40,
-		Shares:              5,
-		EntrySeconds:        []int{5, 10, 20},
+		EntryPrice: 0.40,
+		Shares:     5,
+		// Acilis (10,20s) + orta pencere (60=4dk kala, 120=3dk, 180=2dk, 240=1dk kala).
+		// Fiyat strike'a geri dondugunde ortada da girer; post-only her an korur.
+		EntrySeconds:        []int{10, 20, 60, 120, 180, 240},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,

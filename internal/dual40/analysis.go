@@ -16,6 +16,18 @@ type BucketStat struct {
 	NetPnL            float64 `json:"netPnl"`
 }
 
+// EntryStat: giris-saniyesi (acilis vs orta pencere) bazinda sonuc dagilimi.
+// "Acilis mi orta mi kazaniyor" sorusunu cevaplar.
+type EntryStat struct {
+	EntrySecond int     `json:"entrySecond"`
+	ResolvedN   int     `json:"resolvedN"`
+	Completed   int     `json:"completed"`
+	Hedged      int     `json:"hedged"`
+	Expired     int     `json:"expired"`
+	MeanPnL     float64 `json:"meanPnl"`
+	NetPnL      float64 `json:"netPnl"`
+}
+
 // Analysis: dual40 box motorunun ISTATISTIKSEL KANITI.
 //   - ResolvedN/NetPnL/MeanPnL/SEPnL/TStat: posted+resolved trial'lar uzerinde
 //     net EV ve anlamlilik (|t|>2 & n>=30 => Significant).
@@ -23,18 +35,19 @@ type BucketStat struct {
 //   - ByRegime/ByDrift: first-fill ANI mikroyapisina gore kosullu tablo — edge
 //     hangi bucket'ta (varsa) yasiyor.
 type Analysis struct {
-	ResolvedN    int          `json:"resolvedN"`
-	NetPnL       float64      `json:"netPnl"`
-	MeanPnL      float64      `json:"meanPnl"`
-	SEPnL        float64      `json:"sePnl"`
-	TStat        float64      `json:"tStat"`
-	Significant  bool         `json:"significant"`
-	FirstFillN   int          `json:"firstFillN"`
-	Completed    int          `json:"completed"`
-	Hedged       int          `json:"hedged"`
-	DualFillRate float64      `json:"dualFillRate"`
-	ByRegime     []BucketStat `json:"byRegime"`
-	ByDrift      []BucketStat `json:"byDrift"`
+	ResolvedN     int          `json:"resolvedN"`
+	NetPnL        float64      `json:"netPnl"`
+	MeanPnL       float64      `json:"meanPnl"`
+	SEPnL         float64      `json:"sePnl"`
+	TStat         float64      `json:"tStat"`
+	Significant   bool         `json:"significant"`
+	FirstFillN    int          `json:"firstFillN"`
+	Completed     int          `json:"completed"`
+	Hedged        int          `json:"hedged"`
+	DualFillRate  float64      `json:"dualFillRate"`
+	ByRegime      []BucketStat `json:"byRegime"`
+	ByDrift       []BucketStat `json:"byDrift"`
+	ByEntrySecond []EntryStat  `json:"byEntrySecond"`
 }
 
 // isResolvedTerminal: ekonomik sonucu tanimli terminal durum. DataGapInvalid
@@ -52,6 +65,14 @@ type bucketAcc struct {
 	completed  int
 	hedged     int
 	sumPnL     float64
+}
+
+type entryAcc struct {
+	n         int
+	completed int
+	hedged    int
+	expired   int
+	sumPnL    float64
 }
 
 func addBucket(m map[string]*bucketAcc, key string, t Trial) {
@@ -113,6 +134,7 @@ func AnalyzeTrials(trials []Trial) Analysis {
 	var sum, sumSq float64
 	regime := map[string]*bucketAcc{}
 	drift := map[string]*bucketAcc{}
+	entry := map[int]*entryAcc{}
 
 	for i := range trials {
 		t := trials[i]
@@ -132,6 +154,22 @@ func AnalyzeTrials(trials []Trial) Analysis {
 			a.FirstFillN++
 			addBucket(regime, regimeBucketKey(t.FirstFillRegime), t)
 			addBucket(drift, driftBucketKey(t.FirstFillDriftBps), t)
+		}
+		// Giris-saniyesi kirilimi (TUM resolved trial'lar, first-fill sart degil)
+		ea := entry[t.EntrySecond]
+		if ea == nil {
+			ea = &entryAcc{}
+			entry[t.EntrySecond] = ea
+		}
+		ea.n++
+		ea.sumPnL += t.PaperPnL
+		switch t.State {
+		case StateCompleted:
+			ea.completed++
+		case StateHedged:
+			ea.hedged++
+		case StateExpiredNoFill:
+			ea.expired++
 		}
 	}
 
@@ -154,5 +192,22 @@ func AnalyzeTrials(trials []Trial) Analysis {
 	}
 	a.ByRegime = finalizeBuckets(regime)
 	a.ByDrift = finalizeBuckets(drift)
+	a.ByEntrySecond = finalizeEntry(entry)
 	return a
+}
+
+func finalizeEntry(m map[int]*entryAcc) []EntryStat {
+	out := make([]EntryStat, 0, len(m))
+	for sec, e := range m {
+		es := EntryStat{
+			EntrySecond: sec, ResolvedN: e.n, Completed: e.completed,
+			Hedged: e.hedged, Expired: e.expired, NetPnL: e.sumPnL,
+		}
+		if e.n > 0 {
+			es.MeanPnL = e.sumPnL / float64(e.n)
+		}
+		out = append(out, es)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].EntrySecond < out[j].EntrySecond })
+	return out
 }
