@@ -174,10 +174,12 @@ func main() {
 		startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient, microClient)
 	}
 
-	// priceToBeat kilidi: Polymarket'in resmi openPrice'i pencere basina SABIT ve
-	// market bununla settle olur; bir kez alinca kilitle, her poll'de tekrar cekme.
+	// priceToBeat son-iyi degeri (pencere basina). Birincil kaynak Polymarket EVENT
+	// sayfasi openPrice'i = UI'da GORUNEN sayi. Her poll'de tazelenir; fetch
+	// basarisiz olursa son-iyi tutulur, yeni pencerede sifirlanir.
 	var ptbLockStart int64
 	var ptbLockValue float64
+	var ptbLockSrc string
 	refreshMarket := func(now time.Time) {
 		if isMockMode {
 			start := polymarket.BTC5mWindowStart(now)
@@ -195,18 +197,25 @@ func main() {
 			state.Set(nil)
 			return
 		}
-		// KESIN gercek = Polymarket'in kendi openPrice'i (market bununla settle olur,
-		// UI'da gorunen sayi). Chainlink RTDS boundary yakalamamiz yalniz openPrice
-		// yayinlanana kadar GECICI deger; openPrice gelince kilitlenir.
+		// priceToBeat oncelik: (1) EVENT sayfasi openPrice = UI'da GORUNEN sayi
+		// (birincil, her poll tazelenir), (2) crypto-price API openPrice (yedek,
+		// event bulunamazsa), (3) Chainlink RTDS boundary (gecici). Event basarili
+		// oldugunda UI ile birebir esler.
 		snap := clClient.Snapshot(m.StartTime, now)
 		startKey := m.StartTime.UTC().Unix()
-		if ptbLockStart == startKey && ptbLockValue > 0 {
+		if ptbLockStart != startKey {
+			ptbLockStart, ptbLockValue, ptbLockSrc = startKey, 0, ""
+		}
+		if ptb, evErr := pmClient.FetchOpenPriceFromEvent(m); evErr == nil && ptb > 0 {
+			ptbLockValue, ptbLockSrc = ptb, "POLYMARKET_EVENT_OPEN"
+		} else if ptbLockValue == 0 {
+			if ptb, fetchErr := pmClient.FetchPriceToBeat(m); fetchErr == nil && ptb > 0 {
+				ptbLockValue, ptbLockSrc = ptb, "POLYMARKET_CRYPTO_API"
+			}
+		}
+		if ptbLockValue > 0 {
 			m.PriceToBeat = ptbLockValue
-			m.PriceToBeatSource = "POLYMARKET_OPEN"
-		} else if ptb, fetchErr := pmClient.FetchPriceToBeat(m); fetchErr == nil && ptb > 0 {
-			ptbLockStart, ptbLockValue = startKey, ptb
-			m.PriceToBeat = ptb
-			m.PriceToBeatSource = "POLYMARKET_OPEN"
+			m.PriceToBeatSource = ptbLockSrc
 		} else if snap.Ready && snap.PriceToBeat > 0 {
 			m.PriceToBeat = snap.PriceToBeat
 			m.PriceToBeatSource = "CHAINLINK_RTDS_PROVISIONAL"

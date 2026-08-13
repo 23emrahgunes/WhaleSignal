@@ -3,8 +3,10 @@ package polymarket
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +15,16 @@ import (
 const (
 	defaultGammaBaseURL       = "https://gamma-api.polymarket.com"
 	defaultCryptoPriceBaseURL = "https://polymarket.com/api/crypto/crypto-price"
+	defaultEventBaseURL       = "https://polymarket.com/event"
 	btc5mWindow               = 5 * time.Minute
+)
+
+// Polymarket EVENT sayfasindaki resmi priceToBeat (openPrice) icin desenler.
+// UI bu sayfayi render eder; kullanicinin gordugu deger buradan gelir.
+// basit-arbitraj/marketResolver.ts fetchOpenPrice ile birebir (chainlink-sentetik paritesi).
+var (
+	eventActiveOpenPriceRx = regexp.MustCompile(`"openPrice":([0-9.]+),"closePrice":null`)
+	eventClosedOpenPriceRx = regexp.MustCompile(`Time":"(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d)[^"]*","openPrice":[0-9.]+,"closePrice":([0-9.]+)`)
 )
 
 type Token struct {
@@ -46,6 +57,7 @@ type Client struct {
 	httpClient         *http.Client
 	baseURL            string
 	cryptoPriceBaseURL string
+	eventBaseURL       string
 }
 
 func NewClient() *Client {
@@ -60,7 +72,7 @@ func NewClientWithBaseURLs(baseURL, cryptoPriceBaseURL string, httpClient *http.
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/"), cryptoPriceBaseURL: strings.TrimRight(cryptoPriceBaseURL, "/")}
+	return &Client{httpClient: httpClient, baseURL: strings.TrimRight(baseURL, "/"), cryptoPriceBaseURL: strings.TrimRight(cryptoPriceBaseURL, "/"), eventBaseURL: defaultEventBaseURL}
 }
 
 func BTC5mWindowStart(t time.Time) time.Time {
@@ -157,6 +169,61 @@ func (c *Client) FetchActiveBTC5mMarketAt(now time.Time) (*Market, error) {
 		q = ev.Title
 	}
 	return &Market{ID: gm.ID, Question: q, Slug: gm.Slug, EventSlug: eventSlug, EndDate: gm.EndDate, EndDateIso: gm.EndDateIso, ClobTokenIds: gm.ClobTokenIds, Tokens: tokens, Active: gm.Active, Closed: gm.Closed, StartTime: start, EndTime: end, Outcomes: outcomes, ResolutionURL: ev.ResolutionSource}, nil
+}
+
+// FetchOpenPriceFromEvent scrapes Polymarket's public EVENT page for the OFFICIAL
+// priceToBeat (openPrice) shown in the UI. This is the exact number the market
+// displays and settles on; the crypto-price API's openPrice can differ by a few
+// dollars (different Chainlink-tick capture). Ported from basit-arbitraj
+// marketResolver.ts fetchOpenPrice (chainlink-sentetik parity).
+func (c *Client) FetchOpenPriceFromEvent(m *Market) (float64, error) {
+	if m == nil || m.StartTime.IsZero() {
+		return 0, fmt.Errorf("market window incomplete")
+	}
+	slug := m.Slug
+	if slug == "" {
+		slug = fmt.Sprintf("btc-updown-5m-%d", m.StartTime.UTC().Unix())
+	}
+	req, err := http.NewRequest(http.MethodGet, c.eventBaseURL+"/"+slug, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("event page status %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return 0, err
+	}
+	// Escaped JSON: \" -> " (event HTML degeri kacisli gomer)
+	html := strings.ReplaceAll(string(raw), `\`, "")
+
+	// 1) Aktif pencere: openPrice + closePrice:null = resmi Price to Beat (UI degeri)
+	if mm := eventActiveOpenPriceRx.FindStringSubmatch(html); mm != nil {
+		if v, perr := strconv.ParseFloat(mm[1], 64); perr == nil && v > 0 {
+			return v, nil
+		}
+	}
+	// 2) Rollover: yeni pencere open = startSec'te KAPANAN pencerenin close'u
+	startSec := m.StartTime.UTC().Unix()
+	for _, mm := range eventClosedOpenPriceRx.FindAllStringSubmatch(html, -1) {
+		t, perr := time.Parse("2006-01-02T15:04:05", mm[1])
+		if perr != nil {
+			continue
+		}
+		if t.UTC().Unix() == startSec {
+			if v, verr := strconv.ParseFloat(mm[2], 64); verr == nil && v > 0 {
+				return v, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("openPrice not found on event page")
 }
 
 // FetchPriceToBeat reads Polymarket's read-only crypto reference-price endpoint.
