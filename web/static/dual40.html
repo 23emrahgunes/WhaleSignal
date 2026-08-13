@@ -71,7 +71,11 @@ async function refresh(){
     $('avgChop').textContent=n(stats.averageChop,1);$('avgHedge').textContent=stats.averageHedgePrice?n(stats.averageHedgePrice,3):'—';
     $('lastState').textContent=`son: ${stats.lastState||'—'} · ${stats.lastReason||'—'}`;
     $('market').textContent=market.slug||market.eventSlug||'—';$('remaining').textContent=live.secondsRemaining!=null?`${n(live.secondsRemaining,0)} sn kaldı`:'veri bekleniyor';
-    $('btc').textContent=live.binancePrice?('$'+n(live.binancePrice,2)):'—';$('ptb').textContent=live.priceToBeat?`PTB $${n(live.priceToBeat,2)} · fark $${n(live.spotMinusPriceToBeat,2)}`:'PTB bekleniyor';
+    const btcLive=live.currentPrice!=null?live.currentPrice:null; // Chainlink = Polymarket'in canli BTC fiyati
+    $('btc').textContent=btcLive!=null?('$'+n(btcLive,2)):'—';
+    const ptbVal=live.priceToBeat!=null?live.priceToBeat:(market.priceToBeat!=null?market.priceToBeat:null);
+    const ptbSrc=market.priceToBeatSource||'';
+    $('ptb').textContent=ptbVal!=null?`PTB $${n(ptbVal,2)}${live.spotMinusPriceToBeat!=null?` · fark $${n(live.spotMinusPriceToBeat,2)}`:''}${ptbSrc?` · ${ptbSrc}`:''}`:'PTB bekleniyor';
     $('prob').textContent=live.pUp!=null?`UP ${pct(live.pUp)} / DOWN ${pct(live.pDown)}`:'—';$('decision').textContent=live.decision?`Model A: ${live.decision} · PTB-Z ${n(live.ptbZ,2)}`:'—';
     $('rows').innerHTML=(Array.isArray(trials)?trials:[]).map(t=>{
       const m=t.metrics||{}; const hedge=t.hedgeAvgPrice?`${esc(t.hedgeSide)} @ ${n(t.hedgeAvgPrice,3)}`:'—';
