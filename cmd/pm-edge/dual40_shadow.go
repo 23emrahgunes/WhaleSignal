@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 	"pm-edge/internal/binance"
+	"pm-edge/internal/chainlink"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/polymarket"
@@ -20,6 +21,7 @@ import (
 type dual40Runtime struct {
 	db                *storage.Database
 	pmClient          *polymarket.Client
+	clClient          *chainlink.Client
 	tradeStream       *polymarket.MarketTradeStream
 	enabled           bool
 	cfg               dual40.Config
@@ -28,10 +30,11 @@ type dual40Runtime struct {
 	tradeStreamMaxAge time.Duration
 	busy              atomic.Bool
 
-	marketSlug string
-	samples    []dual40.Sample
-	evaluated  map[int]bool
-	active     map[int]*dual40.Trial
+	marketSlug  string
+	priceToBeat float64 // aktif marketin event openPrice'i (Chainlink strike)
+	samples     []dual40.Sample
+	evaluated   map[int]bool
+	active      map[int]*dual40.Trial
 }
 
 func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool, feeRate, latencyBuffer float64, tradeStreamMaxAge time.Duration) *dual40Runtime {
@@ -72,11 +75,12 @@ func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClie
 // Dual40 needs the true first 5/10/20 seconds of each market. The old implementation
 // sampled only after the full evaluator became ready, which could be 10-20 seconds
 // into the market and made every opening window fail closed as INSUFFICIENT.
-func (r *dual40Runtime) StartObserver(ctx context.Context, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+func (r *dual40Runtime) StartObserver(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient) {
 	if r == nil || !r.enabled || ctx == nil || bClient == nil || microClient == nil {
 		return
 	}
-	util.Logger.Info("DUAL40 INDEPENDENT OPENING OBSERVER STARTED", zap.Duration("cadence", time.Second))
+	r.clClient = clClient
+	util.Logger.Info("DUAL40 INDEPENDENT OPENING OBSERVER STARTED (Chainlink price)", zap.Duration("cadence", time.Second))
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -97,8 +101,14 @@ func (r *dual40Runtime) StartObserver(ctx context.Context, bClient *binance.Clie
 			if !deep.TradeFlowAvailable || len(deep.Trades) == 0 {
 				return
 			}
+			// FIYAT KAYNAGI = CHAINLINK (settle oracle'i). Binance yalniz akis/flow.
+			var clPrice float64
+			if r.clClient != nil {
+				clPrice = r.clClient.Snapshot(market.StartTime, now).CurrentPrice
+			}
 			res := &engine.EvaluationResult{
 				Timestamp:          now.UTC().Format(time.RFC3339Nano),
+				CurrentPrice:       clPrice,
 				BinancePrice:       spot,
 				OrderFlowScore:     deep.Trades[0].Imbalance,
 				DeepMicrostructure: deep,
@@ -151,6 +161,15 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 	if r.marketSlug != market.Slug {
 		r.rollMarket(market.Slug, []string{upID, downID}, now)
 	}
+	// priceToBeat = event openPrice (Chainlink strike). Market obj'de varsa onu al,
+	// yoksa event sayfasindan cek. Gelene kadar her tick tekrar dene.
+	if r.priceToBeat <= 0 {
+		if market.PriceToBeat > 0 {
+			r.priceToBeat = market.PriceToBeat
+		} else if ptb, ferr := r.pmClient.FetchOpenPriceFromEvent(market); ferr == nil && ptb > 0 {
+			r.priceToBeat = ptb
+		}
+	}
 
 	upBook, downBook, err := r.fetchPairBooks(upID, downID)
 	if err != nil {
@@ -160,10 +179,15 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 	if elapsed < -1 {
 		return nil
 	}
-	if res.BinancePrice > 0 {
+	// Ornek fiyati = Chainlink current (yoksa Binance yedek).
+	price := res.CurrentPrice
+	if price <= 0 {
+		price = res.BinancePrice
+	}
+	if price > 0 {
 		r.addSample(dual40.Sample{
 			ElapsedSec:    elapsed,
-			Price:         res.BinancePrice,
+			Price:         price,
 			FlowImbalance: dual40FlowImbalance(res),
 			UpMid:         0.5 * (upBook.BestBid + upBook.BestAsk),
 			DownMid:       0.5 * (downBook.BestBid + downBook.BestAsk),
@@ -172,7 +196,7 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 
 	currentMetrics := dual40.Classify(recentDual40Samples(r.samples, 15), r.cfg)
 	r.advanceTrials(upBook, downBook, currentMetrics, market, now)
-	r.evaluateOpeningWindows(upID, downID, upBook, downBook, market, now, elapsed)
+	r.evaluateOpeningWindows(upID, downID, upBook, downBook, market, now, elapsed, price)
 	return nil
 }
 
@@ -186,6 +210,7 @@ func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) 
 		delete(r.active, sec)
 	}
 	r.marketSlug = slug
+	r.priceToBeat = 0
 	r.samples = nil
 	r.evaluated = make(map[int]bool)
 	r.tradeStream.SetAssets(assets)
@@ -251,7 +276,7 @@ func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, 
 	}
 }
 
-func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, downBook polymarket.BookSnapshot, market *polymarket.Market, now time.Time, elapsed float64) {
+func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, downBook polymarket.BookSnapshot, market *polymarket.Market, now time.Time, elapsed, price float64) {
 	for _, sec := range r.cfg.EntrySeconds {
 		if r.evaluated[sec] || elapsed+0.25 < float64(sec) {
 			continue
@@ -259,19 +284,22 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		r.evaluated[sec] = true
 		window := dual40.SamplesThrough(r.samples, float64(sec))
 		metrics := dual40.Classify(window, r.cfg)
+		distUsd := math.Abs(price - r.priceToBeat)
 		var trial *dual40.Trial
 		if !dual40.OpeningWindowCovered(window, sec) {
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "INSUFFICIENT_OPENING_WINDOW", now)
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "YETERSIZ_ACILIS_PENCERESI", now)
 		} else if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "TRADE_STREAM_UNHEALTHY", now)
-		} else if r.cfg.MaxEntryDriftBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryDriftBps {
-			// PROXIMITY GATE (kullanicinin stratejisi): fiyat acilistan (~priceToBeat)
-			// uzaksa GIRME; volatil up/down'da bekle. Strike'a geri donunce (kucuk
-			// drift) sonraki kontrol noktasinda girer. feature/hard fark etmez.
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("PTB_TOO_FAR(%.1fbps>%.1f)", math.Abs(metrics.DriftBps), r.cfg.MaxEntryDriftBps), now)
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "AKIS_SAGLIKSIZ", now)
+		} else if r.priceToBeat <= 0 || price <= 0 {
+			// PTB veya fiyat henuz yok -> girme (Chainlink bekleniyor).
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "PTB_BEKLENIYOR", now)
+		} else if r.cfg.MaxEntryDistanceUsd > 0 && distUsd > r.cfg.MaxEntryDistanceUsd {
+			// YAKINLIK GATE: fiyat priceToBeat'ten uzaksa GIRME (paralel/yakin bekle).
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("PTB_UZAK($%.1f>$%.0f)", distUsd, r.cfg.MaxEntryDistanceUsd), now)
+		} else if r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps {
+			// STABILITE GATE: tek yonde volatil hareket varsa GIRME.
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("MOMENTUM_VAR(%.1fbps)", math.Abs(metrics.DriftBps)), now)
 		} else if r.cfg.GateMode == "hard" && !metrics.Eligible {
-			// Yalnizca "hard" modda regime veto. "feature" modda genis-shadow:
-			// kitap-gate gecen her market POST edilir, regime feature olarak loglanir.
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, metrics.Reason, now)
 		} else {
 			created, err := dual40.NewRestingTrial("5m", market.Slug, sec, metrics, upID, downID, upBook, downBook, r.cfg, now, r.tradeStream.LastSeq(), r.tradeStream.GapCount())

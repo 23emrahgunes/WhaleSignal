@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"pm-edge/internal/arb"
 	"pm-edge/internal/binance"
+	"pm-edge/internal/chainlink"
 	"pm-edge/internal/config"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
@@ -72,7 +73,7 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 	return r
 }
 
-func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient) {
 	if r == nil || r.dual40 == nil {
 		return
 	}
@@ -82,7 +83,7 @@ func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, bClient *bin
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("DUAL40_LIVE")), "true") {
 		util.Logger.Warn("DUAL40_LIVE istendi ANCAK Faz 0 SHADOW-only; canli yurutme Faz 3 (kanit sonrasi). SHADOW olarak devam.")
 	}
-	r.dual40.StartObserver(ctx, bClient, microClient)
+	r.dual40.StartObserver(ctx, clClient, bClient, microClient)
 }
 
 func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {

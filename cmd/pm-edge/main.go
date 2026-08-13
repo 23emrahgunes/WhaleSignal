@@ -166,7 +166,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if !isMockMode {
-		arbShadow.StartDual40Observer(ctx, bClient, microClient)
+		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient)
 	}
 	evaluator := engine.NewEvaluator(microClient)
 	state := &marketState{}

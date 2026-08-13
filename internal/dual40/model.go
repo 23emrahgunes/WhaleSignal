@@ -25,10 +25,13 @@ type Config struct {
 	// yalnizca feature olarak loglanir; trial kitap-gate gecince POST edilir
 	// (genis-shadow veri toplamak icin). "hard" => eski davranis (Eligible veto).
 	GateMode string
-	// MaxEntryDriftBps: PROXIMITY GATE. Fiyat acilistan (~priceToBeat) bu kadar
-	// bps'ten fazla sapmissa GIRME (volatil up/down'da bekle). Strike'a geri
-	// dondugunde (drift kucuk) gir. 0 = kapali. feature/hard fark etmez.
-	MaxEntryDriftBps float64
+	// MaxEntryDistanceUsd: YAKINLIK GATE (Chainlink). Fiyat, priceToBeat'ten (event
+	// openPrice) bu kadar USD'den fazla uzaksa GIRME. Kullanici: ~$10 kabul edilir.
+	MaxEntryDistanceUsd float64
+	// MaxEntryMomentumBps: STABILITE GATE. Acilis penceresinde net yonlu hareket
+	// (|driftBps|) bu esigi asarsa GIRME (tek yonde volatil trend -> ikinci bacak
+	// dolmaz). 0 = kapali.
+	MaxEntryMomentumBps float64
 	// HedgeMode: "deadline" (varsayilan) => naked bacagi SONUNA KADAR tut; ikinci
 	// bacak son saniyede bile dolabilir. Yalniz son HedgeDeadlineSec kala hala
 	// tek-bacaksa hedge et. "adaptive" => eski davranis (fiyat/sure/trend erken
@@ -43,9 +46,9 @@ func DefaultConfig() Config {
 	return Config{
 		EntryPrice: 0.40,
 		Shares:     5,
-		// Acilis (5,10,20s: fiyat dogal olarak priceToBeat'e yapisik) + orta pencere
-		// donusleri. Proximity gate hangi noktada drift kucukse ORADA girer.
-		EntrySeconds:        []int{5, 10, 20, 30, 60, 90, 120, 150, 180, 210},
+		// Aç -> 5/10/25s izle, sonra orta pencere donusleri. Yakinlik+stabilite
+		// gate'i hangi noktada uygunsa ORADA girer.
+		EntrySeconds:        []int{5, 10, 25, 40, 60, 90, 120, 150, 180, 210},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,
@@ -57,9 +60,10 @@ func DefaultConfig() Config {
 		HedgeTriggerPrice:   0.70,
 		StopBeforeEndSec:    20,
 		GateMode:            "feature",
-		MaxEntryDriftBps:    3.0, // ~$19 @ $63k; strike'a yakinlik esigi (env ile ayarla)
+		MaxEntryDistanceUsd: 10.0, // priceToBeat'e <= $10 (Chainlink)
+		MaxEntryMomentumBps: 3.0,  // net yonlu hareket esigi (~$19 @ $63k)
 		HedgeMode:           "deadline",
-		HedgeDeadlineSec:    30, // son 30s kala hala tek-bacaksa hedge et
+		HedgeDeadlineSec:    40, // son 40s kala hala tek-bacaksa hedge et (30-45 araligi)
 	}
 }
 
@@ -149,8 +153,11 @@ func NormalizeConfig(cfg Config) Config {
 	if cfg.GateMode != "hard" {
 		cfg.GateMode = "feature"
 	}
-	if cfg.MaxEntryDriftBps < 0 {
-		cfg.MaxEntryDriftBps = def.MaxEntryDriftBps
+	if cfg.MaxEntryDistanceUsd < 0 {
+		cfg.MaxEntryDistanceUsd = def.MaxEntryDistanceUsd
+	}
+	if cfg.MaxEntryMomentumBps < 0 {
+		cfg.MaxEntryMomentumBps = def.MaxEntryMomentumBps
 	}
 	if cfg.HedgeMode != "adaptive" {
 		cfg.HedgeMode = "deadline"
