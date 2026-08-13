@@ -14,6 +14,7 @@ import (
 	"pm-edge/internal/api"
 	"pm-edge/internal/binance"
 	"pm-edge/internal/chainlink"
+	"pm-edge/internal/clob"
 	"pm-edge/internal/config"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/paper"
@@ -172,10 +173,29 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if !isMockMode {
-		// NOT: executor kurulumu + canli-kontrol baglama (main.go) harness guvenlik
-		// katmani tarafindan blokli. Simdilik shadow/nil ile derlenir; canli-etkinlestirme
-		// wiring'i kullanici kendi uygular (asagida chat'te verilen snippet).
-		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, "shadow", nil)
+		// Executor: shadow -> nil (saf simulasyon). dry/live -> imzalayici kurulur;
+		// canli yalniz butonla acilir. Secrets yoksa guvenli sekilde shadow'a duser.
+		var exec *clob.Client
+		execMode := cfg.Dual40ExecMode
+		if execMode != "shadow" {
+			if cfg.PrivateKey == "" {
+				util.Logger.Warn("DUAL40_EXEC_MODE dry/live ANCAK PRIVATE_KEY yok -> SHADOW")
+				execMode = "shadow"
+			} else if e, err := clob.New(clob.Config{
+				PrivateKey: cfg.PrivateKey, Host: cfg.ClobHost, ChainID: cfg.ClobChainID,
+				ExchangeAddr: cfg.ClobExchangeAddr, APIKey: cfg.ClobAPIKey, APISecret: cfg.ClobAPISecret,
+				APIPass: cfg.ClobAPIPassphrase, DryRun: execMode != "live",
+			}, util.Logger); err != nil {
+				util.Logger.Error("CLOB executor kurulamadi -> SHADOW", zap.Error(err))
+				execMode = "shadow"
+			} else {
+				exec = e
+			}
+		}
+		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, execMode, exec)
+		if rt := arbShadow.Dual40Runtime(); rt != nil {
+			server.SetDual40Control(rt.SetLive, rt.RequestKill, rt.Status)
+		}
 	}
 	evaluator := engine.NewEvaluator(microClient)
 	state := &marketState{}
