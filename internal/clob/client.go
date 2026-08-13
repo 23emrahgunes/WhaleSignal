@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 )
 
 // Client: DRY veya CANLI CLOB emir yurutucu. shadow modda hic olusturulmaz (nil).
+// live bayragi CALISMA-ZAMANINDA cevrilebilir (tek-tik gecis); false=DRY (POST yok).
 type Client struct {
 	wallet       *Wallet
 	host         string
@@ -25,7 +27,7 @@ type Client struct {
 	apiKey       string
 	apiSecret    string
 	apiPass      string
-	dryRun       bool
+	live         atomic.Bool
 	http         *http.Client
 	log          *zap.Logger
 }
@@ -54,17 +56,32 @@ func New(cfg Config, log *zap.Logger) (*Client, error) {
 	c := &Client{
 		wallet: w, host: strings.TrimRight(cfg.Host, "/"), chainID: cfg.ChainID,
 		exchangeAddr: cfg.ExchangeAddr, apiKey: cfg.APIKey, apiSecret: cfg.APISecret,
-		apiPass: cfg.APIPass, dryRun: cfg.DryRun, http: &http.Client{Timeout: 10 * time.Second}, log: log,
+		apiPass: cfg.APIPass, http: &http.Client{Timeout: 10 * time.Second}, log: log,
 	}
-	mode := "LIVE"
-	if cfg.DryRun {
-		mode = "DRY"
+	c.live.Store(!cfg.DryRun)
+	mode := "DRY"
+	if !cfg.DryRun {
+		mode = "LIVE"
 	}
-	log.Warn("CLOB EXECUTOR KURULDU", zap.String("mode", mode), zap.String("address", w.Address.Hex()), zap.String("exchange", cfg.ExchangeAddr))
+	log.Warn("CLOB EXECUTOR KURULDU", zap.String("baslangic", mode), zap.String("address", w.Address.Hex()), zap.String("exchange", cfg.ExchangeAddr))
 	return c, nil
 }
 
-func (c *Client) DryRun() bool { return c != nil && c.dryRun }
+// SetLive: calisma-zamaninda DRY<->CANLI cevir (butondan). false=DRY (POST yok).
+func (c *Client) SetLive(v bool) {
+	if c == nil {
+		return
+	}
+	c.live.Store(v)
+	m := "DRY"
+	if v {
+		m = "LIVE"
+	}
+	c.log.Warn("CLOB MOD DEGISTI", zap.String("mode", m))
+}
+
+func (c *Client) IsLive() bool { return c != nil && c.live.Load() }
+func (c *Client) DryRun() bool { return c == nil || !c.live.Load() }
 
 // PlaceLimit: dinlenen (GTC) limit emir. DRY'de imzalar+loglar, POST etmez.
 func (c *Client) PlaceLimit(tokenID string, side Side, size, price float64) (string, error) {
@@ -81,7 +98,7 @@ func (c *Client) place(tokenID string, side Side, size, price float64, orderType
 	if err != nil {
 		return "", err
 	}
-	if c.dryRun {
+	if !c.live.Load() {
 		c.log.Info("CLOB DRY: emir imzalandi (POST YOK)", zap.String("type", orderType), zap.String("side", so.Side),
 			zap.String("tokenId", short(tokenID)), zap.Float64("size", size), zap.Float64("price", price),
 			zap.String("makerAmount", so.MakerAmount), zap.String("takerAmount", so.TakerAmount))
@@ -107,7 +124,7 @@ func (c *Client) place(tokenID string, side Side, size, price float64, orderType
 
 // Cancel: acik emri iptal eder. DRY'de no-op (dry- id).
 func (c *Client) Cancel(orderID string) error {
-	if c.dryRun || strings.HasPrefix(orderID, "dry-") {
+	if !c.live.Load() || strings.HasPrefix(orderID, "dry-") {
 		c.log.Info("CLOB DRY: iptal (no-op)", zap.String("orderId", orderID))
 		return nil
 	}
@@ -122,7 +139,7 @@ func (c *Client) Cancel(orderID string) error {
 
 // GetFilledShares: emrin dolan hisse miktari. DRY'de 0 (dolum simulasyonu ust katmanda).
 func (c *Client) GetFilledShares(orderID string) (float64, error) {
-	if c.dryRun || strings.HasPrefix(orderID, "dry-") {
+	if !c.live.Load() || strings.HasPrefix(orderID, "dry-") {
 		return 0, nil
 	}
 	resp, err := c.doL2("GET", "/data/order/"+orderID, nil)

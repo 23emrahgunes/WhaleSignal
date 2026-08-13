@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 	"pm-edge/internal/arb"
 	"pm-edge/internal/binance"
 	"pm-edge/internal/chainlink"
+	"pm-edge/internal/clob"
 	"pm-edge/internal/config"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
@@ -73,17 +73,19 @@ func newArbShadowRuntime(tf string, cfg *config.Config, db *storage.Database, pm
 	return r
 }
 
-func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+func (r *arbShadowRuntime) StartDual40Observer(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient, execMode string, exec *clob.Client) {
 	if r == nil || r.dual40 == nil {
 		return
 	}
-	// FAZ 0 SINIRI: dual40 SHADOW (paper) motorudur — gercek emir YURUTMEZ.
-	// DUAL40_LIVE=true istense bile canli yurutme Faz 3'tur (yalniz istatistiksel
-	// kanit sonrasi). Buraya (StartObserver) canli execution seam'i baglanacak.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("DUAL40_LIVE")), "true") {
-		util.Logger.Warn("DUAL40_LIVE istendi ANCAK Faz 0 SHADOW-only; canli yurutme Faz 3 (kanit sonrasi). SHADOW olarak devam.")
+	r.dual40.StartObserver(ctx, clClient, bClient, microClient, execMode, exec)
+}
+
+// Dual40Runtime: canli-kontrol uclarinin (mode/kill) baglanmasi icin.
+func (r *arbShadowRuntime) Dual40Runtime() *dual40Runtime {
+	if r == nil {
+		return nil
 	}
-	r.dual40.StartObserver(ctx, clClient, bClient, microClient)
+	return r.dual40
 }
 
 func (r *arbShadowRuntime) Submit(res *engine.EvaluationResult, market *polymarket.Market) {

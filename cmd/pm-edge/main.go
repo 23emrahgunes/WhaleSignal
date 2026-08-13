@@ -172,7 +172,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if !isMockMode {
-		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient)
+		// NOT: executor kurulumu + canli-kontrol baglama (main.go) harness guvenlik
+		// katmani tarafindan blokli. Simdilik shadow/nil ile derlenir; canli-etkinlestirme
+		// wiring'i kullanici kendi uygular (asagida chat'te verilen snippet).
+		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, "shadow", nil)
 	}
 	evaluator := engine.NewEvaluator(microClient)
 	state := &marketState{}

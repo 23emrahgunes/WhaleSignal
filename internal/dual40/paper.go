@@ -67,6 +67,12 @@ type Trial struct {
 	HedgeAt           string  `json:"hedgeAt"`
 	HedgeTriggerPrice float64 `json:"hedgeTriggerPrice"`
 
+	// Yurutme (Faz 3): CLOB order id'leri (shadow'da bos).
+	ExecMode     string `json:"execMode,omitempty"` // shadow|dry|live
+	UpOrderID    string `json:"upOrderId,omitempty"`
+	DownOrderID  string `json:"downOrderId,omitempty"`
+	HedgeOrderID string `json:"hedgeOrderId,omitempty"`
+
 	LockedPnL float64 `json:"lockedPnl"`
 	PaperPnL  float64 `json:"paperPnl"`
 

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"pm-edge/internal/binance"
 	"pm-edge/internal/chainlink"
+	"pm-edge/internal/clob"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/polymarket"
@@ -30,12 +31,105 @@ type dual40Runtime struct {
 	tradeStreamMaxAge time.Duration
 	busy              atomic.Bool
 
+	execMode string       // shadow|dry|live (baslangic)
+	exec     *clob.Client // shadow'da nil; dry/live'de imzalayici (live bayragi runtime)
+	killReq  atomic.Bool  // buton -> tum acik emirleri iptal + DRY'ye dus
+
 	marketSlug  string
 	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
 	priceToBeat float64            // aktif marketin event openPrice'i (Chainlink strike)
 	samples     []dual40.Sample
 	evaluated   map[int]bool
 	active      map[int]*dual40.Trial
+}
+
+// SetLive: butondan DRY<->CANLI. exec yoksa (shadow) etkisiz.
+func (r *dual40Runtime) SetLive(v bool) error {
+	if r == nil || r.exec == nil {
+		return fmt.Errorf("executor yok (shadow modda baslatildi)")
+	}
+	r.exec.SetLive(v)
+	return nil
+}
+
+// RequestKill: tum acik emirleri iptal + DRY'ye dus (observer bir sonraki tick'te uygular).
+func (r *dual40Runtime) RequestKill() {
+	if r == nil {
+		return
+	}
+	if r.exec != nil {
+		r.exec.SetLive(false)
+	}
+	r.killReq.Store(true)
+}
+
+// Status: gosterim icin mevcut mod.
+func (r *dual40Runtime) Status() string {
+	if r == nil || r.exec == nil {
+		return "shadow"
+	}
+	if r.exec.IsLive() {
+		return "live"
+	}
+	return "dry"
+}
+
+// placeBoxLegs: iki bacagi da post-only GTC olarak executor'a verir; order id'leri
+// trial'a yazar. DRY'de imzalanip loglanir (POST yok), live'de gercek gonderilir.
+func (r *dual40Runtime) placeBoxLegs(t *dual40.Trial, upID, downID string) {
+	if up, err := r.exec.PlaceLimit(upID, clob.Buy, t.Shares, t.EntryPrice); err != nil {
+		util.Logger.Warn("DUAL40 UP bacak emri basarisiz", zap.Int64("id", t.ID), zap.Error(err))
+	} else {
+		t.UpOrderID = up
+	}
+	if dn, err := r.exec.PlaceLimit(downID, clob.Buy, t.Shares, t.EntryPrice); err != nil {
+		util.Logger.Warn("DUAL40 DOWN bacak emri basarisiz", zap.Int64("id", t.ID), zap.Error(err))
+	} else {
+		t.DownOrderID = dn
+	}
+}
+
+// cancelResting: trial'in acik resting emirlerini iptal eder (executor). Dolmus/
+// yok emirde CLOB no-op; DRY'de no-op.
+func (r *dual40Runtime) cancelResting(t *dual40.Trial) {
+	if r.exec == nil {
+		return
+	}
+	for _, id := range []string{t.UpOrderID, t.DownOrderID} {
+		if id != "" {
+			_ = r.exec.Cancel(id)
+		}
+	}
+}
+
+// killAll: kill-switch — tum acik emirleri iptal, acik trial'lari KILL_SWITCH ile
+// kapat, takibi birak. exec zaten RequestKill'de DRY'ye alindi.
+func (r *dual40Runtime) killAll(now time.Time) {
+	for sec, t := range r.active {
+		r.cancelResting(t)
+		if dual40.InvalidateDataGap(t, now, "KILL_SWITCH") {
+			_ = r.db.UpdateDual40Trial(t)
+		}
+		delete(r.active, sec)
+	}
+	util.Logger.Warn("DUAL40 KILL-SWITCH: tum acik emirler iptal, DRY moda dusuldu")
+}
+
+// hedgeLive: hedge edilen tarafin resting emrini iptal edip o tarafi marketable
+// (FAK) verir; order id'yi trial'a yazar.
+func (r *dual40Runtime) hedgeLive(t *dual40.Trial, side, tokenID string, shares, price float64) {
+	restingID := t.UpOrderID
+	if side == "DOWN" {
+		restingID = t.DownOrderID
+	}
+	if restingID != "" {
+		_ = r.exec.Cancel(restingID)
+	}
+	if id, err := r.exec.PlaceMarketable(tokenID, clob.Buy, shares, price); err != nil {
+		util.Logger.Warn("DUAL40 hedge emri basarisiz", zap.Int64("id", t.ID), zap.String("side", side), zap.Error(err))
+	} else {
+		t.HedgeOrderID = id
+	}
 }
 
 func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClient *polymarket.Client, enabled bool, feeRate, latencyBuffer float64, tradeStreamMaxAge time.Duration) *dual40Runtime {
@@ -76,12 +170,14 @@ func newDual40Runtime(tf string, cfg dual40.Config, db *storage.Database, pmClie
 // Dual40 needs the true first 5/10/20 seconds of each market. The old implementation
 // sampled only after the full evaluator became ready, which could be 10-20 seconds
 // into the market and made every opening window fail closed as INSUFFICIENT.
-func (r *dual40Runtime) StartObserver(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient) {
+func (r *dual40Runtime) StartObserver(ctx context.Context, clClient *chainlink.Client, bClient *binance.Client, microClient *binance.MicrostructureClient, execMode string, exec *clob.Client) {
 	if r == nil || !r.enabled || ctx == nil || bClient == nil || microClient == nil {
 		return
 	}
 	r.clClient = clClient
-	util.Logger.Info("DUAL40 INDEPENDENT OPENING OBSERVER STARTED (Chainlink price)", zap.Duration("cadence", time.Second))
+	r.execMode = execMode
+	r.exec = exec
+	util.Logger.Info("DUAL40 OPENING OBSERVER STARTED", zap.String("execMode", execMode), zap.Bool("executor", exec != nil), zap.Duration("cadence", time.Second))
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -151,6 +247,9 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 	if parsed, err := time.Parse(time.RFC3339Nano, res.Timestamp); err == nil {
 		now = parsed.UTC()
 	}
+	if r.killReq.Swap(false) {
+		r.killAll(now)
+	}
 	upID, ok := polymarket.TokenIDForOutcome(market, "UP")
 	if !ok {
 		return fmt.Errorf("missing UP token")
@@ -216,6 +315,7 @@ func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) 
 		}
 	}
 	for sec, t := range r.active {
+		r.cancelResting(t) // eski marketin acik resting emirlerini iptal et (executor)
 		filled := t.UpMakerFilled > 1e-9 || t.DownMakerFilled > 1e-9
 		changed := false
 		if filled && openP > 0 && closeP > 0 {
@@ -290,7 +390,11 @@ func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, 
 						util.Logger.Warn("Dual40 hedge apply failed", zap.Int64("id", t.ID), zap.Error(err))
 					} else {
 						changed = true
-						util.Logger.Info("DUAL40 DEADLINE HEDGE", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("side", t.HedgeSide), zap.Float64("avgPrice", t.HedgeAvgPrice), zap.Float64("cost", t.HedgeTotalCost), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
+						// SEAM 3: dry/live -> hedge edilen tarafi executor'a ver (resting iptal + FAK).
+						if r.exec != nil {
+							r.hedgeLive(t, req.Side, tokenID, req.Shares, quote.AveragePrice)
+						}
+						util.Logger.Info("DUAL40 DEADLINE HEDGE", zap.String("mode", r.Status()), zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.String("side", t.HedgeSide), zap.String("hedgeOrderId", t.HedgeOrderID), zap.Float64("avgPrice", t.HedgeAvgPrice), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
 					}
 				}
 			}
@@ -301,6 +405,8 @@ func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, 
 			}
 		}
 		if t.IsTerminal() {
+			// SEAM 2: terminal -> acik resting emir(ler)i iptal et (executor).
+			r.cancelResting(t)
 			util.Logger.Info("DUAL40 TRIAL CLOSED", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("state", t.State), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
 			delete(r.active, sec)
 		}
@@ -338,6 +444,11 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 				trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "BOOK_GATE: "+err.Error(), now)
 			} else {
 				trial = created
+				trial.ExecMode = r.execMode
+				// SEAM 1: dry/live -> iki bacagi da executor'a ver (post-only GTC).
+				if r.exec != nil {
+					r.placeBoxLegs(trial, upID, downID)
+				}
 			}
 		}
 		if err := r.db.InsertDual40Trial(trial); err != nil {
@@ -346,7 +457,7 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		}
 		if trial.IsOpen() {
 			r.active[sec] = trial
-			util.Logger.Info("DUAL40 40C/40C POSTED SHADOW", zap.Int64("id", trial.ID), zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.Float64("chopScore", trial.Metrics.ChopScore), zap.Float64("driftBps", trial.Metrics.DriftBps), zap.Float64("rangeBps", trial.Metrics.RangeBps), zap.Float64("flow", trial.Metrics.MeanFlow), zap.Float64("upQueue", trial.UpQueueAhead), zap.Float64("downQueue", trial.DownQueueAhead))
+			util.Logger.Info("DUAL40 40C/40C POSTED", zap.String("mode", r.Status()), zap.Int64("id", trial.ID), zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.String("upOrderId", trial.UpOrderID), zap.String("downOrderId", trial.DownOrderID), zap.Float64("driftBps", trial.Metrics.DriftBps), zap.Float64("upQueue", trial.UpQueueAhead), zap.Float64("downQueue", trial.DownQueueAhead))
 		} else {
 			util.Logger.Info("DUAL40 ENTRY SKIPPED", zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.String("regime", trial.Regime), zap.Float64("chopScore", trial.Metrics.ChopScore), zap.String("reason", trial.Reason))
 		}
