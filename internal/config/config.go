@@ -57,6 +57,22 @@ type Config struct {
 	PaperHedgeMinAbsPTBZ      float64
 	PaperHedgeMinSecondsToEnd float64
 	PaperHedgeMaxSecondsToEnd float64
+
+	// --- Faz 3: canli yurutme + dashboard auth (SECRETS — asla loglanmaz) ---
+	// Dual40ExecMode: shadow (varsayilan, saf simulasyon) | dry (gercek imza, POST yok)
+	// | live (gercek emir). Acilis her zaman shadow/dry; live yalniz authed dugmeyle.
+	Dual40ExecMode      string
+	PrivateKey          string // CLOB order imzalama (EOA). ASLA loglanmaz.
+	ClobHost            string
+	ClobChainID         int
+	ClobAPIKey          string
+	ClobAPISecret       string
+	ClobAPIPassphrase   string
+	ClobExchangeAddr    string // Polymarket CTF Exchange verifyingContract
+	DashboardUser       string
+	DashboardPass       string // ASLA loglanmaz
+	DashboardSecret     string // session cookie HMAC secret. ASLA loglanmaz
+	DashboardSessionTTL int    // dakika
 }
 
 func LoadConfig() (*Config, error) {
@@ -112,7 +128,32 @@ func LoadConfig() (*Config, error) {
 		PaperHedgeMinAbsPTBZ:            envFloat("PAPER_HEDGE_MIN_ABS_PTB_Z", 0.50),
 		PaperHedgeMinSecondsToEnd:       envFloat("PAPER_HEDGE_MIN_SECONDS_TO_END", 20),
 		PaperHedgeMaxSecondsToEnd:       envFloat("PAPER_HEDGE_MAX_SECONDS_TO_END", 120),
+
+		Dual40ExecMode:      normalizeExecMode(envString("DUAL40_EXEC_MODE", "shadow")),
+		PrivateKey:          envString("PRIVATE_KEY", ""),
+		ClobHost:            envString("CLOB_HOST", "https://clob.polymarket.com"),
+		ClobChainID:         envInt("CHAIN_ID", 137),
+		ClobAPIKey:          envString("CLOB_API_KEY", ""),
+		ClobAPISecret:       envString("CLOB_API_SECRET", ""),
+		ClobAPIPassphrase:   envString("CLOB_API_PASSPHRASE", ""),
+		ClobExchangeAddr:    envString("EXCHANGE_ADDRESS", "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"),
+		DashboardUser:       envString("DASHBOARD_USER", "admin"),
+		DashboardPass:       envString("DASHBOARD_PASS", ""),
+		DashboardSecret:     envString("DASHBOARD_SESSION_SECRET", ""),
+		DashboardSessionTTL: envInt("DASHBOARD_SESSION_TTL_MIN", 720),
 	}, nil
+}
+
+// normalizeExecMode: yalnizca shadow|dry|live kabul; gecersiz -> shadow (guvenli).
+func normalizeExecMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "dry":
+		return "dry"
+	case "live":
+		return "live"
+	default:
+		return "shadow"
+	}
 }
 
 func envString(key, fallback string) string {
