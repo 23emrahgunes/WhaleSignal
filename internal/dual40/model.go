@@ -29,15 +29,23 @@ type Config struct {
 	// bps'ten fazla sapmissa GIRME (volatil up/down'da bekle). Strike'a geri
 	// dondugunde (drift kucuk) gir. 0 = kapali. feature/hard fark etmez.
 	MaxEntryDriftBps float64
+	// HedgeMode: "deadline" (varsayilan) => naked bacagi SONUNA KADAR tut; ikinci
+	// bacak son saniyede bile dolabilir. Yalniz son HedgeDeadlineSec kala hala
+	// tek-bacaksa hedge et. "adaptive" => eski davranis (fiyat/sure/trend erken
+	// tetikler). Kullanicinin gozlemi: ikinci bacak son saniyelerde de doluyor.
+	HedgeMode string
+	// HedgeDeadlineSec: deadline modda, market bitimine bu kadar sn kala hala
+	// tek-bacaksa hedge et (son care). Varsayilan 30.
+	HedgeDeadlineSec int
 }
 
 func DefaultConfig() Config {
 	return Config{
 		EntryPrice: 0.40,
 		Shares:     5,
-		// Yogun kontrol noktalari (her 30s): proximity gate ile birlikte, fiyat
-		// strike'a hangi an geri donerse O AN girer.
-		EntrySeconds:        []int{30, 60, 90, 120, 150, 180, 210, 240},
+		// Acilis (5,10,20s: fiyat dogal olarak priceToBeat'e yapisik) + orta pencere
+		// donusleri. Proximity gate hangi noktada drift kucukse ORADA girer.
+		EntrySeconds:        []int{5, 10, 20, 30, 60, 90, 120, 150, 180, 210},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,
@@ -50,6 +58,8 @@ func DefaultConfig() Config {
 		StopBeforeEndSec:    20,
 		GateMode:            "feature",
 		MaxEntryDriftBps:    3.0, // ~$19 @ $63k; strike'a yakinlik esigi (env ile ayarla)
+		HedgeMode:           "deadline",
+		HedgeDeadlineSec:    30, // son 30s kala hala tek-bacaksa hedge et
 	}
 }
 
@@ -141,6 +151,12 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.MaxEntryDriftBps < 0 {
 		cfg.MaxEntryDriftBps = def.MaxEntryDriftBps
+	}
+	if cfg.HedgeMode != "adaptive" {
+		cfg.HedgeMode = "deadline"
+	}
+	if cfg.HedgeDeadlineSec <= 0 {
+		cfg.HedgeDeadlineSec = def.HedgeDeadlineSec
 	}
 	return cfg
 }

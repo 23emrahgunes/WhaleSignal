@@ -245,6 +245,16 @@ func HedgeNeeded(t *Trial, current Metrics, upBook, downBook polymarket.BookSnap
 	} else {
 		req.Side, req.Shares, req.BestAsk = "UP", unmatchedDown, upBook.BestAsk
 	}
+	// DEADLINE MOD (varsayilan): naked bacagi SONUNA KADAR tut — ikinci bacak son
+	// saniyelerde de dolabilir. Fiyat/sure/trend erken tetikleyicilerini ATLA;
+	// yalniz market bitimine <= HedgeDeadlineSec kala hala tek-bacaksa hedge et.
+	if cfg.HedgeMode == "deadline" {
+		if !marketEnd.IsZero() && marketEnd.Sub(now.UTC()) <= time.Duration(cfg.HedgeDeadlineSec)*time.Second {
+			req.Needed = true
+			req.Reason = "HEDGE_DEADLINE"
+		}
+		return req
+	}
 	if req.BestAsk >= req.TriggerPrice-1e-12 {
 		req.Needed = true
 		req.Reason = "ADAPTIVE_HEDGE_PRICE_TRIGGER"

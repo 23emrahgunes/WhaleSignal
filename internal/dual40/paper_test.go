@@ -78,6 +78,7 @@ func TestDual40QueueAwareBothFillLocksOneDollar(t *testing.T) {
 
 func TestAdaptiveHedgeUsesOppositeSideAndQuoteCost(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.HedgeMode = "adaptive" // bu test fiyat-tetigini (erken hedge) sinar
 	m := Metrics{Eligible: true, Regime: "CHOP", ChopScore: 80}
 	now := time.Date(2026, 8, 12, 20, 0, 0, 0, time.UTC)
 	upBook := dualBook("UP", 0, 0.50)

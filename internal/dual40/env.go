@@ -25,6 +25,8 @@ func LoadConfigFromEnv() (Config, bool) {
 	cfg.StopBeforeEndSec = envInt("DUAL40_STOP_BEFORE_END_SEC", cfg.StopBeforeEndSec)
 	cfg.GateMode = envStr("DUAL40_GATE_MODE", cfg.GateMode)
 	cfg.MaxEntryDriftBps = envFloat("DUAL40_ENTRY_MAX_DRIFT_BPS", cfg.MaxEntryDriftBps)
+	cfg.HedgeMode = envStr("DUAL40_HEDGE_MODE", cfg.HedgeMode)
+	cfg.HedgeDeadlineSec = envInt("DUAL40_HEDGE_DEADLINE_SEC", cfg.HedgeDeadlineSec)
 	return NormalizeConfig(cfg), enabled
 }
 
