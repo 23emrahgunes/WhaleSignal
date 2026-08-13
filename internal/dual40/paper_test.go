@@ -104,3 +104,32 @@ func TestAdaptiveHedgeUsesOppositeSideAndQuoteCost(t *testing.T) {
 		t.Fatalf("expected -0.60 pnl including hedge fee, got %.6f", trial.PaperPnL)
 	}
 }
+
+func TestSettleAtOutcomeSingleLeg(t *testing.T) {
+	now := time.Date(2026, 8, 13, 20, 0, 0, 0, time.UTC)
+	// Tek bacak: 5 UP @ 0.40 dolmus (maliyet 2.00), DOWN bos.
+	mk := func() *Trial {
+		return &Trial{State: StateOneLeg, Shares: 5, EntryPrice: 0.40,
+			UpMakerFilled: 5, UpMakerCost: 2.00}
+	}
+	// UP kazanir (close>open): payout 5*1=5, maliyet 2 -> +3.00
+	up := mk()
+	if !SettleAtOutcome(up, 63000, 63100, now) {
+		t.Fatal("settle up-win basarisiz")
+	}
+	if up.State != StateSettled || math.Abs(up.PaperPnL-3.0) > 1e-9 {
+		t.Fatalf("UP kazanir beklenen +3.00, alinan %.4f (state %s)", up.PaperPnL, up.State)
+	}
+	// DOWN kazanir (close<open): payout 0, maliyet 2 -> -2.00 (kayip DURUSTCE sayilir)
+	dn := mk()
+	if !SettleAtOutcome(dn, 63100, 63000, now) {
+		t.Fatal("settle down-win basarisiz")
+	}
+	if dn.State != StateSettled || math.Abs(dn.PaperPnL-(-2.0)) > 1e-9 {
+		t.Fatalf("DOWN kazanir beklenen -2.00, alinan %.4f", dn.PaperPnL)
+	}
+	// Sonuc fiyati yoksa settle etme (cagiran void'e dusmeli)
+	if SettleAtOutcome(mk(), 0, 63000, now) {
+		t.Fatal("fiyat yokken settle etmemeli")
+	}
+}

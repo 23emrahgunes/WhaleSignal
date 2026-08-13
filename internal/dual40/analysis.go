@@ -54,7 +54,7 @@ type Analysis struct {
 // (bozuk veri) ve Skipped (hic girilmedi) HARIC.
 func isResolvedTerminal(state string) bool {
 	switch state {
-	case StateCompleted, StateHedged, StatePartialPair, StateExpiredNoFill:
+	case StateCompleted, StateHedged, StatePartialPair, StateSettled, StateExpiredNoFill:
 		return true
 	}
 	return false

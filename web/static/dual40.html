@@ -54,8 +54,8 @@ const n=(v,d=2)=>Number.isFinite(+v)?(+v).toFixed(d):'—';
 const pct=v=>Number.isFinite(+v)?(100*(+v)).toFixed(1)+'%':'—';
 const money=v=>Number.isFinite(+v)?((+v)>=0?'+':'')+'$'+(+v).toFixed(3):'—';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function stateClass(s){return s==='COMPLETED'?'good':s==='HEDGED'?'warn':s==='DATA_GAP_INVALID'?'bad':''}
-const ST={COMPLETED:'TAMAMLANDI',HEDGED:'KORUNDU',RESTING:'BEKLİYOR',ONE_LEG:'TEK BACAK',PARTIAL_PAIR:'KISMİ',EXPIRED_NO_FILL:'DOLMADI',DATA_GAP_INVALID:'VERİ BOŞLUĞU',SKIPPED:'ATLANDI'};
+function stateClass(s){return s==='COMPLETED'?'good':(s==='HEDGED'||s==='SETTLED')?'warn':s==='DATA_GAP_INVALID'?'bad':''}
+const ST={COMPLETED:'TAMAMLANDI',HEDGED:'KORUNDU',SETTLED:'SONUÇLANDI',RESTING:'BEKLİYOR',ONE_LEG:'TEK BACAK',PARTIAL_PAIR:'KISMİ',EXPIRED_NO_FILL:'DOLMADI',DATA_GAP_INVALID:'VERİ BOŞLUĞU',SKIPPED:'ATLANDI'};
 const RG={DEAD_FLAT:'DÜZ',VOLATILE:'VOLATİL',TREND_UP:'TREND↑',TREND_DOWN:'TREND↓',FLOW_UP:'AKIŞ↑',FLOW_DOWN:'AKIŞ↓',POLY_SKEWED:'PİYASA EĞİK',MIXED:'KARIŞIK',CHOP:'KARARSIZ',INSUFFICIENT:'YETERSİZ',UNKNOWN:'—'};
 const trState=s=>ST[s]||s||'—';
 const trRegime=r=>RG[r]||r||'—';

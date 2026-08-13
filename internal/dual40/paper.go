@@ -17,6 +17,7 @@ const (
 	StateHedged         = "HEDGED"
 	StateExpiredNoFill  = "EXPIRED_NO_FILL"
 	StatePartialPair    = "PARTIAL_PAIR"
+	StateSettled        = "SETTLED"
 	StateDataGapInvalid = "DATA_GAP_INVALID"
 )
 
@@ -338,6 +339,40 @@ func InvalidateDataGap(t *Trial, now time.Time, reason string) bool {
 
 func CloseForMarketChange(t *Trial, now time.Time) bool {
 	return InvalidateDataGap(t, now, "MARKET_CHANGED_BEFORE_RESOLUTION")
+}
+
+// SettleAtOutcome: acik trial'i market GERCEK SONUCUNA gore kapatir (void yerine).
+// Kazanan = closePrice > openPrice ? UP : DOWN (ikisi de ayni Chainlink oracle'i =>
+// basissiz, tutarli). Dolan bacak(lar) + hedge kazanan tarafta $1 oder. Boylece
+// tek-bacak riski (KAYIP veya kazanc) DURUSTCE nete girer, gizlenmez.
+func SettleAtOutcome(t *Trial, openPrice, closePrice float64, now time.Time) bool {
+	if t == nil || !t.IsOpen() {
+		return false
+	}
+	if openPrice <= 0 || closePrice <= 0 {
+		return false // sonuc bilinmiyor -> cagiran void'e dussun
+	}
+	upWins := closePrice > openPrice
+	upShares := t.UpMakerFilled
+	downShares := t.DownMakerFilled
+	switch t.HedgeSide {
+	case "UP":
+		upShares += t.HedgeShares
+	case "DOWN":
+		downShares += t.HedgeShares
+	}
+	payout := downShares
+	winner := "DOWN"
+	if upWins {
+		payout, winner = upShares, "UP"
+	}
+	cost := t.UpMakerCost + t.DownMakerCost + t.HedgeTotalCost
+	t.PaperPnL = payout - cost
+	t.LockedPnL = t.PaperPnL
+	t.State = StateSettled
+	t.Reason = fmt.Sprintf("SETTLED_%s_WIN(close %.2f vs open %.2f)", winner, closePrice, openPrice)
+	t.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
+	return true
 }
 
 // RecordFirstFillContext, ilk bacak dolar dolmaz o anin mikroyapisini trial'e

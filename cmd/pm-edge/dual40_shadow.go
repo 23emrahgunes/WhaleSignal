@@ -31,7 +31,8 @@ type dual40Runtime struct {
 	busy              atomic.Bool
 
 	marketSlug  string
-	priceToBeat float64 // aktif marketin event openPrice'i (Chainlink strike)
+	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
+	priceToBeat float64            // aktif marketin event openPrice'i (Chainlink strike)
 	samples     []dual40.Sample
 	evaluated   map[int]bool
 	active      map[int]*dual40.Trial
@@ -161,6 +162,7 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 	if r.marketSlug != market.Slug {
 		r.rollMarket(market.Slug, []string{upID, downID}, now)
 	}
+	r.market = market // roll'dan SONRA guncelle (roll eski market'i settle icin kullandi)
 	// priceToBeat = event openPrice (Chainlink strike). Market obj'de varsa onu al,
 	// yoksa event sayfasindan cek. Gelene kadar her tick tekrar dene.
 	if r.priceToBeat <= 0 {
@@ -201,11 +203,32 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 }
 
 func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) {
+	// ESKI marketin acilis/kapanis Chainlink boundary fiyatlari (kazanan icin,
+	// ikisi de ayni oracle => basissiz). Dolan bacagi olan trial'lar VOID yerine
+	// GERCEK sonuca gore settle edilir; boylece tek-bacak riski durustce nete girer.
+	var openP, closeP float64
+	if r.clClient != nil && r.market != nil {
+		if p, ok := r.clClient.BoundaryPrice(r.market.StartTime); ok {
+			openP = p
+		}
+		if p, ok := r.clClient.BoundaryPrice(r.market.EndTime); ok {
+			closeP = p
+		}
+	}
 	for sec, t := range r.active {
-		if dual40.CloseForMarketChange(t, now) {
+		filled := t.UpMakerFilled > 1e-9 || t.DownMakerFilled > 1e-9
+		changed := false
+		if filled && openP > 0 && closeP > 0 {
+			changed = dual40.SettleAtOutcome(t, openP, closeP, now)
+		}
+		if !changed {
+			changed = dual40.CloseForMarketChange(t, now) // pozisyonsuz veya settle fiyati yok
+		}
+		if changed {
 			if err := r.db.UpdateDual40Trial(t); err != nil {
 				util.Logger.Warn("Dual40 market-change close failed", zap.Int64("id", t.ID), zap.Error(err))
 			}
+			util.Logger.Info("DUAL40 ROLL CLOSE", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.String("state", t.State), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
 		}
 		delete(r.active, sec)
 	}
@@ -233,18 +256,26 @@ func (r *dual40Runtime) addSample(s dual40.Sample) {
 func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, metrics dual40.Metrics, market *polymarket.Market, now time.Time) {
 	for sec, t := range r.active {
 		changed := false
-		if r.tradeStream.GapCount() != t.StreamGapCount {
+		gapChanged := r.tradeStream.GapCount() != t.StreamGapCount
+		filled := t.UpMakerFilled > 1e-9 || t.DownMakerFilled > 1e-9
+		if gapChanged && !filled {
+			// Pozisyonsuz trial + stream boslugu -> void (riski gizlemez).
 			changed = dual40.InvalidateDataGap(t, now, "TRADE_STREAM_DATA_GAP")
-		} else if r.tradeStream.Healthy(r.tradeStreamMaxAge) {
-			trades, latest := r.tradeStream.TradesAfter(t.LastTradeSeq)
-			hadFirstFill := t.FirstFillAt != ""
-			changed = dual40.Advance(t, upBook, downBook, trades, latest, now, market.EndTime, r.cfg)
-			// Ilk bacak bu tick'te doldu -> o anin mikroyapisini koşulla (bir kez).
-			if !hadFirstFill && t.FirstFillAt != "" {
-				fillElapsed := now.Sub(market.StartTime.UTC()).Seconds()
-				dual40.RecordFirstFillContext(t, metrics, fillElapsed)
-				changed = true
+		} else {
+			// Stream saglikliysa fill'leri ilerlet. DOLU trial'i gap'te VOID ETME;
+			// deadline hedge (kitaptan, stream'den bagimsiz) veya roll-settle ile
+			// gercek sonuca gitsin.
+			if !gapChanged && r.tradeStream.Healthy(r.tradeStreamMaxAge) {
+				trades, latest := r.tradeStream.TradesAfter(t.LastTradeSeq)
+				hadFirstFill := t.FirstFillAt != ""
+				changed = dual40.Advance(t, upBook, downBook, trades, latest, now, market.EndTime, r.cfg)
+				if !hadFirstFill && t.FirstFillAt != "" {
+					fillElapsed := now.Sub(market.StartTime.UTC()).Seconds()
+					dual40.RecordFirstFillContext(t, metrics, fillElapsed)
+					changed = true
+				}
 			}
+			// HEDGE stream saglik/gap durumundan BAGIMSIZ: kitap + REST quote yeter.
 			if t.IsOpen() {
 				req := dual40.HedgeNeeded(t, metrics, upBook, downBook, now, market.EndTime, r.cfg)
 				if req.Needed {
@@ -259,7 +290,7 @@ func (r *dual40Runtime) advanceTrials(upBook, downBook polymarket.BookSnapshot, 
 						util.Logger.Warn("Dual40 hedge apply failed", zap.Int64("id", t.ID), zap.Error(err))
 					} else {
 						changed = true
-						util.Logger.Info("DUAL40 ADAPTIVE HEDGE", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("side", t.HedgeSide), zap.Float64("avgPrice", t.HedgeAvgPrice), zap.Float64("cost", t.HedgeTotalCost), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
+						util.Logger.Info("DUAL40 DEADLINE HEDGE", zap.Int64("id", t.ID), zap.String("market", t.MarketSlug), zap.Int("entrySec", t.EntrySecond), zap.String("side", t.HedgeSide), zap.Float64("avgPrice", t.HedgeAvgPrice), zap.Float64("cost", t.HedgeTotalCost), zap.Float64("pnl", t.PaperPnL), zap.String("reason", t.Reason))
 					}
 				}
 			}
