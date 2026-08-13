@@ -25,15 +25,19 @@ type Config struct {
 	// yalnizca feature olarak loglanir; trial kitap-gate gecince POST edilir
 	// (genis-shadow veri toplamak icin). "hard" => eski davranis (Eligible veto).
 	GateMode string
+	// MaxEntryDriftBps: PROXIMITY GATE. Fiyat acilistan (~priceToBeat) bu kadar
+	// bps'ten fazla sapmissa GIRME (volatil up/down'da bekle). Strike'a geri
+	// dondugunde (drift kucuk) gir. 0 = kapali. feature/hard fark etmez.
+	MaxEntryDriftBps float64
 }
 
 func DefaultConfig() Config {
 	return Config{
 		EntryPrice: 0.40,
 		Shares:     5,
-		// Acilis (10,20s) + orta pencere (60=4dk kala, 120=3dk, 180=2dk, 240=1dk kala).
-		// Fiyat strike'a geri dondugunde ortada da girer; post-only her an korur.
-		EntrySeconds:        []int{10, 20, 60, 120, 180, 240},
+		// Yogun kontrol noktalari (her 30s): proximity gate ile birlikte, fiyat
+		// strike'a hangi an geri donerse O AN girer.
+		EntrySeconds:        []int{30, 60, 90, 120, 150, 180, 210, 240},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,
@@ -45,6 +49,7 @@ func DefaultConfig() Config {
 		HedgeTriggerPrice:   0.70,
 		StopBeforeEndSec:    20,
 		GateMode:            "feature",
+		MaxEntryDriftBps:    3.0, // ~$19 @ $63k; strike'a yakinlik esigi (env ile ayarla)
 	}
 }
 
@@ -133,6 +138,9 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.GateMode != "hard" {
 		cfg.GateMode = "feature"
+	}
+	if cfg.MaxEntryDriftBps < 0 {
+		cfg.MaxEntryDriftBps = def.MaxEntryDriftBps
 	}
 	return cfg
 }

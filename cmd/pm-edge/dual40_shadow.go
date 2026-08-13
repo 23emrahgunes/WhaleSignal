@@ -264,6 +264,11 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "INSUFFICIENT_OPENING_WINDOW", now)
 		} else if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "TRADE_STREAM_UNHEALTHY", now)
+		} else if r.cfg.MaxEntryDriftBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryDriftBps {
+			// PROXIMITY GATE (kullanicinin stratejisi): fiyat acilistan (~priceToBeat)
+			// uzaksa GIRME; volatil up/down'da bekle. Strike'a geri donunce (kucuk
+			// drift) sonraki kontrol noktasinda girer. feature/hard fark etmez.
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("PTB_TOO_FAR(%.1fbps>%.1f)", math.Abs(metrics.DriftBps), r.cfg.MaxEntryDriftBps), now)
 		} else if r.cfg.GateMode == "hard" && !metrics.Eligible {
 			// Yalnizca "hard" modda regime veto. "feature" modda genis-shadow:
 			// kitap-gate gecen her market POST edilir, regime feature olarak loglanir.
