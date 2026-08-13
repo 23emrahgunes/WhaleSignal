@@ -174,6 +174,10 @@ func main() {
 		startBTC15mRuntime(ctx, isMockMode, cfg, db, server, pmClient, bClient, clClient, microClient)
 	}
 
+	// priceToBeat kilidi: Polymarket'in resmi openPrice'i pencere basina SABIT ve
+	// market bununla settle olur; bir kez alinca kilitle, her poll'de tekrar cekme.
+	var ptbLockStart int64
+	var ptbLockValue float64
 	refreshMarket := func(now time.Time) {
 		if isMockMode {
 			start := polymarket.BTC5mWindowStart(now)
@@ -191,13 +195,21 @@ func main() {
 			state.Set(nil)
 			return
 		}
+		// KESIN gercek = Polymarket'in kendi openPrice'i (market bununla settle olur,
+		// UI'da gorunen sayi). Chainlink RTDS boundary yakalamamiz yalniz openPrice
+		// yayinlanana kadar GECICI deger; openPrice gelince kilitlenir.
 		snap := clClient.Snapshot(m.StartTime, now)
-		if snap.Ready && snap.PriceToBeat > 0 {
-			m.PriceToBeat = snap.PriceToBeat
-			m.PriceToBeatSource = "CHAINLINK_RTDS_BOUNDARY"
+		startKey := m.StartTime.UTC().Unix()
+		if ptbLockStart == startKey && ptbLockValue > 0 {
+			m.PriceToBeat = ptbLockValue
+			m.PriceToBeatSource = "POLYMARKET_OPEN"
 		} else if ptb, fetchErr := pmClient.FetchPriceToBeat(m); fetchErr == nil && ptb > 0 {
+			ptbLockStart, ptbLockValue = startKey, ptb
 			m.PriceToBeat = ptb
-			m.PriceToBeatSource = "POLYMARKET_REFERENCE_API"
+			m.PriceToBeatSource = "POLYMARKET_OPEN"
+		} else if snap.Ready && snap.PriceToBeat > 0 {
+			m.PriceToBeat = snap.PriceToBeat
+			m.PriceToBeatSource = "CHAINLINK_RTDS_PROVISIONAL"
 		} else {
 			m.PriceToBeat = 0
 			m.PriceToBeatSource = "UNAVAILABLE"
@@ -259,7 +271,7 @@ func main() {
 					referencePrice, referenceFresh = snap.CurrentPrice, snap.Fresh
 					if m.PriceToBeat <= 0 && snap.Ready && snap.PriceToBeat > 0 {
 						m.PriceToBeat = snap.PriceToBeat
-						m.PriceToBeatSource = "CHAINLINK_RTDS_BOUNDARY"
+						m.PriceToBeatSource = "CHAINLINK_RTDS_PROVISIONAL"
 						state.Set(m)
 					}
 				}
