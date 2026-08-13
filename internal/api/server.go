@@ -20,7 +20,21 @@ type Server struct {
 	currentResults      map[string]*engine.EvaluationResult
 	currentMarkets      map[string]*polymarket.Market
 	gates               map[string]gateState
+
+	// auth (Faz 3): pass+secret ikisi de set ise dashboard+API session ister.
+	authUser   string
+	authPass   string
+	authSecret string
+	authTTLMin int
 }
+
+// SetAuth: dashboard giris korumasini yapilandirir. pass VE secret bos degilse
+// koruma aktif; aksi halde acik kalir (uyari loglanir main'de).
+func (s *Server) SetAuth(user, pass, secret string, ttlMin int) {
+	s.authUser, s.authPass, s.authSecret, s.authTTLMin = user, pass, secret, ttlMin
+}
+
+func (s *Server) authEnabled() bool { return s.authPass != "" && s.authSecret != "" }
 
 func NewServer(db *storage.Database, paperInitialBalance ...float64) *Server {
 	initial := 1000.0
@@ -57,9 +71,11 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/arb/paper/stats", s.cors(s.handleArbPaperStats))
 	mux.HandleFunc("/api/arb/paper/analysis", s.cors(s.handleArbPaperAnalysis))
 	mux.HandleFunc("/api/comparison", s.cors(s.handleComparison))
+	mux.HandleFunc("/api/login", s.cors(s.handleLogin))
+	mux.HandleFunc("/api/logout", s.cors(s.handleLogout))
 	fileServer := http.FileServer(http.Dir("web/static"))
 	mux.Handle("/", s.corsHandler(s.staticWithInverseAB(fileServer)))
-	return http.ListenAndServe(":"+port, mux)
+	return http.ListenAndServe(":"+port, s.requireAuth(mux))
 }
 
 // staticWithInverseAB leaves the existing dashboard file untouched and injects

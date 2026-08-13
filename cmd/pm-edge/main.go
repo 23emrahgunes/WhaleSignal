@@ -99,6 +99,12 @@ func main() {
 	}
 
 	server := api.NewServer(db, cfg.PaperInitialBalance)
+	server.SetAuth(cfg.DashboardUser, cfg.DashboardPass, cfg.DashboardSecret, cfg.DashboardSessionTTL)
+	if cfg.DashboardPass == "" || cfg.DashboardSecret == "" {
+		util.Logger.Warn("DASHBOARD ACIK: DASHBOARD_PASS/DASHBOARD_SESSION_SECRET set degil -> giris korumasi KAPALI")
+	} else {
+		util.Logger.Info("DASHBOARD giris korumasi AKTIF (session)")
+	}
 	pmClient := polymarket.NewClient()
 	bClient := binance.NewClient()
 	clClient := chainlink.NewClient()
