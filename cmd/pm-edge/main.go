@@ -190,7 +190,7 @@ func main() {
 		}
 		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, execMode, exec)
 		if rt := arbShadow.Dual40Runtime(); rt != nil {
-			server.SetDual40Control(rt.SetLive, rt.RequestKill, rt.Status)
+			server.SetDual40Control(rt.SetLive, rt.RequestKill, rt.Status, rt.ExecErr)
 		}
 	}
 	evaluator := engine.NewEvaluator(microClient)

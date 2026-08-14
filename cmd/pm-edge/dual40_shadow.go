@@ -31,9 +31,10 @@ type dual40Runtime struct {
 	tradeStreamMaxAge time.Duration
 	busy              atomic.Bool
 
-	execMode string       // shadow|dry|live (baslangic)
-	exec     *clob.Client // shadow'da nil; dry/live'de imzalayici (live bayragi runtime)
-	killReq  atomic.Bool  // buton -> tum acik emirleri iptal + DRY'ye dus
+	execMode    string                 // shadow|dry|live (baslangic)
+	exec        *clob.Client           // shadow'da nil; dry/live'de imzalayici (live bayragi runtime)
+	killReq     atomic.Bool            // buton -> tum acik emirleri iptal + DRY'ye dus
+	lastExecErr atomic.Pointer[string] // son kopru/emir hatasi (panelde gosterilir)
 
 	marketSlug  string
 	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
@@ -74,16 +75,34 @@ func (r *dual40Runtime) Status() string {
 	return "dry"
 }
 
+// setExecErr / ExecErr: son kopru/emir hatasini tutar (dashboard panelinde gosterilir).
+func (r *dual40Runtime) setExecErr(err error) {
+	if err == nil {
+		return
+	}
+	s := time.Now().UTC().Format("15:04:05") + " · " + err.Error()
+	r.lastExecErr.Store(&s)
+}
+
+func (r *dual40Runtime) ExecErr() string {
+	if p := r.lastExecErr.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
 // placeBoxLegs: iki bacagi da post-only GTC olarak executor'a verir; order id'leri
 // trial'a yazar. DRY'de imzalanip loglanir (POST yok), live'de gercek gonderilir.
 func (r *dual40Runtime) placeBoxLegs(t *dual40.Trial, upID, downID string) {
 	if up, err := r.exec.PlaceLimit(upID, clob.Buy, t.Shares, t.EntryPrice); err != nil {
 		util.Logger.Warn("DUAL40 UP bacak emri basarisiz", zap.Int64("id", t.ID), zap.Error(err))
+		r.setExecErr(err)
 	} else {
 		t.UpOrderID = up
 	}
 	if dn, err := r.exec.PlaceLimit(downID, clob.Buy, t.Shares, t.EntryPrice); err != nil {
 		util.Logger.Warn("DUAL40 DOWN bacak emri basarisiz", zap.Int64("id", t.ID), zap.Error(err))
+		r.setExecErr(err)
 	} else {
 		t.DownOrderID = dn
 	}
@@ -127,6 +146,7 @@ func (r *dual40Runtime) hedgeLive(t *dual40.Trial, side, tokenID string, shares,
 	}
 	if id, err := r.exec.PlaceMarketable(tokenID, clob.Buy, shares, price); err != nil {
 		util.Logger.Warn("DUAL40 hedge emri basarisiz", zap.Int64("id", t.ID), zap.String("side", side), zap.Error(err))
+		r.setExecErr(err)
 	} else {
 		t.HedgeOrderID = id
 	}

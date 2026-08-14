@@ -10,21 +10,28 @@ type dual40Control struct {
 	setLive func(bool) error
 	kill    func()
 	status  func() string
+	execErr func() string
 }
 
 // SetDual40Control: canli-kontrol kancalarini baglar (mode/kill/status uclari icin).
-func (s *Server) SetDual40Control(setLive func(bool) error, kill func(), status func() string) {
-	s.d40 = &dual40Control{setLive: setLive, kill: kill, status: status}
+func (s *Server) SetDual40Control(setLive func(bool) error, kill func(), status func() string, execErr func() string) {
+	s.d40 = &dual40Control{setLive: setLive, kill: kill, status: status, execErr: execErr}
 }
 
-// GET /api/dual40/status -> {mode}
+// GET /api/dual40/status -> {mode, controllable, lastError}
 func (s *Server) handleDual40Status(w http.ResponseWriter, r *http.Request) {
 	mode := "shadow"
-	if s.d40 != nil && s.d40.status != nil {
-		mode = s.d40.status()
+	lastErr := ""
+	if s.d40 != nil {
+		if s.d40.status != nil {
+			mode = s.d40.status()
+		}
+		if s.d40.execErr != nil {
+			lastErr = s.d40.execErr()
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"mode": mode, "controllable": s.d40 != nil})
+	_ = json.NewEncoder(w).Encode(map[string]any{"mode": mode, "controllable": s.d40 != nil, "lastError": lastErr})
 }
 
 // POST /api/dual40/mode {mode:"dry"|"live", pass} -> session + taze sifre gerektirir.
