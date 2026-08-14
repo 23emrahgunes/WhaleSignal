@@ -58,19 +58,14 @@ type Config struct {
 	PaperHedgeMinSecondsToEnd float64
 	PaperHedgeMaxSecondsToEnd float64
 
-	// --- Faz 3: canli yurutme + dashboard auth (SECRETS — asla loglanmaz) ---
-	// Dual40ExecMode: shadow (varsayilan, saf simulasyon) | dry (gercek imza, POST yok)
+	// --- Faz 3: canli yurutme (kopru) + dashboard auth ---
+	// Dual40ExecMode: shadow (varsayilan, saf simulasyon) | dry (kopru imzalar, POST yok)
 	// | live (gercek emir). Acilis her zaman shadow/dry; live yalniz authed dugmeyle.
+	// Imzalama Go'da DEGIL: py-clob-client v2 saran yerel kopruye (executor_bridge.py)
+	// yaptirilir. CLOB secrets (private key/creds/funder/sigType) KOPRUNUN env'inde.
 	Dual40ExecMode      string
-	PrivateKey          string // CLOB order imzalama (EOA). ASLA loglanmaz.
-	ClobHost            string
-	ClobChainID         int
-	ClobAPIKey          string
-	ClobAPISecret       string
-	ClobAPIPassphrase   string
-	ClobExchangeAddr    string // Polymarket CTF Exchange verifyingContract
-	ClobFunderAddr      string // proxy/Safe adresi (paranin oldugu). SIGNATURE_TYPE!=0 ise maker=bu
-	ClobSignatureType   int    // 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
+	ExecutorURL         string // http://127.0.0.1:8099 (kopru)
+	ExecutorToken       string // X-Executor-Token paylasilan sir. ASLA loglanmaz
 	DashboardUser       string
 	DashboardPass       string // ASLA loglanmaz
 	DashboardSecret     string // session cookie HMAC secret. ASLA loglanmaz
@@ -132,15 +127,8 @@ func LoadConfig() (*Config, error) {
 		PaperHedgeMaxSecondsToEnd:       envFloat("PAPER_HEDGE_MAX_SECONDS_TO_END", 120),
 
 		Dual40ExecMode:      normalizeExecMode(envString("DUAL40_EXEC_MODE", "shadow")),
-		PrivateKey:          envString("PRIVATE_KEY", ""),
-		ClobHost:            envString("CLOB_HOST", "https://clob.polymarket.com"),
-		ClobChainID:         envInt("CHAIN_ID", 137),
-		ClobAPIKey:          envString("CLOB_API_KEY", ""),
-		ClobAPISecret:       envString("CLOB_API_SECRET", ""),
-		ClobAPIPassphrase:   envString("CLOB_API_PASSPHRASE", ""),
-		ClobExchangeAddr:    envString("EXCHANGE_ADDRESS", "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"),
-		ClobFunderAddr:      envString("FUNDER_ADDRESS", ""),
-		ClobSignatureType:   envIntZero("SIGNATURE_TYPE", 0),
+		ExecutorURL:         envString("EXECUTOR_URL", "http://127.0.0.1:8099"),
+		ExecutorToken:       envString("EXECUTOR_TOKEN", ""),
 		DashboardUser:       envString("DASHBOARD_USER", "admin"),
 		DashboardPass:       envString("DASHBOARD_PASS", ""),
 		DashboardSecret:     envString("DASHBOARD_SESSION_SECRET", ""),

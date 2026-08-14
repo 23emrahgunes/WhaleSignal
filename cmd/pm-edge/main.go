@@ -178,16 +178,11 @@ func main() {
 		var exec *clob.Client
 		execMode := cfg.Dual40ExecMode
 		if execMode != "shadow" {
-			if cfg.PrivateKey == "" {
-				util.Logger.Warn("DUAL40_EXEC_MODE dry/live ANCAK PRIVATE_KEY yok -> SHADOW")
-				execMode = "shadow"
-			} else if e, err := clob.New(clob.Config{
-				PrivateKey: cfg.PrivateKey, Host: cfg.ClobHost, ChainID: cfg.ClobChainID,
-				ExchangeAddr: cfg.ClobExchangeAddr, APIKey: cfg.ClobAPIKey, APISecret: cfg.ClobAPISecret,
-				APIPass: cfg.ClobAPIPassphrase, Funder: cfg.ClobFunderAddr, SignatureType: cfg.ClobSignatureType,
+			if e, err := clob.New(clob.Config{
+				ExecutorURL: cfg.ExecutorURL, ExecutorToken: cfg.ExecutorToken,
 				DryRun: execMode != "live",
 			}, util.Logger); err != nil {
-				util.Logger.Error("CLOB executor kurulamadi -> SHADOW", zap.Error(err))
+				util.Logger.Error("CLOB executor (kopru) kurulamadi -> SHADOW", zap.Error(err))
 				execMode = "shadow"
 			} else {
 				exec = e
