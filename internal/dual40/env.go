@@ -29,6 +29,9 @@ func LoadConfigFromEnv() (Config, bool) {
 	cfg.HedgeMode = envStr("DUAL40_HEDGE_MODE", cfg.HedgeMode)
 	cfg.HedgeDeadlineSec = envInt("DUAL40_HEDGE_DEADLINE_SEC", cfg.HedgeDeadlineSec)
 	cfg.FillModel = envStr("DUAL40_FILL_MODEL", cfg.FillModel)
+	cfg.ModelBGate = envBool("DUAL40_MODELB_GATE", cfg.ModelBGate)
+	cfg.ModelBMinCoherence = envFloat("DUAL40_MODELB_MIN_COHERENCE", cfg.ModelBMinCoherence)
+	cfg.ModelBMinQueueSym = envFloat("DUAL40_MODELB_MIN_QUEUE_SYM", cfg.ModelBMinQueueSym)
 	return NormalizeConfig(cfg), enabled
 }
 

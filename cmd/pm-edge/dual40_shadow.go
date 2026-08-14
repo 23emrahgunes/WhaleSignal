@@ -487,6 +487,9 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		} else if r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps {
 			// STABILITE GATE: tek yonde volatil hareket varsa GIRME.
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("MOMENTUM_VAR(%.1fbps)", math.Abs(metrics.DriftBps)), now)
+		} else if blk := r.modelBGateBlocks(); blk != "" {
+			// MODEL B GATE (F4.8): kaotik/unsafe/highvol/dusuk-coherence/asimetrik-kuyruk -> GIRME.
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, blk, now)
 		} else if r.cfg.GateMode == "hard" && !metrics.Eligible {
 			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, metrics.Reason, now)
 		} else {

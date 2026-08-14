@@ -44,6 +44,12 @@ type Config struct {
 	// trade boyutu kadar doldurur. "legacy" => 0.40 alti tek trade tum emri doldurur
 	// (iyimser; yalniz A/B). Paper istatistikleri realistic ile guvenilir.
 	FillModel string
+	// ModelBGate: yeni mikroyapi beyni kutu girisini FILTRELER (F4.8). Kaotik/unsafe/
+	// yuksek-vol rejimde, dusuk band-coherence'ta veya asimetrik kuyrukta GIRME.
+	// Model B hazir degilse (yetersiz ornek) filtrelemez. Config ile kapatilabilir.
+	ModelBGate         bool
+	ModelBMinCoherence float64 // < ise MODELB_LOW_COHERENCE
+	ModelBMinQueueSym  float64 // < ise MODELB_QUEUE_ASYMMETRY
 }
 
 func DefaultConfig() Config {
@@ -69,6 +75,9 @@ func DefaultConfig() Config {
 		HedgeMode:           "deadline",
 		HedgeDeadlineSec:    40, // son 40s kala hala tek-bacaksa hedge et (30-45 araligi)
 		FillModel:           "realistic",
+		ModelBGate:          true,
+		ModelBMinCoherence:  0.35,
+		ModelBMinQueueSym:   0.30,
 	}
 }
 
@@ -172,6 +181,12 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.FillModel != "legacy" {
 		cfg.FillModel = "realistic"
+	}
+	if cfg.ModelBMinCoherence < 0 {
+		cfg.ModelBMinCoherence = def.ModelBMinCoherence
+	}
+	if cfg.ModelBMinQueueSym < 0 {
+		cfg.ModelBMinQueueSym = def.ModelBMinQueueSym
 	}
 	return cfg
 }
