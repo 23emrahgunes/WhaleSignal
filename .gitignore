@@ -13,7 +13,7 @@ data/*.db
 data/*.db-*
 logs/*.log
 logs/*.pid
-pm-edge
+/pm-edge
 pm-edge-linux-amd64
 pm-edge.pid
 pm-edge.service.local
