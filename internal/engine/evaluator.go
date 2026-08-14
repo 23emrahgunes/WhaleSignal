@@ -189,13 +189,12 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 	compositeScore := (0.55 * probabilityScore) + (0.30 * orderFlowScore) + (0.15 * technicalScore)
 	finalScore := compositeScore
+	// Yön kararı BASİT ZORUNLU modeldir (kullanıcı isteği): kapanışa son 60-90 sn
+	// penceresinde ±$10-25 derinlik + 5sn momentum hangi yöne yatıyorsa o yön
+	// açılır; başka filtre yok. Pencere dışında NEUTRAL. Nihai atama deep snapshot
+	// hesaplandıktan sonra yapılır (aşağıdaki "BASİT ZORUNLU YÖN" bloğu).
 	decision := "NEUTRAL"
-	if finalScore >= 0.20 {
-		decision = "UP"
-	} else if finalScore <= -0.20 {
-		decision = "DOWN"
-	}
-	confidence := math.Min(100.0, math.Abs(finalScore)*100.0)
+	confidence := 0.0
 
 	deep := binance.DeepMicroSnapshot{}
 	microScores := MicrostructureScores{}
@@ -212,6 +211,32 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 			shadowDecision, shadowConfidence = ShadowDecision(shadowScore)
 			ptbTerminal = EstimatePTBTerminalMicroProbability(pUp, secondsRemaining, binanceSpot, binancePTB, deep, microScores)
 		}
+	}
+
+	// --- BASİT ZORUNLU YÖN (kullanıcı isteği) ---
+	// Kapanışa son 60-90 sn kala her markette bir yön aç. ±$10-25 derinlik
+	// dengesizliği + 5sn agresif momentum hangi tarafa yatıyorsa o yön. Başka
+	// filtre yok. Pencere dışında NEUTRAL.
+	if secondsRemaining >= 60 && secondsRemaining <= 90 {
+		// ±$10-25 derinlik dengesizliği (+ => YUKARI ağır). Bands[0]=±$10, [1]=±$25.
+		depthLean := orderFlowScore // yedek: Binance ilk-20 ağırlıklı dengesizlik
+		if deep.Ready && len(deep.Bands) >= 2 {
+			depthLean = 0.5 * (deep.Bands[0].Imbalance + deep.Bands[1].Imbalance)
+		}
+		// 5 sn agresif alış/satış momentumu (+ => YUKARI kayıyor). Trades[0]=5sn.
+		momentumLean := probabilityScore // yedek: forecast eğilimi
+		if deep.Ready && len(deep.Trades) > 0 {
+			momentumLean = deep.Trades[0].Imbalance
+		}
+		simpleLean := depthLean + momentumLean
+		if simpleLean >= 0 {
+			decision = "UP"
+		} else {
+			decision = "DOWN"
+		}
+		finalScore = simpleLean
+		// güven: %60 taban (paper eşiklerini geçsin) + sinyal büyüklüğü
+		confidence = math.Min(100.0, 60.0+math.Abs(simpleLean)*40.0)
 	}
 
 	depthAge := binanceClient.DepthAge(nowTime)
