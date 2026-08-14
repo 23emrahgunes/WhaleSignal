@@ -40,6 +40,10 @@ type Config struct {
 	// HedgeDeadlineSec: deadline modda, market bitimine bu kadar sn kala hala
 	// tek-bacaksa hedge et (son care). Varsayilan 30.
 	HedgeDeadlineSec int
+	// FillModel: "realistic" (varsayilan, F4.5) => her trade kuyrugu tuketir + bizi
+	// trade boyutu kadar doldurur. "legacy" => 0.40 alti tek trade tum emri doldurur
+	// (iyimser; yalniz A/B). Paper istatistikleri realistic ile guvenilir.
+	FillModel string
 }
 
 func DefaultConfig() Config {
@@ -64,6 +68,7 @@ func DefaultConfig() Config {
 		MaxEntryMomentumBps: 3.0,  // net yonlu hareket esigi (~$19 @ $63k)
 		HedgeMode:           "deadline",
 		HedgeDeadlineSec:    40, // son 40s kala hala tek-bacaksa hedge et (30-45 araligi)
+		FillModel:           "realistic",
 	}
 }
 
@@ -164,6 +169,9 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.HedgeDeadlineSec <= 0 {
 		cfg.HedgeDeadlineSec = def.HedgeDeadlineSec
+	}
+	if cfg.FillModel != "legacy" {
+		cfg.FillModel = "realistic"
 	}
 	return cfg
 }

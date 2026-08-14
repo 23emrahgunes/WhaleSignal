@@ -28,6 +28,7 @@ func LoadConfigFromEnv() (Config, bool) {
 	cfg.MaxEntryMomentumBps = envFloat("DUAL40_ENTRY_MAX_MOMENTUM_BPS", cfg.MaxEntryMomentumBps)
 	cfg.HedgeMode = envStr("DUAL40_HEDGE_MODE", cfg.HedgeMode)
 	cfg.HedgeDeadlineSec = envInt("DUAL40_HEDGE_DEADLINE_SEC", cfg.HedgeDeadlineSec)
+	cfg.FillModel = envStr("DUAL40_FILL_MODEL", cfg.FillModel)
 	return NormalizeConfig(cfg), enabled
 }
 

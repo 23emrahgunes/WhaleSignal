@@ -152,8 +152,9 @@ func Advance(t *Trial, upBook, downBook polymarket.BookSnapshot, trades []polyma
 	now = now.UTC()
 	changed := updateBook(t, upBook, downBook)
 
-	up := makerFillFromTrades(t.UpTokenID, t.EntryPrice, t.UpMakerFilled, t.Shares, t.UpQueueAhead, trades)
-	down := makerFillFromTrades(t.DownTokenID, t.EntryPrice, t.DownMakerFilled, t.Shares, t.DownQueueAhead, trades)
+	realistic := cfg.FillModel != "legacy"
+	up := makerFillFromTrades(t.UpTokenID, t.EntryPrice, t.UpMakerFilled, t.Shares, t.UpQueueAhead, trades, realistic)
+	down := makerFillFromTrades(t.DownTokenID, t.EntryPrice, t.DownMakerFilled, t.Shares, t.DownQueueAhead, trades, realistic)
 	t.UpQueueAhead, t.DownQueueAhead = up.QueueAhead, down.QueueAhead
 
 	if up.Filled > 0 {
@@ -401,7 +402,12 @@ type makerFillResult struct {
 	FirstAt    time.Time
 }
 
-func makerFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize, queueAhead float64, trades []polymarket.MarketTrade) makerFillResult {
+// makerFillFromTrades: 0.40 resting alis emrinin trade akisindan dolumu.
+// realistic=true (F4.5): her satis trade'i once kuyrugu tuketir, sonra bizi
+// yalniz trade'in KENDI boyutu kadar doldurur (5 hisse icin 5 hisselik akis
+// gerekir). realistic=false (legacy): 0.40 alti tek trade tum kuyrugu temizler
+// ve tum emri doldurur (iyimser; yalniz A/B karsilastirmasi icin).
+func makerFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize, queueAhead float64, trades []polymarket.MarketTrade, realistic bool) makerFillResult {
 	remaining := math.Max(0, orderSize-alreadyFilled)
 	q := math.Max(0, queueAhead)
 	out := makerFillResult{QueueAhead: q}
@@ -413,7 +419,8 @@ func makerFillFromTrades(tokenID string, orderPrice, alreadyFilled, orderSize, q
 			continue
 		}
 		available := tr.Size
-		if math.Abs(tr.Price-orderPrice) <= 1e-9 {
+		atPrice := math.Abs(tr.Price-orderPrice) <= 1e-9
+		if realistic || atPrice {
 			consume := math.Min(q, available)
 			q -= consume
 			available -= consume

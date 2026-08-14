@@ -63,7 +63,7 @@ func TestDual40QueueAwareBothFillLocksOneDollar(t *testing.T) {
 	trades := []polymarket.MarketTrade{
 		{Seq: 1, TokenID: "UP", Price: 0.40, Size: 5, Side: "SELL", Timestamp: now.Add(time.Second)},
 		{Seq: 2, TokenID: "UP", Price: 0.40, Size: 5, Side: "SELL", Timestamp: now.Add(2 * time.Second)},
-		{Seq: 3, TokenID: "DOWN", Price: 0.39, Size: 1, Side: "SELL", Timestamp: now.Add(3 * time.Second)},
+		{Seq: 3, TokenID: "DOWN", Price: 0.39, Size: 5, Side: "SELL", Timestamp: now.Add(3 * time.Second)},
 	}
 	if !Advance(trial, upBook, downBook, trades, 3, now.Add(4*time.Second), now.Add(5*time.Minute), cfg) {
 		t.Fatal("expected trial change")
@@ -87,7 +87,7 @@ func TestAdaptiveHedgeUsesOppositeSideAndQuoteCost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trades := []polymarket.MarketTrade{{Seq: 1, TokenID: "UP", Price: 0.39, Size: 1, Side: "SELL", Timestamp: now.Add(time.Second)}}
+	trades := []polymarket.MarketTrade{{Seq: 1, TokenID: "UP", Price: 0.39, Size: 5, Side: "SELL", Timestamp: now.Add(time.Second)}}
 	Advance(trial, upBook, downBook, trades, 1, now.Add(2*time.Second), now.Add(5*time.Minute), cfg)
 	req := HedgeNeeded(trial, m, upBook, downBook, now.Add(2*time.Second), now.Add(5*time.Minute), cfg)
 	if !req.Needed || req.Side != "DOWN" || math.Abs(req.Shares-5) > 1e-9 {
@@ -131,5 +131,25 @@ func TestSettleAtOutcomeSingleLeg(t *testing.T) {
 	// Sonuc fiyati yoksa settle etme (cagiran void'e dusmeli)
 	if SettleAtOutcome(mk(), 0, 63000, now) {
 		t.Fatal("fiyat yokken settle etmemeli")
+	}
+}
+
+func TestRealisticPartialFill(t *testing.T) {
+	trades := []polymarket.MarketTrade{{Seq: 1, TokenID: "UP", Price: 0.39, Size: 1, Side: "SELL", Timestamp: time.Now().UTC()}}
+	// realistic: 1 hisselik satis SADECE 1 hisse doldurur (iyimserlik yok)
+	r := makerFillFromTrades("UP", 0.40, 0, 5, 0, trades, true)
+	if math.Abs(r.Filled-1) > 1e-9 {
+		t.Fatalf("realistic: 1 hisselik trade 1 hisse doldurmali, alinan %.2f", r.Filled)
+	}
+	// legacy: ayni through-trade tum 5 hisseyi doldurur (eski iyimser davranis)
+	l := makerFillFromTrades("UP", 0.40, 0, 5, 0, trades, false)
+	if math.Abs(l.Filled-5) > 1e-9 {
+		t.Fatalf("legacy: through-trade tum emri doldurmali, alinan %.2f", l.Filled)
+	}
+	// realistic: 5 hisselik akis 5 hisse doldurur (yeterli akis varsa tamamlanir)
+	big := []polymarket.MarketTrade{{Seq: 1, TokenID: "UP", Price: 0.40, Size: 5, Side: "SELL", Timestamp: time.Now().UTC()}}
+	r2 := makerFillFromTrades("UP", 0.40, 0, 5, 0, big, true)
+	if math.Abs(r2.Filled-5) > 1e-9 {
+		t.Fatalf("realistic: 5 hisselik akis 5 doldurmali, alinan %.2f", r2.Filled)
 	}
 }
