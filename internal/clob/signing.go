@@ -152,19 +152,24 @@ type signedOrder struct {
 	Signature     string `json:"signature"`
 }
 
-// buildAndSign: bir bacak icin imzali emir uretir (tokenID string, side, size, price).
-func (w *Wallet) buildAndSign(exchangeAddr string, chainID int, tokenID string, side Side, size, price float64) (*signedOrder, error) {
+// buildAndSign: bir bacak icin imzali emir uretir. sigType!=0 ise maker=funder
+// (proxy/Safe), signer=EOA; sigType=0 ise maker=signer=EOA.
+func (w *Wallet) buildAndSign(exchangeAddr string, chainID int, tokenID string, side Side, size, price float64, funder string, sigType int) (*signedOrder, error) {
 	tid, ok := new(big.Int).SetString(strings.TrimSpace(tokenID), 10)
 	if !ok {
 		return nil, fmt.Errorf("gecersiz tokenID: %q", tokenID)
 	}
+	makerAddr := w.Address
+	if sigType != 0 && strings.TrimSpace(funder) != "" {
+		makerAddr = common.HexToAddress(funder)
+	}
 	maker, taker := orderAmounts(side, size, price)
 	o := order{
-		Salt: randSalt(), Maker: w.Address, Signer: w.Address,
+		Salt: randSalt(), Maker: makerAddr, Signer: w.Address,
 		Taker: common.HexToAddress(zeroAddress), TokenID: tid,
 		MakerAmount: maker, TakerAmount: taker,
 		Expiration: big.NewInt(0), Nonce: big.NewInt(0), FeeRateBps: big.NewInt(0),
-		Side: side, SignatureType: 0,
+		Side: side, SignatureType: sigType,
 	}
 	td := w.typedData(exchangeAddr, chainID, o)
 	digest, _, err := apitypes.TypedDataAndHash(td)
@@ -186,7 +191,7 @@ func (w *Wallet) buildAndSign(exchangeAddr string, chainID int, tokenID string, 
 	return &signedOrder{
 		Salt: o.Salt.String(), Maker: o.Maker.Hex(), Signer: o.Signer.Hex(), Taker: o.Taker.Hex(),
 		TokenID: o.TokenID.String(), MakerAmount: o.MakerAmount.String(), TakerAmount: o.TakerAmount.String(),
-		Expiration: "0", Nonce: "0", FeeRateBps: "0", Side: sideStr, SignatureType: 0,
+		Expiration: "0", Nonce: "0", FeeRateBps: "0", Side: sideStr, SignatureType: sigType,
 		Signature: "0x" + common.Bytes2Hex(sig),
 	}, nil
 }

@@ -27,6 +27,8 @@ type Client struct {
 	apiKey       string
 	apiSecret    string
 	apiPass      string
+	funder       string
+	sigType      int
 	live         atomic.Bool
 	http         *http.Client
 	log          *zap.Logger
@@ -34,14 +36,16 @@ type Client struct {
 
 // Config: Client kurulum parametreleri (secrets — loglanmaz).
 type Config struct {
-	PrivateKey   string
-	Host         string
-	ChainID      int
-	ExchangeAddr string
-	APIKey       string
-	APISecret    string
-	APIPass      string
-	DryRun       bool
+	PrivateKey    string
+	Host          string
+	ChainID       int
+	ExchangeAddr  string
+	APIKey        string
+	APISecret     string
+	APIPass       string
+	Funder        string
+	SignatureType int
+	DryRun        bool
 }
 
 // New: dry|live executor kurar. live'de creds zorunlu. shadow'da bu cagrilmaz.
@@ -53,17 +57,25 @@ func New(cfg Config, log *zap.Logger) (*Client, error) {
 	if !cfg.DryRun && (cfg.APIKey == "" || cfg.APISecret == "" || cfg.APIPass == "") {
 		return nil, fmt.Errorf("live mod icin CLOB_API_KEY/SECRET/PASSPHRASE gerekli")
 	}
+	if cfg.SignatureType != 0 && strings.TrimSpace(cfg.Funder) == "" {
+		return nil, fmt.Errorf("SIGNATURE_TYPE=%d icin FUNDER_ADDRESS gerekli (proxy/Safe adresi)", cfg.SignatureType)
+	}
 	c := &Client{
 		wallet: w, host: strings.TrimRight(cfg.Host, "/"), chainID: cfg.ChainID,
 		exchangeAddr: cfg.ExchangeAddr, apiKey: cfg.APIKey, apiSecret: cfg.APISecret,
-		apiPass: cfg.APIPass, http: &http.Client{Timeout: 10 * time.Second}, log: log,
+		apiPass: cfg.APIPass, funder: cfg.Funder, sigType: cfg.SignatureType,
+		http: &http.Client{Timeout: 10 * time.Second}, log: log,
 	}
 	c.live.Store(!cfg.DryRun)
 	mode := "DRY"
 	if !cfg.DryRun {
 		mode = "LIVE"
 	}
-	log.Warn("CLOB EXECUTOR KURULDU", zap.String("baslangic", mode), zap.String("address", w.Address.Hex()), zap.String("exchange", cfg.ExchangeAddr))
+	maker := w.Address.Hex()
+	if cfg.SignatureType != 0 {
+		maker = cfg.Funder
+	}
+	log.Warn("CLOB EXECUTOR KURULDU", zap.String("baslangic", mode), zap.String("signer", w.Address.Hex()), zap.String("maker", maker), zap.Int("sigType", cfg.SignatureType), zap.String("exchange", cfg.ExchangeAddr))
 	return c, nil
 }
 
@@ -94,7 +106,7 @@ func (c *Client) PlaceMarketable(tokenID string, side Side, size, price float64)
 }
 
 func (c *Client) place(tokenID string, side Side, size, price float64, orderType string) (string, error) {
-	so, err := c.wallet.buildAndSign(c.exchangeAddr, c.chainID, tokenID, side, size, price)
+	so, err := c.wallet.buildAndSign(c.exchangeAddr, c.chainID, tokenID, side, size, price, c.funder, c.sigType)
 	if err != nil {
 		return "", err
 	}

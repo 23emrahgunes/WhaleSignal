@@ -46,7 +46,7 @@ func TestBuildAndSignRecoversSigner(t *testing.T) {
 		t.Fatal(err)
 	}
 	exchange := "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
-	so, err := w.buildAndSign(exchange, 137, "123456789", Buy, 5, 0.40)
+	so, err := w.buildAndSign(exchange, 137, "123456789", Buy, 5, 0.40, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

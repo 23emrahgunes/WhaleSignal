@@ -69,6 +69,8 @@ type Config struct {
 	ClobAPISecret       string
 	ClobAPIPassphrase   string
 	ClobExchangeAddr    string // Polymarket CTF Exchange verifyingContract
+	ClobFunderAddr      string // proxy/Safe adresi (paranin oldugu). SIGNATURE_TYPE!=0 ise maker=bu
+	ClobSignatureType   int    // 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
 	DashboardUser       string
 	DashboardPass       string // ASLA loglanmaz
 	DashboardSecret     string // session cookie HMAC secret. ASLA loglanmaz
@@ -137,6 +139,8 @@ func LoadConfig() (*Config, error) {
 		ClobAPISecret:       envString("CLOB_API_SECRET", ""),
 		ClobAPIPassphrase:   envString("CLOB_API_PASSPHRASE", ""),
 		ClobExchangeAddr:    envString("EXCHANGE_ADDRESS", "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"),
+		ClobFunderAddr:      envString("FUNDER_ADDRESS", ""),
+		ClobSignatureType:   envIntZero("SIGNATURE_TYPE", 0),
 		DashboardUser:       envString("DASHBOARD_USER", "admin"),
 		DashboardPass:       envString("DASHBOARD_PASS", ""),
 		DashboardSecret:     envString("DASHBOARD_SESSION_SECRET", ""),
@@ -165,6 +169,14 @@ func envString(key, fallback string) string {
 
 func envInt(key string, fallback int) int {
 	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v > 0 {
+		return v
+	}
+	return fallback
+}
+
+// envIntZero: 0 dahil >=0 tam sayi kabul eder (SIGNATURE_TYPE gibi 0 gecerli).
+func envIntZero(key string, fallback int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key))); err == nil && v >= 0 {
 		return v
 	}
 	return fallback

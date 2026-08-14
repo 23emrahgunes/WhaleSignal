@@ -184,7 +184,8 @@ func main() {
 			} else if e, err := clob.New(clob.Config{
 				PrivateKey: cfg.PrivateKey, Host: cfg.ClobHost, ChainID: cfg.ClobChainID,
 				ExchangeAddr: cfg.ClobExchangeAddr, APIKey: cfg.ClobAPIKey, APISecret: cfg.ClobAPISecret,
-				APIPass: cfg.ClobAPIPassphrase, DryRun: execMode != "live",
+				APIPass: cfg.ClobAPIPassphrase, Funder: cfg.ClobFunderAddr, SignatureType: cfg.ClobSignatureType,
+				DryRun: execMode != "live",
 			}, util.Logger); err != nil {
 				util.Logger.Error("CLOB executor kurulamadi -> SHADOW", zap.Error(err))
 				execMode = "shadow"
