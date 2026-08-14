@@ -51,7 +51,7 @@
   </div>
 
   <div class="section">
-    <div class="section-head"><h2>İşlemler (sadece dolanlar + hedge'ler)</h2><span>2 saniyede bir yenilenir · atlananlar gizli</span></div>
+    <div class="section-head"><h2>İşlemler (sadece dolanlar + hedge'ler)</h2><span id="rowsInfo">2 saniyede bir yenilenir · atlananlar gizli</span></div>
     <div class="scroll"><table>
       <thead><tr><th>ID</th><th>Market</th><th>Giriş sn</th><th>Rejim</th><th>Kararsızlık</th><th>Sapma</th><th>Bant</th><th>Dönüş</th><th>Akış</th><th>Durum</th><th>UP dolum</th><th>DOWN dolum</th><th>Hedge</th><th>Kâr/Zarar</th><th>Not</th></tr></thead>
       <tbody id="rows"></tbody>
@@ -77,7 +77,7 @@ async function refresh(){
   try{
     const [stats,trials,live,market]=await Promise.all([
       j('/api/arb/paper/stats?strategy=dual40&tf=5m'),
-      j('/api/arb/paper/cycles?strategy=dual40&tf=5m&limit=200'),
+      j('/api/arb/paper/cycles?strategy=dual40&tf=5m&limit=1000'),
       j('/api/live?tf=5m'),j('/api/market?tf=5m')
     ]);
     $('total').textContent=stats.totalTrials??0;
@@ -87,7 +87,8 @@ async function refresh(){
     $('pnl').textContent=money(stats.netPaperPnl);$('pnl').className='v '+((stats.netPaperPnl??0)>=0?'good':'bad');
     $('avgChop').textContent=n(stats.averageChop,1);$('avgHedge').textContent=stats.averageHedgePrice?n(stats.averageHedgePrice,3):'—';
     $('lastState').textContent=`son: ${stats.lastState||'—'} · ${stats.lastReason||'—'}`;
-    $('market').textContent=market.slug||market.eventSlug||'—';$('remaining').textContent=live.secondsRemaining!=null?`${n(live.secondsRemaining,0)} sn kaldı`:'veri bekleniyor';
+    $('market').textContent=market.slug||market.eventSlug||'—';
+    if(market.slug)(window._px=window._px||{}).slug=market.slug;
     // BTC/PTB STICKY: yeni gecerli deger gelince guncelle, gelmezse SON degeri koru
     // (/api/live bazen "waiting_for_data" doner -> deger kaybolmasin, flicker olmasin).
     const L=window._px=window._px||{};
@@ -98,8 +99,13 @@ async function refresh(){
     if(market.priceToBeatSource)L.ptbSrc=market.priceToBeatSource;
     if(live.spotMinusPriceToBeat!=null)L.fark=live.spotMinusPriceToBeat;
     $('ptb').textContent=L.ptb!=null?`PTB $${n(L.ptb,2)}${L.fark!=null?` · fark $${n(L.fark,2)}`:''}${L.ptbSrc?` · ${L.ptbSrc}`:''}`:'PTB bekleniyor';
-    $('prob').textContent=live.pUp!=null?`UP ${pct(live.pUp)} / DOWN ${pct(live.pDown)}`:'—';$('decision').textContent=live.decision?`Model A: ${live.decision} · PTB-Z ${n(live.ptbZ,2)}`:'—';
-    const shown=(Array.isArray(trials)?trials:[]).filter(filled);
+    // yön olasılığı + karar: sticky (waiting_for_data'da kaybolmasin)
+    if(live.pUp!=null){L.pUp=live.pUp;L.pDown=live.pDown;}
+    if(live.decision){L.dec=live.decision;L.ptbZ=live.ptbZ;}
+    $('prob').textContent=L.pUp!=null?`UP ${pct(L.pUp)} / DOWN ${pct(L.pDown)}`:'—';
+    $('decision').textContent=L.dec?`Model A: ${L.dec} · PTB-Z ${n(L.ptbZ,2)}`:'—';
+    const all=(Array.isArray(trials)?trials:[]);const shown=all.filter(filled);
+    $('rowsInfo').textContent=`${shown.length} dolan/hedge gösteriliyor · ${all.length-shown.length} atlanan gizli (son 1000)`;
     $('rows').innerHTML=shown.length?shown.map(t=>{
       const m=t.metrics||{}; const hedge=t.hedgeAvgPrice?`${esc(t.hedgeSide)} @ ${n(t.hedgeAvgPrice,3)}`:'—';
       return `<tr><td>${t.id??''}</td><td class="mono">${esc(t.marketSlug)}</td><td class="entry">${esc(t.entrySecond)}s</td><td><span class="pill">${esc(trRegime(t.regime))}</span></td><td>${n(m.chopScore,1)}</td><td>${n(m.driftBps,2)} bps</td><td>${n(m.rangeBps,2)} bps</td><td>${pct(m.reversalRate)}</td><td>${n(m.meanFlow,2)}</td><td class="state ${stateClass(t.state)}">${esc(trState(t.state))}</td><td>${n(t.upMakerFilled,2)}</td><td>${n(t.downMakerFilled,2)}</td><td>${hedge}</td><td class="${(t.paperPnl??0)>=0?'good':'bad'}">${money(t.paperPnl)}</td><td class="reason" title="${esc(t.reason)}">${esc(t.reason)}</td></tr>`
@@ -107,6 +113,13 @@ async function refresh(){
   }catch(e){$('lastState').textContent='API bekleniyor / '+e.message}
 }
 refresh();setInterval(refresh,2000);
+// "sn kaldi": market slug'indan (start+300) akan pursuzsuz sayac, /api/live'dan bagimsiz.
+setInterval(()=>{
+  const slug=(window._px||{}).slug||'';const m=slug.match(/-5m-(\d+)$/);
+  if(!m){$('remaining').textContent='veri bekleniyor';return;}
+  const rem=Math.max(0,(+m[1]+300)*1000-Date.now())/1000;
+  $('remaining').textContent=`${Math.round(rem)} sn kaldı`;
+},1000);
 
 // --- Yürütme kontrolü (mod / canlı / kill) ---
 const MODEUI={shadow:['GÖLGE · CANLI EMİR YOK','var(--muted)'],dry:['DRY · İMZALI, POST YOK','var(--warn)'],live:['CANLI · GERÇEK EMİR','var(--bad)']};
