@@ -88,11 +88,16 @@ async function refresh(){
     $('avgChop').textContent=n(stats.averageChop,1);$('avgHedge').textContent=stats.averageHedgePrice?n(stats.averageHedgePrice,3):'—';
     $('lastState').textContent=`son: ${stats.lastState||'—'} · ${stats.lastReason||'—'}`;
     $('market').textContent=market.slug||market.eventSlug||'—';$('remaining').textContent=live.secondsRemaining!=null?`${n(live.secondsRemaining,0)} sn kaldı`:'veri bekleniyor';
-    const btcLive=live.currentPrice!=null?live.currentPrice:null; // Chainlink = Polymarket'in canli BTC fiyati
-    $('btc').textContent=btcLive!=null?('$'+n(btcLive,2)):'—';
-    const ptbVal=live.priceToBeat!=null?live.priceToBeat:(market.priceToBeat!=null?market.priceToBeat:null);
-    const ptbSrc=market.priceToBeatSource||'';
-    $('ptb').textContent=ptbVal!=null?`PTB $${n(ptbVal,2)}${live.spotMinusPriceToBeat!=null?` · fark $${n(live.spotMinusPriceToBeat,2)}`:''}${ptbSrc?` · ${ptbSrc}`:''}`:'PTB bekleniyor';
+    // BTC/PTB STICKY: yeni gecerli deger gelince guncelle, gelmezse SON degeri koru
+    // (/api/live bazen "waiting_for_data" doner -> deger kaybolmasin, flicker olmasin).
+    const L=window._px=window._px||{};
+    if(live.currentPrice!=null)L.btc=live.currentPrice; // Chainlink = Polymarket canli BTC
+    $('btc').textContent=L.btc!=null?('$'+n(L.btc,2)):'—';
+    const ptbNew=live.priceToBeat!=null?live.priceToBeat:(market.priceToBeat!=null?market.priceToBeat:null);
+    if(ptbNew!=null)L.ptb=ptbNew;
+    if(market.priceToBeatSource)L.ptbSrc=market.priceToBeatSource;
+    if(live.spotMinusPriceToBeat!=null)L.fark=live.spotMinusPriceToBeat;
+    $('ptb').textContent=L.ptb!=null?`PTB $${n(L.ptb,2)}${L.fark!=null?` · fark $${n(L.fark,2)}`:''}${L.ptbSrc?` · ${L.ptbSrc}`:''}`:'PTB bekleniyor';
     $('prob').textContent=live.pUp!=null?`UP ${pct(live.pUp)} / DOWN ${pct(live.pDown)}`:'—';$('decision').textContent=live.decision?`Model A: ${live.decision} · PTB-Z ${n(live.ptbZ,2)}`:'—';
     const shown=(Array.isArray(trials)?trials:[]).filter(filled);
     $('rows').innerHTML=shown.length?shown.map(t=>{
