@@ -18,6 +18,24 @@ func (s *Server) SetDual40Control(setLive func(bool) error, kill func(), status 
 	s.d40 = &dual40Control{setLive: setLive, kill: kill, status: status, execErr: execErr}
 }
 
+// SetDual40ModelB: Model B shadow beyninin son sonucunu sunan kanca.
+func (s *Server) SetDual40ModelB(fn func() any) { s.d40ModelB = fn }
+
+// GET /api/dual40/modelb -> son Model B shadow ciktisi (nil -> {status:waiting}).
+func (s *Server) handleDual40ModelB(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.d40ModelB == nil {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "disabled"})
+		return
+	}
+	v := s.d40ModelB()
+	if v == nil {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "waiting_for_data"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 // GET /api/dual40/status -> {mode, controllable, lastError}
 func (s *Server) handleDual40Status(w http.ResponseWriter, r *http.Request) {
 	mode := "shadow"

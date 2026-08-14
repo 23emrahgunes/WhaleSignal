@@ -14,7 +14,9 @@ import (
 	"pm-edge/internal/clob"
 	"pm-edge/internal/dual40"
 	"pm-edge/internal/engine"
+	"pm-edge/internal/microfeat"
 	"pm-edge/internal/polymarket"
+	"pm-edge/internal/predict"
 	"pm-edge/internal/storage"
 	"pm-edge/internal/util"
 )
@@ -35,6 +37,14 @@ type dual40Runtime struct {
 	exec        *clob.Client           // shadow'da nil; dry/live'de imzalayici (live bayragi runtime)
 	killReq     atomic.Bool            // buton -> tum acik emirleri iptal + DRY'ye dus
 	lastExecErr atomic.Pointer[string] // son kopru/emir hatasi (panelde gosterilir)
+
+	// Model B (yeni mikroyapi beyni, SHADOW): her tick feature toplar + regime/
+	// direction motorlarini calistirir. Karar VERMEZ; dashboard'a gozlem sunar.
+	mfCollector  *microfeat.Collector
+	dirModel     predict.LogisticModel
+	regimeThresh predict.Thresholds
+	dirConfMin   float64
+	lastModelB   atomic.Pointer[ModelBResult]
 
 	marketSlug  string
 	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
@@ -197,6 +207,11 @@ func (r *dual40Runtime) StartObserver(ctx context.Context, clClient *chainlink.C
 	r.clClient = clClient
 	r.execMode = execMode
 	r.exec = exec
+	// Model B shadow beyni init (240 ornek ~ 4dk/1s; esikler/tohum model kalibrasyona acik).
+	r.mfCollector = microfeat.NewCollector(240, nil)
+	r.regimeThresh = defaultRegimeThresholds()
+	r.dirModel = defaultDirModel()
+	r.dirConfMin = 0.60
 	util.Logger.Info("DUAL40 OPENING OBSERVER STARTED", zap.String("execMode", execMode), zap.Bool("executor", exec != nil), zap.Duration("cadence", time.Second))
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -316,6 +331,9 @@ func (r *dual40Runtime) tick(res *engine.EvaluationResult, market *polymarket.Ma
 	}
 
 	currentMetrics := dual40.Classify(recentDual40Samples(r.samples, 15), r.cfg)
+	if r.mfCollector != nil {
+		r.runModelB(res, currentMetrics, upBook, downBook, now) // SHADOW gozlem
+	}
 	r.advanceTrials(upBook, downBook, currentMetrics, market, now)
 	r.evaluateOpeningWindows(upID, downID, upBook, downBook, market, now, elapsed, price)
 	return nil

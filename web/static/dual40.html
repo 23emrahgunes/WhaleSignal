@@ -51,6 +51,19 @@
     <div class="card"><div class="k">Strateji</div><div class="v">0.40 + 0.40</div><div class="sub">taraf başı 5 adet · yakınlık ≤ $10 · hedge son 40sn</div></div>
   </div>
 
+  <div class="section" style="margin-bottom:14px">
+    <div class="section-head"><h2>Model B — Yeni Mikroyapı Beyni (GÖLGE)</h2><span>tahmin edilebilir mi/kaotik mi · karar vermez, ölçer</span></div>
+    <div class="grid" style="padding:14px;margin:0">
+      <div class="card"><div class="k">Rejim</div><div class="v" id="mbRegime">—</div><div class="sub" id="mbPred">tahmin edilebilirlik —</div></div>
+      <div class="card"><div class="k">Yön</div><div class="v" id="mbDir">—</div><div class="sub" id="mbConf">güven —</div></div>
+      <div class="card"><div class="k">Band Coherence</div><div class="v" id="mbCoh">—</div><div class="sub" id="mbFlip">flip-rate —</div></div>
+      <div class="card"><div class="k">Persistence / Flow</div><div class="v" id="mbPers">—</div><div class="sub" id="mbFlow">flow accel —</div></div>
+      <div class="card"><div class="k">Queue Simetrisi</div><div class="v" id="mbQsym">—</div><div class="sub" id="mbFill">tahmini dolum —</div></div>
+      <div class="card"><div class="k">Realized Vol / Depletion</div><div class="v" id="mbVol">—</div><div class="sub" id="mbDep">ask/bid depletion —</div></div>
+    </div>
+    <div id="mbReasons" style="display:none;margin:0 14px 14px;padding:9px 12px;border-radius:9px;background:rgba(255,202,92,.10);border:1px solid var(--warn);color:var(--warn);font-size:12px"></div>
+  </div>
+
   <div class="section">
     <div class="section-head"><h2>İşlemler (sadece dolanlar + hedge'ler)</h2><span id="rowsInfo">2 saniyede bir yenilenir · atlananlar gizli</span></div>
     <div class="scroll"><table>
@@ -150,6 +163,27 @@ $('btnDry').onclick=()=>ctrlPost('/api/dual40/mode',{mode:'dry'});
 $('btnKill').onclick=()=>{if(confirm('TÜM açık emirler iptal edilip DRY moda dönülecek. Onayla.'))ctrlPost('/api/dual40/kill',{});};
 $('btnLogout').onclick=async()=>{await fetch('/api/logout',{method:'POST'});location.href='/login.html';};
 refreshCtrl();setInterval(refreshCtrl,3000);
+
+// --- Model B (yeni mikroyapı beyni, gölge) ---
+const RGCOL={CHOP:'var(--good)',TREND_UP:'var(--accent)',TREND_DOWN:'var(--accent)',HIGH_VOL:'var(--warn)',CHAOTIC:'var(--bad)',UNSAFE:'var(--bad)'};
+async function refreshModelB(){
+  try{
+    const b=await j('/api/dual40/modelb');
+    if(!b||b.status){ $('mbRegime').textContent=b&&b.status==='waiting_for_data'?'veri bekleniyor':'—'; return; }
+    $('mbRegime').textContent=b.regime||'—';$('mbRegime').style.color=RGCOL[b.regime]||'var(--text)';
+    $('mbPred').textContent=`tahmin edilebilirlik ${pct(b.predictabilityScore)} · ${b.predictable?'PREDICTABLE':'HAYIR'}`;
+    $('mbDir').textContent=b.direction||'—';$('mbDir').style.color=b.direction==='UP'?'var(--good)':b.direction==='DOWN'?'var(--bad)':'var(--muted)';
+    $('mbConf').textContent=`güven ${pct(b.confidence)} · P(UP) ${pct(b.pUp)}`;
+    $('mbCoh').textContent=pct(b.bandCoherence);$('mbFlip').textContent=`flip-rate ${pct(b.obiFlipRate)}`;
+    $('mbPers').textContent=pct(b.obiPersistence5s);$('mbFlow').textContent=`flow accel ${n(b.flowAcceleration,2)}`;
+    $('mbQsym').textContent=pct(b.queueSymmetry);$('mbFill').textContent=`tahmini dolum UP ${n(b.expectedFillUpSec,0)}s / DOWN ${n(b.expectedFillDownSec,0)}s`;
+    $('mbVol').textContent=`${n(b.realizedVolBps,2)} bps`;$('mbDep').textContent=`depletion ask ${pct(b.askDepletion)} / bid ${pct(b.bidDepletion)}`;
+    const rs=$('mbReasons');
+    if(b.noTradeReasons&&b.noTradeReasons.length){rs.textContent='NO-TRADE nedenleri → '+b.noTradeReasons.join(', ');rs.style.display='';}
+    else{rs.style.display='none';}
+  }catch(_){}
+}
+refreshModelB();setInterval(refreshModelB,2000);
 </script>
 </body>
 </html>

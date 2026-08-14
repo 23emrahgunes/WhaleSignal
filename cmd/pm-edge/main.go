@@ -191,6 +191,12 @@ func main() {
 		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, execMode, exec)
 		if rt := arbShadow.Dual40Runtime(); rt != nil {
 			server.SetDual40Control(rt.SetLive, rt.RequestKill, rt.Status, rt.ExecErr)
+			server.SetDual40ModelB(func() any {
+				if mb := rt.ModelB(); mb != nil {
+					return mb
+				}
+				return nil
+			})
 		}
 	}
 	evaluator := engine.NewEvaluator(microClient)
