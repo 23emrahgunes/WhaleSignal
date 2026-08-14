@@ -314,6 +314,19 @@ func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) 
 			closeP = p
 		}
 	}
+	// FALLBACK: boundary anchor'i roll aninda yakalanmamis olabilir (zamanlama
+	// yarisi). Bu durumda ELIMIZDEKI Chainlink ornekleri ile settle et (acilis =
+	// ilk ornek, kapanis = son ornek) — ikisi de ayni oracle, basissiz. Boylece
+	// tek-bacak trial VOID olmaz, gercek sonuc (kayip/kazanc) nete girer.
+	if openP <= 0 && len(r.samples) > 0 {
+		openP = r.samples[0].Price
+	}
+	if openP <= 0 {
+		openP = r.priceToBeat // son care: event openPrice
+	}
+	if closeP <= 0 && len(r.samples) > 0 {
+		closeP = r.samples[len(r.samples)-1].Price
+	}
 	for sec, t := range r.active {
 		r.cancelResting(t) // eski marketin acik resting emirlerini iptal et (executor)
 		filled := t.UpMakerFilled > 1e-9 || t.DownMakerFilled > 1e-9
