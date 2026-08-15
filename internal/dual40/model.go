@@ -62,8 +62,9 @@ func DefaultConfig() Config {
 	return Config{
 		EntryPrice: 0.40,
 		Shares:     5,
-		// SimpleEntry: ilk 25 sn izle, volatil degilse gir (tek pencere, tek sans).
-		EntrySeconds:        []int{25},
+		// SimpleEntry: ilk 25 sn izle, volatil degilse gir. 45/70 = zamanlama/PTB
+		// geciken marketlere ikinci sans (tek-kutu guard'i hala tek kutu tutar).
+		EntrySeconds:        []int{25, 45, 70},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,
@@ -217,10 +218,13 @@ func OpeningWindowCovered(samples []Sample, entrySecond int) bool {
 	}
 	first := samples[0].ElapsedSec
 	last := samples[len(samples)-1].ElapsedSec
-	if first > 3.0 || last+0.75 < float64(entrySecond) {
+	// Ilk ornek, giris saniyesinin ilk %40'i icinde baslamis olmali (25sn ->
+	// <=10sn). Onceki sabit 3sn kurali cok sertti: market algilama/flow gecikince
+	// ilk ornek 4-8sn'ye kayiyor ve pencere hep YETERSIZ_ACILIS_PENCERESI dusuyordu.
+	if first > float64(entrySecond)*0.4 || last+0.75 < float64(entrySecond) {
 		return false
 	}
-	minSamples := entrySecond / 2
+	minSamples := entrySecond / 3
 	if minSamples < 4 {
 		minSamples = 4
 	}
