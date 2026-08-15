@@ -46,9 +46,9 @@ type dual40Runtime struct {
 	dirConfMin   float64
 	lastModelB   atomic.Pointer[ModelBResult]
 
-	marketSlug  string
-	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
-	priceToBeat float64            // aktif marketin event openPrice'i (Chainlink strike)
+	marketSlug    string
+	market        *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
+	priceToBeat   float64            // aktif marketin event openPrice'i (Chainlink strike)
 	samples       []dual40.Sample
 	evaluated     map[int]bool
 	active        map[int]*dual40.Trial
