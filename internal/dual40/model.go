@@ -50,15 +50,20 @@ type Config struct {
 	ModelBGate         bool
 	ModelBMinCoherence float64 // < ise MODELB_LOW_COHERENCE
 	ModelBMinQueueSym  float64 // < ise MODELB_QUEUE_ASYMMETRY
+	// SimpleEntry: sadelestirilmis giris (kullanici istegi). TEK FILTRE: acilis
+	// penceresinde (ilk EntrySeconds sn) volatil hareket yoksa (RangeBps <=
+	// SimpleMaxRangeBps) dogrudan gir. Mesafe/momentum/ModelB/chop kapilari DEVRE
+	// DISI. false => eski cok-kapili davranis.
+	SimpleEntry       bool
+	SimpleMaxRangeBps float64 // acilis max range (bps); ustu = volatil = girme
 }
 
 func DefaultConfig() Config {
 	return Config{
 		EntryPrice: 0.40,
 		Shares:     5,
-		// Aç -> 5/10/25s izle, sonra orta pencere donusleri. Yakinlik+stabilite
-		// gate'i hangi noktada uygunsa ORADA girer.
-		EntrySeconds:        []int{5, 10, 25, 40, 60, 90, 120, 150, 180, 210},
+		// SimpleEntry: ilk 25 sn izle, volatil degilse gir (tek pencere, tek sans).
+		EntrySeconds:        []int{25},
 		MinChopScore:        70,
 		MinRangeBps:         0.8,
 		MaxRangeBps:         8.0,
@@ -78,6 +83,8 @@ func DefaultConfig() Config {
 		ModelBGate:          true, // kaotik/unsafe/highvol rejimde hala girme (koruma)
 		ModelBMinCoherence:  0.20, // gevsetildi (0.35 -> 0.20)
 		ModelBMinQueueSym:   0.15, // gevsetildi (0.30 -> 0.15)
+		SimpleEntry:         true, // TEK FILTRE modu aktif (kullanici istegi)
+		SimpleMaxRangeBps:   12.0, // acilis 25sn range bu esigin altiysa gir (~$75 @ $63k)
 	}
 }
 
@@ -187,6 +194,9 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.ModelBMinQueueSym < 0 {
 		cfg.ModelBMinQueueSym = def.ModelBMinQueueSym
+	}
+	if cfg.SimpleMaxRangeBps <= 0 {
+		cfg.SimpleMaxRangeBps = def.SimpleMaxRangeBps
 	}
 	return cfg
 }

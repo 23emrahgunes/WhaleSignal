@@ -32,6 +32,8 @@ func LoadConfigFromEnv() (Config, bool) {
 	cfg.ModelBGate = envBool("DUAL40_MODELB_GATE", cfg.ModelBGate)
 	cfg.ModelBMinCoherence = envFloat("DUAL40_MODELB_MIN_COHERENCE", cfg.ModelBMinCoherence)
 	cfg.ModelBMinQueueSym = envFloat("DUAL40_MODELB_MIN_QUEUE_SYM", cfg.ModelBMinQueueSym)
+	cfg.SimpleEntry = envBool("DUAL40_SIMPLE_ENTRY", cfg.SimpleEntry)
+	cfg.SimpleMaxRangeBps = envFloat("DUAL40_SIMPLE_MAX_RANGE_BPS", cfg.SimpleMaxRangeBps)
 	return NormalizeConfig(cfg), enabled
 }
 

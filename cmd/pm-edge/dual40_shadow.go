@@ -481,25 +481,41 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		window := dual40.SamplesThrough(r.samples, float64(sec))
 		metrics := dual40.Classify(window, r.cfg)
 		distUsd := math.Abs(price - r.priceToBeat)
+
+		// Giris kapilari. Veri-saglik onkosullari (pencere/akis/PTB) her modda ayni.
+		// Sonra: SimpleEntry => TEK FILTRE (acilis volatil degilse gir); aksi halde
+		// eski cok-kapili zincir (mesafe/momentum/ModelB/chop).
+		skipReason := ""
+		switch {
+		case !dual40.OpeningWindowCovered(window, sec):
+			skipReason = "YETERSIZ_ACILIS_PENCERESI"
+		case !r.tradeStream.Healthy(r.tradeStreamMaxAge):
+			skipReason = "AKIS_SAGLIKSIZ"
+		case r.priceToBeat <= 0 || price <= 0:
+			skipReason = "PTB_BEKLENIYOR" // Chainlink bekleniyor
+		case r.cfg.SimpleEntry:
+			// TEK FILTRE: acilis penceresinde volatil hareket yoksa gir. Volatilite
+			// olcusu = RangeBps (tepe-dip salinim; trend de burada buyur). Ustu = gir­me.
+			if metrics.RangeBps > r.cfg.SimpleMaxRangeBps {
+				skipReason = fmt.Sprintf("VOLATIL_HAREKET(%.1fbps>%.0fbps)", metrics.RangeBps, r.cfg.SimpleMaxRangeBps)
+			}
+		default:
+			// Eski cok-kapili mod (SimpleEntry=false).
+			switch {
+			case r.cfg.MaxEntryDistanceUsd > 0 && distUsd > r.cfg.MaxEntryDistanceUsd:
+				skipReason = fmt.Sprintf("PTB_UZAK($%.1f>$%.0f)", distUsd, r.cfg.MaxEntryDistanceUsd)
+			case r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps:
+				skipReason = fmt.Sprintf("MOMENTUM_VAR(%.1fbps)", math.Abs(metrics.DriftBps))
+			case r.modelBGateBlocks() != "":
+				skipReason = r.modelBGateBlocks()
+			case r.cfg.GateMode == "hard" && !metrics.Eligible:
+				skipReason = metrics.Reason
+			}
+		}
+
 		var trial *dual40.Trial
-		if !dual40.OpeningWindowCovered(window, sec) {
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "YETERSIZ_ACILIS_PENCERESI", now)
-		} else if !r.tradeStream.Healthy(r.tradeStreamMaxAge) {
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "AKIS_SAGLIKSIZ", now)
-		} else if r.priceToBeat <= 0 || price <= 0 {
-			// PTB veya fiyat henuz yok -> girme (Chainlink bekleniyor).
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, "PTB_BEKLENIYOR", now)
-		} else if r.cfg.MaxEntryDistanceUsd > 0 && distUsd > r.cfg.MaxEntryDistanceUsd {
-			// YAKINLIK GATE: fiyat priceToBeat'ten uzaksa GIRME (paralel/yakin bekle).
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("PTB_UZAK($%.1f>$%.0f)", distUsd, r.cfg.MaxEntryDistanceUsd), now)
-		} else if r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps {
-			// STABILITE GATE: tek yonde volatil hareket varsa GIRME.
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, fmt.Sprintf("MOMENTUM_VAR(%.1fbps)", math.Abs(metrics.DriftBps)), now)
-		} else if blk := r.modelBGateBlocks(); blk != "" {
-			// MODEL B GATE (F4.8): kaotik/unsafe/highvol/dusuk-coherence/asimetrik-kuyruk -> GIRME.
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, blk, now)
-		} else if r.cfg.GateMode == "hard" && !metrics.Eligible {
-			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, metrics.Reason, now)
+		if skipReason != "" {
+			trial = dual40.NewSkippedTrial("5m", market.Slug, sec, metrics, skipReason, now)
 		} else {
 			created, err := dual40.NewRestingTrial("5m", market.Slug, sec, metrics, upID, downID, upBook, downBook, r.cfg, now, r.tradeStream.LastSeq(), r.tradeStream.GapCount())
 			if err != nil {
