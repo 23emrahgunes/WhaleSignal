@@ -70,14 +70,14 @@ func DefaultConfig() Config {
 		HedgeTriggerPrice:   0.70,
 		StopBeforeEndSec:    20,
 		GateMode:            "feature",
-		MaxEntryDistanceUsd: 10.0, // priceToBeat'e <= $10 (Chainlink)
-		MaxEntryMomentumBps: 3.0,  // net yonlu hareket esigi (~$19 @ $63k)
+		MaxEntryDistanceUsd: 25.0, // priceToBeat'e <= $25 (Chainlink) — gevsetildi
+		MaxEntryMomentumBps: 8.0,  // net yonlu hareket esigi — gevsetildi (daha cok giris)
 		HedgeMode:           "deadline",
 		HedgeDeadlineSec:    40, // son 40s kala hala tek-bacaksa hedge et (30-45 araligi)
 		FillModel:           "realistic",
-		ModelBGate:          true,
-		ModelBMinCoherence:  0.35,
-		ModelBMinQueueSym:   0.30,
+		ModelBGate:          true, // kaotik/unsafe/highvol rejimde hala girme (koruma)
+		ModelBMinCoherence:  0.20, // gevsetildi (0.35 -> 0.20)
+		ModelBMinQueueSym:   0.15, // gevsetildi (0.30 -> 0.15)
 	}
 }
 

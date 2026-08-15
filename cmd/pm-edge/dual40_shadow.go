@@ -49,9 +49,10 @@ type dual40Runtime struct {
 	marketSlug  string
 	market      *polymarket.Market // aktif market (roll aninda ESKI market settle icin)
 	priceToBeat float64            // aktif marketin event openPrice'i (Chainlink strike)
-	samples     []dual40.Sample
-	evaluated   map[int]bool
-	active      map[int]*dual40.Trial
+	samples       []dual40.Sample
+	evaluated     map[int]bool
+	active        map[int]*dual40.Trial
+	marketEntered bool // bu markette bir kutu acildi mi (tek giris/market kurali)
 }
 
 // SetLive: butondan DRY<->CANLI. exec yoksa (shadow) etkisiz.
@@ -387,6 +388,7 @@ func (r *dual40Runtime) rollMarket(slug string, assets []string, now time.Time) 
 	r.priceToBeat = 0
 	r.samples = nil
 	r.evaluated = make(map[int]bool)
+	r.marketEntered = false
 	r.tradeStream.SetAssets(assets)
 	util.Logger.Info("DUAL40 NEW MARKET", zap.String("market", slug))
 }
@@ -470,6 +472,12 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 			continue
 		}
 		r.evaluated[sec] = true
+		// TEK GIRIS/MARKET: bu markette zaten bir kutu acildiysa kalan pencereleri
+		// atla. Coklu pencere artik "tek kutu icin birden cok SANS" demektir; ayni
+		// markete birden fazla kutu yiginlamaz.
+		if r.marketEntered {
+			continue
+		}
 		window := dual40.SamplesThrough(r.samples, float64(sec))
 		metrics := dual40.Classify(window, r.cfg)
 		distUsd := math.Abs(price - r.priceToBeat)
@@ -511,6 +519,7 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		}
 		if trial.IsOpen() {
 			r.active[sec] = trial
+			r.marketEntered = true // tek giris/market: bundan sonra bu markette yeni kutu yok
 			util.Logger.Info("DUAL40 40C/40C POSTED", zap.String("mode", r.Status()), zap.Int64("id", trial.ID), zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.String("upOrderId", trial.UpOrderID), zap.String("downOrderId", trial.DownOrderID), zap.Float64("driftBps", trial.Metrics.DriftBps), zap.Float64("upQueue", trial.UpQueueAhead), zap.Float64("downQueue", trial.DownQueueAhead))
 		} else {
 			util.Logger.Info("DUAL40 ENTRY SKIPPED", zap.String("market", trial.MarketSlug), zap.Int("entrySec", sec), zap.String("regime", trial.Regime), zap.Float64("chopScore", trial.Metrics.ChopScore), zap.String("reason", trial.Reason))

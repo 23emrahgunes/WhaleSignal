@@ -214,10 +214,10 @@ func (e *Evaluator) Evaluate(binanceClient *binance.Client, market *polymarket.M
 	}
 
 	// --- BASİT ZORUNLU YÖN (kullanıcı isteği) ---
-	// Kapanışa son 60-90 sn kala her markette bir yön aç. ±$10-25 derinlik
-	// dengesizliği + 5sn agresif momentum hangi tarafa yatıyorsa o yön. Başka
-	// filtre yok. Pencere dışında NEUTRAL.
-	if secondsRemaining >= 60 && secondsRemaining <= 90 {
+	// Kapanışın son ~3 dakikasında (20-180 sn) her tick bir yön üret — sık tahmin.
+	// ±$10-25 derinlik dengesizliği + 5sn agresif momentum hangi tarafa yatıyorsa o
+	// yön. Başka filtre yok. Pencere dışında NEUTRAL.
+	if secondsRemaining >= 20 && secondsRemaining <= 180 {
 		// ±$10-25 derinlik dengesizliği (+ => YUKARI ağır). Bands[0]=±$10, [1]=±$25.
 		depthLean := orderFlowScore // yedek: Binance ilk-20 ağırlıklı dengesizlik
 		if deep.Ready && len(deep.Bands) >= 2 {
