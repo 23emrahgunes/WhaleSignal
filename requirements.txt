@@ -1,0 +1,11 @@
+# Cekirdek bagimliliklar (SIM + testler icin yeterli)
+aiohttp>=3.9
+pydantic>=2.5
+pydantic-settings>=2.1
+numpy>=1.26
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# NOT: DRY/LIVE gercek emir gonderimi icin resmi CLOB kutuphanesi gerekir:
+#   py_clob_client_v2  (bu workspace'te pm-edge / pyton-polymarket ile ayni surum)
+# SIM modu ve testler bu kutuphane OLMADAN calisir (lazy import).
