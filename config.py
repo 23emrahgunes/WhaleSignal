@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     require_squeeze: bool = Field(default=False, alias="REQUIRE_SQUEEZE")
 
     # ----- Emir / risk -----
+    # CLOSE_BUFFER_SEC: marketi gercek endDate'ten bu kadar sn ONCE bitmis say.
+    # Polymarket UI islem-kilidine kadar sayar; gozlemlenen farki buraya yazinca
+    # panel/karar Polymarket ile hizalanir (ve bot erken durup guvende kalir).
+    close_buffer_sec: float = Field(default=0.0, alias="CLOSE_BUFFER_SEC")
     entry_price: float = Field(default=0.40, alias="ENTRY_PRICE")
     order_size: float = Field(default=5.0, alias="ORDER_SIZE")  # taraf basi pay
     single_leg_timeout_sec: float = Field(

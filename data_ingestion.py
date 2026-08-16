@@ -359,7 +359,9 @@ class GammaMetadataPoller:
         meta = _parse_gamma_market(gm)  # end_ts = Polymarket'in GERCEK endDate'i
         if meta is None:
             return None
-        # start = gercek bitisten 5dk geri (duration/kalan-sure gercek endDate'e gore)
+        # erken-kapatma tamponu: UI islem-kilidiyle hizala + guvenli erken dur
+        meta.end_ts -= self.settings.close_buffer_sec
+        # start = bitisten 5dk geri (duration/kalan-sure)
         meta.start_ts = meta.end_ts - 300.0
         if not meta.question:
             meta.question = str(ev.get("title", "BTC 5m Up/Down"))
