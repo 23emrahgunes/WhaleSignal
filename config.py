@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        env_ignore_empty=True,  # bos env degeri (or. MANUAL_END_TS=) -> varsayilan kullan
     )
 
     # ----- Genel / calisma modu -----
