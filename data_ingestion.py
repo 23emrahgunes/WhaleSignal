@@ -356,12 +356,11 @@ class GammaMetadataPoller:
         gm = next((m for m in markets if m.get("active") and not m.get("closed")), None)
         if gm is None:
             return None
-        meta = _parse_gamma_market(gm)
+        meta = _parse_gamma_market(gm)  # end_ts = Polymarket'in GERCEK endDate'i
         if meta is None:
             return None
-        # pencereden kesin start/end (event 5dk sabit)
-        meta.start_ts = float(window_start)
-        meta.end_ts = float(window_start + 300)
+        # start = gercek bitisten 5dk geri (duration/kalan-sure gercek endDate'e gore)
+        meta.start_ts = meta.end_ts - 300.0
         if not meta.question:
             meta.question = str(ev.get("title", "BTC 5m Up/Down"))
         return meta
