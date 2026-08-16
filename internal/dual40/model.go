@@ -76,8 +76,8 @@ func DefaultConfig() Config {
 		HedgeTriggerPrice:   0.70,
 		StopBeforeEndSec:    20,
 		GateMode:            "feature",
-		MaxEntryDistanceUsd: 25.0, // priceToBeat'e <= $25 (Chainlink) — gevsetildi
-		MaxEntryMomentumBps: 8.0,  // net yonlu hareket esigi — gevsetildi (daha cok giris)
+		MaxEntryDistanceUsd: 10.0, // |fiyat-PTB| <= $10 (kullanici tek-filtre kosulu)
+		MaxEntryMomentumBps: 8.0,  // momentum tek yonde bu esigi asmasin (tek-filtre kosulu)
 		HedgeMode:           "deadline",
 		HedgeDeadlineSec:    40, // son 40s kala hala tek-bacaksa hedge et (30-45 araligi)
 		FillModel:           "realistic",

@@ -482,26 +482,31 @@ func (r *dual40Runtime) evaluateOpeningWindows(upID, downID string, upBook, down
 		metrics := dual40.Classify(window, r.cfg)
 		distUsd := math.Abs(price - r.priceToBeat)
 
-		// Giris kapilari. Veri-saglik onkosullari (pencere/akis/PTB) her modda ayni.
-		// Sonra: SimpleEntry => TEK FILTRE (acilis volatil degilse gir); aksi halde
-		// eski cok-kapili zincir (mesafe/momentum/ModelB/chop).
+		// Giris kapilari.
+		// SimpleEntry (kullanici istegi) = TEK FILTRE: acilisi gormek SART DEGIL,
+		// ~sec sn'de |fiyat-PTB| <= mesafe VE momentum tek yonde degilse gir. Baska
+		// engel yok (ModelB/chop/coherence/acilis-penceresi DEVRE DISI).
+		// Aksi halde eski cok-kapili zincir (acilis penceresi + ModelB + chop ...).
 		skipReason := ""
 		switch {
-		case !dual40.OpeningWindowCovered(window, sec):
-			skipReason = "YETERSIZ_ACILIS_PENCERESI"
 		case !r.tradeStream.Healthy(r.tradeStreamMaxAge):
 			skipReason = "AKIS_SAGLIKSIZ"
 		case r.priceToBeat <= 0 || price <= 0:
-			skipReason = "PTB_BEKLENIYOR" // Chainlink bekleniyor
+			skipReason = "PTB_BEKLENIYOR" // Chainlink/PTB bekleniyor
 		case r.cfg.SimpleEntry:
-			// TEK FILTRE: acilis penceresinde volatil hareket yoksa gir. Volatilite
-			// olcusu = RangeBps (tepe-dip salinim; trend de burada buyur). Ustu = gir­me.
-			if metrics.RangeBps > r.cfg.SimpleMaxRangeBps {
-				skipReason = fmt.Sprintf("VOLATIL_HAREKET(%.1fbps>%.0fbps)", metrics.RangeBps, r.cfg.SimpleMaxRangeBps)
+			switch {
+			case metrics.Samples < 4:
+				skipReason = "YETERSIZ_ORNEK" // momentumu olcecek kadar ornek yok
+			case r.cfg.MaxEntryDistanceUsd > 0 && distUsd > r.cfg.MaxEntryDistanceUsd:
+				skipReason = fmt.Sprintf("PTB_UZAK($%.1f>$%.0f)", distUsd, r.cfg.MaxEntryDistanceUsd)
+			case r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps:
+				skipReason = fmt.Sprintf("MOMENTUM_VAR(%.1fbps)", math.Abs(metrics.DriftBps))
 			}
 		default:
 			// Eski cok-kapili mod (SimpleEntry=false).
 			switch {
+			case !dual40.OpeningWindowCovered(window, sec):
+				skipReason = "YETERSIZ_ACILIS_PENCERESI"
 			case r.cfg.MaxEntryDistanceUsd > 0 && distUsd > r.cfg.MaxEntryDistanceUsd:
 				skipReason = fmt.Sprintf("PTB_UZAK($%.1f>$%.0f)", distUsd, r.cfg.MaxEntryDistanceUsd)
 			case r.cfg.MaxEntryMomentumBps > 0 && math.Abs(metrics.DriftBps) > r.cfg.MaxEntryMomentumBps:
