@@ -28,6 +28,7 @@ from data_ingestion import (
 )
 from execution_strategy import (
     AdverseSelectionGuard,
+    EntryDecision,
     GuardAction,
     should_enter,
 )
@@ -52,6 +53,16 @@ class StrategyRunner:
         self.events: deque[dict] = deque(maxlen=60)  # dashboard olay gecmisi
         self.started_at = time.time()
         self._market_key: Optional[str] = None  # aktif market kimligi (donus tespiti)
+        self._entered_market: Optional[str] = None  # bu markete girildi mi (tek giris/market)
+
+    def _entry_decision(self, state: MarketState) -> EntryDecision:
+        """should_enter + tek-giris/market guard. Ayni markete ikinci kutu ACMAZ."""
+        dec = should_enter(state, self.cfg)
+        if state.meta is not None and self._entered_market == state.meta.up_token_id:
+            reasons = list(dec.reasons)
+            reasons.append("ZATEN_GIRILDI")
+            return EntryDecision(allowed=False, reasons=reasons)
+        return dec
 
     def _event(self, kind: str, detail: str, pnl: float = 0.0) -> None:
         self.events.appendleft(
@@ -92,6 +103,7 @@ class StrategyRunner:
             self.cfg.entry_price,
             self.cfg.order_size,
         )
+        self._entered_market = state.meta.up_token_id  # tek giris/market: bir daha acma
         self._event("BOX_ACILDI", f"{self.cfg.order_size:.0f} x UP+DOWN @ {self.cfg.entry_price}")
 
     def _cancel_leg(self, outcome: Outcome) -> None:
@@ -140,8 +152,8 @@ class StrategyRunner:
                 self._close("ADVERSE_SELECTION", state)
             return
 
-        # 3) Box yok: giris karari
-        decision = should_enter(state, self.cfg)
+        # 3) Box yok: giris karari (ayni markete ikinci kez girmez)
+        decision = self._entry_decision(state)
         if decision.allowed:
             self._open_box(state)
         elif state.now - self._last_skip_log > 15:
@@ -153,7 +165,7 @@ class StrategyRunner:
         st = self._build_state()
         a = st.analytics
         meta = st.meta
-        dec = should_enter(st, self.cfg)
+        dec = self._entry_decision(st)
         box = self.sim.active
         market = None
         if meta is not None:
