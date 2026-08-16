@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import deque
 from typing import Optional
 
 import aiohttp
@@ -32,6 +33,7 @@ from execution_strategy import (
 )
 from models import ExecMode, MarketState, Outcome, Side
 from simulator_backtester import Simulator
+from web_dashboard import run_web
 
 log = logging.getLogger("dual_arbitraj.main")
 
@@ -47,6 +49,13 @@ class StrategyRunner:
         self.guard = AdverseSelectionGuard(cfg.single_leg_timeout_sec)
         self._order_ids: dict[Outcome, Optional[str]] = {Outcome.UP: None, Outcome.DOWN: None}
         self._last_skip_log = 0.0
+        self.events: deque[dict] = deque(maxlen=60)  # dashboard olay gecmisi
+        self.started_at = time.time()
+
+    def _event(self, kind: str, detail: str, pnl: float = 0.0) -> None:
+        self.events.appendleft(
+            {"ts": time.time(), "kind": kind, "detail": detail, "pnl": round(pnl, 3)}
+        )
 
     def _build_state(self) -> MarketState:
         meta, book_up, book_down, candles, iv = self.hub.snapshot()
@@ -82,6 +91,7 @@ class StrategyRunner:
             self.cfg.entry_price,
             self.cfg.order_size,
         )
+        self._event("BOX_ACILDI", f"{self.cfg.order_size:.0f} x UP+DOWN @ {self.cfg.entry_price}")
 
     def _cancel_leg(self, outcome: Outcome) -> None:
         self.executor.cancel(self._order_ids.get(outcome))
@@ -94,6 +104,7 @@ class StrategyRunner:
         self.guard.reset()
         if box is not None:
             log.info("BOX KAPANDI %s pnl=%.3f | %s", reason, box.pnl, self.sim.stats.as_dict())
+            self._event("BOX_KAPANDI", reason, box.pnl)
 
     def tick(self, state: MarketState) -> None:
         # 1) Vade bitti mi -> acik box'i duzlestir
@@ -128,6 +139,67 @@ class StrategyRunner:
         elif state.now - self._last_skip_log > 15:
             self._last_skip_log = state.now
             log.info("giris yok: %s", ", ".join(decision.reasons) or "-")
+
+    def snapshot(self) -> dict:
+        """Web dashboard icin tam anlik durum (JSON-guvenli)."""
+        st = self._build_state()
+        a = st.analytics
+        meta = st.meta
+        dec = should_enter(st, self.cfg)
+        box = self.sim.active
+        market = None
+        if meta is not None:
+            market = {
+                "question": meta.question,
+                "condition_id": meta.condition_id,
+                "up_token": meta.up_token_id,
+                "down_token": meta.down_token_id,
+                "remaining_sec": round(meta.remaining_sec(st.now), 1),
+                "duration_sec": round(meta.duration_sec, 1),
+            }
+        box_info = None
+        if box is not None:
+            box_info = {
+                "up_filled": box.up.filled,
+                "down_filled": box.down.filled,
+                "opened_ts": box.opened_ts,
+                "guard": self.guard.status.value,
+            }
+        return {
+            "mode": self.executor.mode.value,
+            "now": st.now,
+            "uptime_sec": round(st.now - self.started_at, 1),
+            "market": market,
+            "analytics": {
+                "ready": a.ready,
+                "obi": round(a.obi, 4),
+                "atr_pct": round(a.atr_pct, 5),
+                "adx": round(a.adx, 2),
+                "price_velocity": round(a.price_velocity, 4),
+                "saturation": a.saturation,
+                "bb_squeeze": a.bb_squeeze,
+                "implied_vol": round(a.implied_vol, 2),
+                "up_mid": st.book_up.midpoint if st.book_up else None,
+                "down_mid": st.book_down.midpoint if st.book_down else None,
+            },
+            "thresholds": {
+                "obi_max": self.cfg.obi_max,
+                "atr_max_pct": self.cfg.atr_max_pct,
+                "adx_max": self.cfg.adx_max,
+                "time_decay_pct": self.cfg.time_decay_pct,
+            },
+            "entry": {"allowed": dec.allowed, "reasons": dec.reasons},
+            "box": box_info,
+            "stats": self.sim.stats.as_dict(),
+            "events": list(self.events),
+            "connection": {
+                "book_up": st.book_up is not None,
+                "book_down": st.book_down is not None,
+                "candles": len(self.hub.candles),
+                "updated_at": self.hub.updated_at,
+                "stale_sec": round(st.now - self.hub.updated_at, 1) if self.hub.updated_at else None,
+            },
+        }
 
     async def run(self, stop: asyncio.Event, interval: float = 1.0) -> None:
         log.info("strateji dongusu basladi (mode=%s)", self.executor.mode.value)
@@ -199,6 +271,8 @@ async def run() -> None:
                 tg.create_task(binance.run(stop), name="binance")
                 tg.create_task(_book_supervisor(cfg, hub, session, stop), name="book")
                 tg.create_task(runner.run(stop), name="strategy")
+                if cfg.web_enabled:
+                    tg.create_task(run_web(runner, cfg, stop), name="web")
         except* Exception as eg:  # noqa: B001
             for exc in eg.exceptions:
                 log.error("gorev hatasi: %s", exc)

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     symbol: str = Field(default="BTCUSDT", alias="SYMBOL")  # Binance sembolu
 
+    # ----- Web dashboard -----
+    web_enabled: bool = Field(default=True, alias="WEB_ENABLED")
+    web_host: str = Field(default="0.0.0.0", alias="WEB_HOST")
+    web_port: int = Field(default=8090, alias="WEB_PORT")
+
     # ----- Uc noktalar -----
     clob_ws_url: str = Field(
         default="wss://ws-subscriptions-clob.polymarket.com/ws/market",
