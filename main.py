@@ -116,8 +116,9 @@ class StrategyRunner:
             self._order_ids[oc] = None
         self.guard.reset()
         if box is not None:
-            log.info("BOX KAPANDI %s pnl=%.3f | %s", reason, box.pnl, self.sim.stats.as_dict())
-            self._event("BOX_KAPANDI", reason, box.pnl)
+            legs = ("UP✓" if box.up.filled else "UP·") + " " + ("DOWN✓" if box.down.filled else "DOWN·")
+            log.info("BOX KAPANDI %s [%s] pnl=%.3f | %s", reason, legs, box.pnl, self.sim.stats.as_dict())
+            self._event("BOX_KAPANDI", f"{reason} · {legs}", box.pnl)
 
     def tick(self, state: MarketState) -> None:
         # 0) Market degisti mi (5dk donus) -> acik box'i kapat, yeni markete gec
@@ -138,6 +139,7 @@ class StrategyRunner:
             for filled in self.sim.on_tick(state.book_up, state.book_down, state.now):
                 self.guard.record_fill(filled, state.now)
                 self._order_ids[filled] = None  # dolan bacagin emri kapandi
+                self._event("BACAK_DOLDU", f"{filled.value} @ {self.cfg.entry_price}")
             if self.sim.active is not None and self.sim.active.both_filled:
                 self._close("KILITLENDI", state)
                 return

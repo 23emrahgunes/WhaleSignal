@@ -154,7 +154,9 @@ async function tick(){
   const tb=$('events');
   if(d.events&&d.events.length){
     tb.innerHTML=d.events.map(ev=>{
-      const tag=ev.kind==='BOX_ACILDI'?'tg-open':ev.kind==='ADVERSE_SELECTION'||ev.kind==='BOX_KAPANDI'&&ev.detail.includes('ADVERSE')?'tg-adv':'tg-close';
+      let tag='tg-close';
+      if(ev.kind==='BOX_ACILDI'||ev.kind==='BACAK_DOLDU') tag='tg-open';
+      else if(ev.detail&&ev.detail.includes('ADVERSE')) tag='tg-adv';
       return `<tr><td>${tsz(ev.ts)}</td><td><span class="tag ${tag}">${ev.kind}</span></td><td>${ev.detail}</td><td class="${cls(ev.pnl)}">${ev.pnl?usd(ev.pnl):'—'}</td></tr>`;
     }).join('');
   }
