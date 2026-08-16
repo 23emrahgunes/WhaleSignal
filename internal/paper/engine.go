@@ -25,6 +25,9 @@ type Config struct {
 	LatencyBuffer     float64
 	MaxEffectiveEntry float64
 	MinEconomicEdge   float64
+	// MinEntryPrice: taban giris fiyati. Bunun altindaki uc-ucuz girisleri alma
+	// (kapanisa yakin 1-4c seviyeleri canlida ters-secilimle dolmaz). 0 = kapali.
+	MinEntryPrice float64
 
 	HedgeEnabled         bool
 	HedgeWindow          int
@@ -65,6 +68,9 @@ func NewEngine(db *storage.Database, cfg Config) *Engine {
 	}
 	if cfg.MinEconomicEdge <= 0 {
 		cfg.MinEconomicEdge = 0.05
+	}
+	if cfg.MinEntryPrice < 0 {
+		cfg.MinEntryPrice = 0
 	}
 	if cfg.HedgeWindow <= 0 {
 		cfg.HedgeWindow = 8
@@ -183,6 +189,12 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 		shares = e.cfg.Stake / entryPrice
 	}
 	if entryPrice <= 0 || entryPrice >= 1 || stake <= 0 || shares <= 0 {
+		return nil, false, nil
+	}
+	// TABAN FIYAT: uc-ucuz girisleri (1-4c) ele. Matematikte cazip (basabas =
+	// fiyat) ama canlida kapanisa yakin o seviyeler ters-secilimle dolmaz. 10c
+	// hala 10x avantaj + daha kalin/kalici defter.
+	if e.cfg.MinEntryPrice > 0 && entryPrice < e.cfg.MinEntryPrice-1e-12 {
 		return nil, false, nil
 	}
 	if quote != nil {

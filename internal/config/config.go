@@ -26,6 +26,7 @@ type Config struct {
 	PaperLatencyBuffer     float64
 	PaperMaxEffectiveEntry float64
 	PaperMinEconomicEdge   float64
+	PaperMinEntryPrice     float64
 
 	ArbShadowEnabled                bool
 	ArbTargetEdge                   float64
@@ -96,6 +97,7 @@ func LoadConfig() (*Config, error) {
 		PaperLatencyBuffer:              envFloat("PAPER_LATENCY_BUFFER", 0.002),
 		PaperMaxEffectiveEntry:          envFloat("PAPER_MAX_EFFECTIVE_ENTRY", 0.85),
 		PaperMinEconomicEdge:            envFloat("PAPER_MIN_ECONOMIC_EDGE", 0.05),
+		PaperMinEntryPrice:              envFloat("PAPER_MIN_ENTRY_PRICE", 0.10),
 		ArbShadowEnabled:                envBool("ARB_SHADOW_ENABLED", true),
 		ArbTargetEdge:                   envFloat("ARB_TARGET_EDGE", 0.02),
 		ArbOperationalBuffer:            envFloat("ARB_OPERATIONAL_BUFFER", 0.002),
