@@ -247,6 +247,41 @@ class BinanceKlineStream(ReconnectingWSClient):
         super().__init__(stream, settings, "BinanceKline", session, sleep)
         self.hub = hub
 
+    async def backfill(self, limit: int = 50) -> None:
+        """Baslangicta REST'ten gecmis 1dk mumlarini cek (ADX/ATR hemen hazir olsun).
+
+        WS mumlari dakikada 1 gelir; backfill olmadan ~15dk beklemek gerekir.
+        """
+        url = f"{self.settings.binance_rest_base}/api/v3/klines"
+        params = {"symbol": self.settings.symbol.upper(), "interval": "1m", "limit": limit}
+        try:
+            async with self._session.get(url, params=params, timeout=10) as resp:
+                rows = await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Binance kline backfill basarisiz: %s", exc)
+            return
+        if not isinstance(rows, list):
+            return
+        for i, r in enumerate(rows):
+            try:
+                candle = Candle(
+                    open_time=int(r[0]),
+                    open=float(r[1]),
+                    high=float(r[2]),
+                    low=float(r[3]),
+                    close=float(r[4]),
+                    volume=float(r[5]),
+                    closed=(i < len(rows) - 1),  # son mum henuz kapanmamis
+                )
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            await self.hub.add_candle(candle)
+        log.info("Binance kline backfill: %d mum yuklendi", len(rows))
+
+    async def run(self, stop: asyncio.Event) -> None:
+        await self.backfill()  # baglanmadan once gecmisi doldur
+        await super().run(stop)
+
     async def _handle(self, raw: str) -> None:
         data = json.loads(raw)
         k = data.get("k") if isinstance(data, dict) else None

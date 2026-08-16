@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     binance_ws_base: str = Field(
         default="wss://stream.binance.com:9443/ws", alias="BINANCE_WS_BASE"
     )
+    binance_rest_base: str = Field(
+        default="https://api.binance.com", alias="BINANCE_REST_BASE"
+    )
     deribit_rest_base: str = Field(
         default="https://www.deribit.com/api/v2", alias="DERIBIT_REST_BASE"
     )
