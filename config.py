@@ -49,7 +49,11 @@ class Settings(BaseSettings):
     gamma_host: str = Field(
         default="https://gamma-api.polymarket.com", alias="GAMMA_HOST"
     )
-    # Gamma market secimi: aranan slug parcasi (or. "bitcoin-up-or-down").
+    # BTC 5dk up/down modu: /events/slug/btc-updown-5m-<pencere> ile aktif marketi
+    # cozer ve 5dk'da bir DONEN marketi otomatik takip eder (VARSAYILAN).
+    btc_5m: bool = Field(default=True, alias="BTC_5M")
+    gamma_poll_sec: int = Field(default=5, alias="GAMMA_POLL_SEC")
+    # Gamma market secimi: aranan slug parcasi (btc_5m=false iken kullanilir).
     gamma_market_slug: str = Field(default="", alias="GAMMA_MARKET_SLUG")
     # Manuel token id'leri (Gamma cozulemezse veya sabit market icin).
     manual_up_token_id: str = Field(default="", alias="MANUAL_UP_TOKEN_ID")

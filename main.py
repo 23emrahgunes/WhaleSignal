@@ -51,6 +51,7 @@ class StrategyRunner:
         self._last_skip_log = 0.0
         self.events: deque[dict] = deque(maxlen=60)  # dashboard olay gecmisi
         self.started_at = time.time()
+        self._market_key: Optional[str] = None  # aktif market kimligi (donus tespiti)
 
     def _event(self, kind: str, detail: str, pnl: float = 0.0) -> None:
         self.events.appendleft(
@@ -107,6 +108,13 @@ class StrategyRunner:
             self._event("BOX_KAPANDI", reason, box.pnl)
 
     def tick(self, state: MarketState) -> None:
+        # 0) Market degisti mi (5dk donus) -> acik box'i kapat, yeni markete gec
+        if state.meta is not None:
+            key = state.meta.up_token_id
+            if self._market_key is not None and key != self._market_key and self.sim.has_open_box:
+                self._close("MARKET_DEGISTI", state)
+            self._market_key = key
+
         # 1) Vade bitti mi -> acik box'i duzlestir
         if state.meta is not None and state.meta.remaining_sec(state.now) <= 0:
             if self.sim.has_open_box:
@@ -219,16 +227,32 @@ class StrategyRunner:
 async def _book_supervisor(
     cfg: Settings, hub: DataHub, session: aiohttp.ClientSession, stop: asyncio.Event
 ) -> None:
-    """Meta (token id'leri) cozulunce CLOB order book akisini baslatir."""
-    while not stop.is_set() and hub.meta is None:
+    """Meta token id'leri degistikce (5dk market donusu) CLOB book akisini yeniden
+    baslatir. Her yeni markette yeni asset_ids'e abone olunur."""
+    current_ids: Optional[list[str]] = None
+    child_stop: Optional[asyncio.Event] = None
+    child_task: Optional[asyncio.Task] = None
+    while not stop.is_set():
+        meta = hub.meta
+        ids = [meta.up_token_id, meta.down_token_id] if meta else None
+        if ids and ids != current_ids:
+            if child_stop is not None:
+                child_stop.set()
+            if child_task is not None:
+                with contextlib.suppress(Exception):
+                    await child_task
+            current_ids = ids
+            child_stop = asyncio.Event()
+            stream = PolymarketOrderbookStream(cfg, hub, ids, session)
+            child_task = asyncio.create_task(stream.run(child_stop))
+            log.info("CLOB order book akisi (yeni market): %s", [a[:10] for a in ids])
         with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=1.0)
-    if hub.meta is None:
-        return
-    asset_ids = [hub.meta.up_token_id, hub.meta.down_token_id]
-    stream = PolymarketOrderbookStream(cfg, hub, asset_ids, session)
-    log.info("CLOB order book akisi basliyor: %s", [a[:8] for a in asset_ids])
-    await stream.run(stop)
+            await asyncio.wait_for(stop.wait(), timeout=2.0)
+    if child_stop is not None:
+        child_stop.set()
+    if child_task is not None:
+        with contextlib.suppress(Exception):
+            await child_task
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:

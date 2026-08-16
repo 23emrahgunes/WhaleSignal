@@ -330,14 +330,41 @@ class GammaMetadataPoller:
         settings: Settings,
         hub: DataHub,
         session: aiohttp.ClientSession,
-        interval_sec: float = 30.0,
+        interval_sec: Optional[float] = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.settings = settings
         self.hub = hub
         self._session = session
-        self.interval = interval_sec
+        self.interval = interval_sec if interval_sec is not None else settings.gamma_poll_sec
         self._sleep = sleep
+
+    async def _fetch_btc_5m(self) -> Optional[MarketMeta]:
+        """Aktif 5dk BTC up/down marketini /events/slug/btc-updown-5m-<pencere>
+        ile cozer. Pencere = simdi 300 sn'ye yuvarlanmis unix; 5dk'da bir doner."""
+        now = time.time()
+        window_start = int(now) - (int(now) % 300)
+        slug = f"btc-updown-5m-{window_start}"
+        url = f"{self.settings.gamma_host}/events/slug/{slug}"
+        async with self._session.get(url, timeout=10) as resp:
+            if resp.status != 200:
+                return None
+            ev = await resp.json()
+        if not isinstance(ev, dict) or ev.get("closed") or not ev.get("active"):
+            return None
+        markets = ev.get("markets") or []
+        gm = next((m for m in markets if m.get("active") and not m.get("closed")), None)
+        if gm is None:
+            return None
+        meta = _parse_gamma_market(gm)
+        if meta is None:
+            return None
+        # pencereden kesin start/end (event 5dk sabit)
+        meta.start_ts = float(window_start)
+        meta.end_ts = float(window_start + 300)
+        if not meta.question:
+            meta.question = str(ev.get("title", "BTC 5m Up/Down"))
+        return meta
 
     async def _fetch_once(self) -> Optional[MarketMeta]:
         url = f"{self.settings.gamma_host}/markets"
@@ -372,7 +399,10 @@ class GammaMetadataPoller:
             return
         while not stop.is_set():
             try:
-                meta = await self._fetch_once()
+                if self.settings.btc_5m:
+                    meta = await self._fetch_btc_5m()
+                else:
+                    meta = await self._fetch_once()
                 if meta is not None:
                     await self.hub.set_meta(meta)
             except asyncio.CancelledError:
