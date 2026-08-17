@@ -189,6 +189,26 @@ func main() {
 				exec = e
 			}
 		}
+		// Yon tahmini (Model A) canli executor — shadow disi ise paper engine'e baglanir.
+		// SetExecutor yalniz kopruyu SAKLAR; gercek emir, engine icindeki aktivasyon
+		// satiri eklenene kadar GONDERILMEZ (guvenli iskelet).
+		var dirExec *clob.Client
+		dirMode := cfg.DirectionExecMode
+		if dirMode != "shadow" {
+			if e, err := clob.New(clob.Config{
+				ExecutorURL: cfg.ExecutorURL, ExecutorToken: cfg.ExecutorToken,
+				DryRun: dirMode != "live",
+			}, util.Logger); err != nil {
+				util.Logger.Error("DIRECTION executor (kopru) kurulamadi -> SHADOW", zap.Error(err))
+			} else {
+				dirExec = e
+			}
+		}
+		if dirExec != nil {
+			paperEngine.SetExecutor(dirExec, dirMode, cfg.DirectionLiveStake)
+			server.SetDirectionControl(paperEngine.SetLive, paperEngine.RequestKill, paperEngine.Status, paperEngine.ExecErr)
+		}
+
 		arbShadow.StartDual40Observer(ctx, clClient, bClient, microClient, execMode, exec)
 		if rt := arbShadow.Dual40Runtime(); rt != nil {
 			server.SetDual40Control(rt.SetLive, rt.RequestKill, rt.Status, rt.ExecErr)

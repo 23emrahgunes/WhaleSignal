@@ -64,9 +64,13 @@ type Config struct {
 	// | live (gercek emir). Acilis her zaman shadow/dry; live yalniz authed dugmeyle.
 	// Imzalama Go'da DEGIL: py-clob-client v2 saran yerel kopruye (executor_bridge.py)
 	// yaptirilir. CLOB secrets (private key/creds/funder/sigType) KOPRUNUN env'inde.
-	Dual40ExecMode      string
-	ExecutorURL         string // http://127.0.0.1:8099 (kopru)
-	ExecutorToken       string // X-Executor-Token paylasilan sir. ASLA loglanmaz
+	Dual40ExecMode string
+	ExecutorURL    string // http://127.0.0.1:8099 (kopru)
+	ExecutorToken  string // X-Executor-Token paylasilan sir. ASLA loglanmaz
+	// DirectionExecMode: yon tahmini (Model A) canli yurutme. shadow (paper) |
+	// dry (kopru imzalar, POST yok) | live (gercek marketable BUY). Acilis shadow/dry.
+	DirectionExecMode   string
+	DirectionLiveStake  float64 // canli emir basi USD (min ~1)
 	DashboardUser       string
 	DashboardPass       string // ASLA loglanmaz
 	DashboardSecret     string // session cookie HMAC secret. ASLA loglanmaz
@@ -131,6 +135,8 @@ func LoadConfig() (*Config, error) {
 		Dual40ExecMode:      normalizeExecMode(envString("DUAL40_EXEC_MODE", "shadow")),
 		ExecutorURL:         envString("EXECUTOR_URL", "http://127.0.0.1:8099"),
 		ExecutorToken:       envString("EXECUTOR_TOKEN", ""),
+		DirectionExecMode:   normalizeExecMode(envString("DIRECTION_EXEC_MODE", "shadow")),
+		DirectionLiveStake:  envFloat("DIRECTION_LIVE_STAKE", 1.0),
 		DashboardUser:       envString("DASHBOARD_USER", "admin"),
 		DashboardPass:       envString("DASHBOARD_PASS", ""),
 		DashboardSecret:     envString("DASHBOARD_SESSION_SECRET", ""),

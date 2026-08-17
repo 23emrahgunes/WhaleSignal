@@ -28,6 +28,7 @@ type Server struct {
 	authTTLMin int
 	d40        *dual40Control // canli-kontrol kancalari (nil = pasif/shadow)
 	d40ModelB  func() any     // Model B shadow son sonuc kancasi
+	dir        *dual40Control // yon tahmini (Model A) canli-kontrol (nil = pasif/shadow)
 }
 
 // SetAuth: dashboard giris korumasini yapilandirir. pass VE secret bos degilse
@@ -79,6 +80,9 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/dual40/modelb", s.cors(s.handleDual40ModelB))
 	mux.HandleFunc("/api/dual40/mode", s.cors(s.handleDual40Mode))
 	mux.HandleFunc("/api/dual40/kill", s.cors(s.handleDual40Kill))
+	mux.HandleFunc("/api/direction/status", s.cors(s.handleDirectionStatus))
+	mux.HandleFunc("/api/direction/mode", s.cors(s.handleDirectionMode))
+	mux.HandleFunc("/api/direction/kill", s.cors(s.handleDirectionKill))
 	fileServer := http.FileServer(http.Dir("web/static"))
 	mux.Handle("/", s.corsHandler(s.staticWithInverseAB(fileServer)))
 	return http.ListenAndServe(":"+port, s.requireAuth(mux))

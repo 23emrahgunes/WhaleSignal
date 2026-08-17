@@ -5,12 +5,23 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"go.uber.org/zap"
+	"pm-edge/internal/clob"
 	"pm-edge/internal/engine"
 	"pm-edge/internal/polymarket"
 	"pm-edge/internal/storage"
+	"pm-edge/internal/util"
 )
+
+// LiveExecutor: yon tahmini canli emirleri icin kopru istemcisi (clob.Client).
+type LiveExecutor interface {
+	PlaceMarketable(tokenID string, side clob.Side, size, price float64) (string, error)
+	SetLive(bool)
+	IsLive() bool
+}
 
 type Config struct {
 	Timeframe       string
@@ -51,6 +62,97 @@ type Engine struct {
 	cfg     Config
 	mu      sync.Mutex
 	regimes map[string][]regimeSample
+
+	// Canli yurutme (yon tahmini). shadow'da exec=nil (saf paper).
+	exec        LiveExecutor
+	execMode    string // shadow|dry|live
+	liveStake   float64
+	killReq     atomic.Bool
+	lastExecErr atomic.Pointer[string]
+	liveOrders  atomic.Int64
+}
+
+// SetExecutor: canli kopru + mod. shadow disi ise her paper girisinde ayrica
+// GERCEK marketable BUY (dry: kopru imzalar, live: POST) gonderilir.
+func (e *Engine) SetExecutor(exec LiveExecutor, mode string, liveStake float64) {
+	if exec == nil {
+		return
+	}
+	e.exec = exec
+	e.execMode = mode
+	if liveStake <= 0 {
+		liveStake = 1.0
+	}
+	e.liveStake = liveStake
+}
+
+// SetLive: butondan DRY<->CANLI. exec yoksa (shadow) etkisiz.
+func (e *Engine) SetLive(v bool) error {
+	if e.exec == nil {
+		return fmt.Errorf("executor yok (shadow modda baslatildi)")
+	}
+	e.exec.SetLive(v)
+	return nil
+}
+
+// RequestKill: canliyi kapat + yeni canli emir gonderme.
+func (e *Engine) RequestKill() {
+	if e.exec != nil {
+		e.exec.SetLive(false)
+	}
+	e.killReq.Store(true)
+}
+
+// Status: gosterim icin mevcut mod.
+func (e *Engine) Status() string {
+	if e.exec == nil {
+		return "shadow"
+	}
+	if e.exec.IsLive() {
+		return "live"
+	}
+	return "dry"
+}
+
+func (e *Engine) setExecErr(err error) {
+	if err == nil {
+		return
+	}
+	s := time.Now().UTC().Format("15:04:05") + " · " + err.Error()
+	e.lastExecErr.Store(&s)
+}
+
+func (e *Engine) ExecErr() string {
+	if p := e.lastExecErr.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+func (e *Engine) LiveOrderCount() int64 { return e.liveOrders.Load() }
+
+// placeLiveDirection: yon tahmini icin GERCEK marketable BUY. dry'de kopru yalniz
+// imzalar (POST yok); live'de POST edilir. shadow/kill'de no-op. Paper kaydini
+// bloklamaz (hata yalniz loglanir + panelde gosterilir).
+func (e *Engine) placeLiveDirection(tokenID string, entryPrice float64) {
+	if e.exec == nil || e.execMode == "shadow" || e.killReq.Load() {
+		return
+	}
+	if tokenID == "" || entryPrice <= 0 || entryPrice >= 1 {
+		return
+	}
+	shares := e.liveStake / entryPrice
+	price := math.Min(0.99, entryPrice+0.02) // marketable (FAK) tavan fiyat
+	id, err := e.exec.PlaceMarketable(tokenID, clob.Buy, shares, price)
+	if err != nil {
+		util.Logger.Warn("DIRECTION canli emir basarisiz", zap.Error(err))
+		e.setExecErr(err)
+		return
+	}
+	e.liveOrders.Add(1)
+	util.Logger.Info("DIRECTION CANLI EMIR", zap.String("mode", e.Status()),
+		zap.String("token", tokenID), zap.Float64("shares", shares),
+		zap.Float64("price", price), zap.String("orderId", id))
 }
 
 type BudgetQuoteFunc func(tokenID string, budget float64) (polymarket.BuyQuote, error)
