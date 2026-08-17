@@ -14,6 +14,16 @@
 <div class="banner"><b>YALNIZCA KAĞIT İŞLEM ARAŞTIRMA MOTORU</b> — Canlı emir göndermez. Polymarket emir defteri verileri yalnızca gerçekçi sanal gerçekleşme ve koruma simülasyonu için kullanılır.</div>
 <div class="wrap">
   <div class="tfbar"><button class="tfbtn active" data-tf="5m" onclick="switchTf('5m')">BTC 5 DAKİKA</button><button class="tfbtn" data-tf="15m" onclick="switchTf('15m')">BTC 15 DAKİKA</button></div>
+  <div class="card" id="dirCtrl" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span style="color:#9db4d5;font-size:11px;text-transform:uppercase;font-weight:700">Yön Motoru Yürütme:</span>
+    <b id="dirMode" style="font-size:15px">—</b>
+    <span class="muted" id="dirHint" style="font-size:12px"></span>
+    <span style="flex:1"></span>
+    <button id="dirLive" style="padding:9px 14px;border:0;border-radius:9px;background:#13c88a;color:#08122a;font-weight:800;cursor:pointer">CANLIYA GEÇ</button>
+    <button id="dirDry" style="padding:9px 14px;border:0;border-radius:9px;background:#2d4065;color:#eef4ff;font-weight:700;cursor:pointer">DRY'ye DÖN</button>
+    <button id="dirKill" style="padding:9px 14px;border:0;border-radius:9px;background:#ef4d4d;color:#2a0a0e;font-weight:800;cursor:pointer">DUR / İPTAL</button>
+  </div>
+  <div id="dirErr" style="display:none;margin:-6px 0 14px;padding:10px 14px;border-radius:10px;background:rgba(239,77,77,.12);border:1px solid var(--red);color:var(--red);font-size:13px"></div>
   <div class="card" style="padding:14px 18px">
     <h2 style="margin-bottom:10px">Bu Terimler Ne Anlama Geliyor?</h2>
     <div class="grid3">
@@ -295,6 +305,30 @@ async function tickSlow(){if(slowBusy)return;slowBusy=true;try{await Promise.all
 setInterval(tickLive,1000);
 setInterval(tickSlow,5000);
 tickLive();tickSlow();
+
+// --- Yön motoru yürütme kontrolü (shadow/dry/live + kill) ---
+const DIRMODEUI={shadow:['GÖLGE · CANLI EMİR YOK','var(--muted)'],dry:['DRY · İMZALI, POST YOK','var(--amber)'],live:['CANLI · GERÇEK EMİR','var(--red)']};
+async function refreshDirCtrl(){
+  try{
+    const st=await getJSON('/api/direction/status');const m=st.mode||'shadow';const u=DIRMODEUI[m]||DIRMODEUI.shadow;
+    const mb=document.getElementById('dirMode');mb.textContent=m.toUpperCase();mb.style.color=u[1];
+    document.getElementById('dirHint').textContent=st.controllable?u[0]:(u[0]+' · (kontrol pasif: DIRECTION_EXEC_MODE=shadow)');
+    document.getElementById('dirLive').style.display=(st.controllable&&m!=='live')?'':'none';
+    document.getElementById('dirDry').style.display=(st.controllable&&m==='live')?'':'none';
+    document.getElementById('dirKill').style.display=st.controllable?'':'none';
+    const e=document.getElementById('dirErr');
+    if(st.lastError){e.textContent='Son yürütme hatası → '+st.lastError;e.style.display='';}else{e.style.display='none';}
+  }catch(_){}
+}
+async function dirPost(url,extra){
+  const pass=prompt('Şifreni gir (onay):');if(pass===null)return;
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({pass},extra))});
+  const j=await r.json();if(!j.ok)alert('Hata: '+(j.error||r.status));refreshDirCtrl();
+}
+document.getElementById('dirLive').onclick=()=>{if(confirm('GERÇEK PARA ile CANLI emir göndermeye geçilecek. Emin misin?'))dirPost('/api/direction/mode',{mode:'live'});};
+document.getElementById('dirDry').onclick=()=>dirPost('/api/direction/mode',{mode:'dry'});
+document.getElementById('dirKill').onclick=()=>{if(confirm('CANLI durdurulup DRY moda dönülecek. Onayla.'))dirPost('/api/direction/kill',{});};
+refreshDirCtrl();setInterval(refreshDirCtrl,3000);
 </script>
 </body>
 </html>
