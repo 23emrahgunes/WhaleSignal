@@ -337,6 +337,9 @@ func (e *Engine) maybeOpen(res *engine.EvaluationResult, market *polymarket.Mark
 	// Hedge evidence must start after the original position exists. Pre-entry
 	// signal noise is not allowed to satisfy the reverse-regime gate.
 	delete(e.regimes, market.EventSlug)
+	if tokenID, ok := polymarket.TokenIDForOutcome(market, res.Decision); ok {
+		e.placeLiveDirection(tokenID, entryPrice)
+	}
 	return trade, true, nil
 }
 
