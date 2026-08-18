@@ -68,15 +68,55 @@ class AbstainReason(str, Enum):
     FEATURE_CONFLICT = "FEATURE_CONFLICT"
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"  # warmup / az ornek
     NO_RESOLUTION_META = "NO_RESOLUTION_META"  # resolution_source/type cozulemedi
+    # --- P1 plumbing invariant sebepleri ---
+    CLOB_MISSING = "CLOB_MISSING"  # gercek UP/DOWN kotasi yok (0.505 fallback YOK)
+    PTB_MISSING = "PTB_MISSING"  # reference_open/PTB cozulemedi
+    UNSAFE_TIME_METADATA = "UNSAFE_TIME_METADATA"  # canonical TTE/pencere gecersiz
+    CLOCK_UNSYNC = "CLOCK_UNSYNC"  # yerel saat kaymis
+    MODEL_NOT_TRAINED = "MODEL_NOT_TRAINED"  # P1: model yok -> tahmin degil
 
 
 class ResolutionType(str, Enum):
     """Marketin nasil resolve oldugu (zorunlu metadata)."""
 
-    CHAINLINK = "CHAINLINK"
+    CHAINLINK = "CHAINLINK"  # Chainlink referans (window/anlik)
+    CHAINLINK_TWAP = "CHAINLINK_TWAP"  # Chainlink TWAP (pencere+gozlem ani)
     BINANCE_CANDLE = "BINANCE_CANDLE"
     UMA = "UMA"
     UNKNOWN = "UNKNOWN"
+
+
+class TimeStatus(str, Enum):
+    """Canonical market zamaninin gecerliligi."""
+
+    OK = "OK"
+    UNSAFE_TIME_METADATA = "UNSAFE_TIME_METADATA"
+
+
+class DiscoveryStatus(str, Enum):
+    """Bir combo icin market kesif durumu (generic 'YOK' yerine)."""
+
+    FOUND = "FOUND"
+    NOT_FOUND = "NOT_FOUND"
+    DISCOVERY_ERROR = "DISCOVERY_ERROR"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class LabelStatus(str, Enum):
+    """Settlement etiket durumu."""
+
+    UNKNOWN = "UNKNOWN"  # explicit official yok -> labeled sayma
+    MATCH = "MATCH"  # official == computed/sanity
+    MISMATCH = "MISMATCH"  # celiski -> training-disi
+
+
+class QStatus(str, Enum):
+    """Tek quality boyutu durumu."""
+
+    OK = "OK"
+    WARN = "WARN"
+    FAIL = "FAIL"
+    WAITING = "WAITING"  # veri henuz gelmedi (kotali degil)
 
 
 @dataclass(frozen=True)
@@ -117,23 +157,54 @@ class MarketRef:
     question: str
     up_token_id: str
     down_token_id: str
+    # start_ts/end_ts = HAM metadata (Gamma endDate/startDate). Cross-check icin.
     start_ts: float
     end_ts: float
     # --- ZORUNLU resolution metadata ---
     resolution_source: str  # ham kaynak metni (Gamma resolutionSource / rules)
     resolution_type: ResolutionType
-    # --- resmi resolved sonuc (kapanistan sonra doldurulur) ---
+    # --- CANONICAL zaman (5m/15m slug-unix'ten; otoriter). None -> post_init doldurur ---
+    market_start_ts: Optional[float] = None
+    market_end_ts: Optional[float] = None
+    time_status: TimeStatus = TimeStatus.OK
+    # --- reference/PTB (resolution-tipine gore; generic openPrice DEGIL) ---
+    reference_open: Optional[float] = None
+    reference_current: Optional[float] = None
+    reference_updated_at: Optional[float] = None
+    twap_window_sec: Optional[int] = None  # Chainlink TWAP ise
+    twap_observation_ts: Optional[float] = None
+    # --- discovery + settlement ---
+    discovery_status: DiscoveryStatus = DiscoveryStatus.FOUND
     resolved: bool = False
-    resolved_outcome: Optional[Decision] = None  # UP | DOWN (resmi)
+    resolved_outcome: Optional[Decision] = None  # official (explicit metadata)
+    official_result: Optional[Decision] = None  # explicit official (birincil label)
+    computed_result: Optional[Decision] = None  # yerel audit (spot vs reference)
+    label_status: LabelStatus = LabelStatus.UNKNOWN
     discovered_ts: float = field(default_factory=time.time)
+
+    def __post_init__(self) -> None:
+        # canonical zaman verilmediyse ham metadata'dan turet (geriye uyum)
+        if self.market_start_ts is None:
+            self.market_start_ts = self.start_ts
+        if self.market_end_ts is None:
+            self.market_end_ts = self.end_ts
+
+    @property
+    def market_id(self) -> str:
+        """Canonical runtime state anahtari. condition_id yoksa slug."""
+        return self.condition_id or self.slug
 
     @property
     def duration_sec(self) -> float:
-        return max(1.0, self.end_ts - self.start_ts)
+        return max(1.0, (self.market_end_ts or self.end_ts) - (self.market_start_ts or self.start_ts))
 
     def remaining_sec(self, now: Optional[float] = None) -> float:
         now = time.time() if now is None else now
-        return self.end_ts - now
+        return (self.market_end_ts if self.market_end_ts is not None else self.end_ts) - now
+
+    def market_age_sec(self, now: Optional[float] = None) -> float:
+        now = time.time() if now is None else now
+        return now - (self.market_start_ts if self.market_start_ts is not None else self.start_ts)
 
     @property
     def has_resolution_meta(self) -> bool:
@@ -229,23 +300,69 @@ class FeatureSnapshot:
 
     combo: AssetHorizon
     ts: float
-    seconds_remaining: float
+    seconds_remaining: float  # canonical TTE
+    # canonical zaman
+    market_start: Optional[float] = None
+    market_end: Optional[float] = None
+    tte_sec: Optional[float] = None
     # fiyat / referans
     spot_price: Optional[float] = None  # direct Binance current
-    reference_price: Optional[float] = None  # PTB (horizon adaptorune gore)
+    reference_price: Optional[float] = None  # PTB (resolution-tipine gore)
     distance_usd: Optional[float] = None
     distance_bps: Optional[float] = None
-    # CLOB
+    # CLOB (up + down, bid/ask/mid; 0.505 fallback YOK)
+    up_bid: Optional[float] = None
+    up_ask: Optional[float] = None
     up_mid: Optional[float] = None
+    down_bid: Optional[float] = None
+    down_ask: Optional[float] = None
     down_mid: Optional[float] = None
     clob_spread: Optional[float] = None
-    # veri sagligi (ms)
+    # veri sagligi (ms) — AYRISIK
     spot_age_ms: Optional[float] = None
     book_age_ms: Optional[float] = None
+    transport_age_ms: Optional[float] = None
+    source_age_ms: Optional[float] = None
     clob_age_ms: Optional[float] = None
     reference_age_ms: Optional[float] = None
+    # quality
+    quality_status: str = "UNKNOWN"
+    prediction_ready: bool = False
     # P2 genislemesi icin serbest alan
     extra: dict = field(default_factory=dict)
+
+
+@dataclass
+class QualityReport:
+    """7 boyutlu quality + prediction_ready (her kart icin ayri gosterilir)."""
+
+    time: "QStatus" = None  # type: ignore[assignment]
+    market: "QStatus" = None  # type: ignore[assignment]
+    tokens: "QStatus" = None  # type: ignore[assignment]
+    clob: "QStatus" = None  # type: ignore[assignment]
+    reference: "QStatus" = None  # type: ignore[assignment]
+    clock: "QStatus" = None  # type: ignore[assignment]
+    model: "QStatus" = None  # type: ignore[assignment]
+    prediction_ready: bool = False
+    snapshot_recordable: bool = False  # time+market+tokens OK -> ham row yaz
+    abstain_reason: AbstainReason = AbstainReason.NONE
+    notes: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        for name in ("time", "market", "tokens", "clob", "reference", "clock", "model"):
+            if getattr(self, name) is None:
+                setattr(self, name, QStatus.OK)
+
+    def dims(self) -> dict:
+        return {
+            "time": self.time.value,
+            "market": self.market.value,
+            "tokens": self.tokens.value,
+            "clob": self.clob.value,
+            "reference": self.reference.value,
+            "clock": self.clock.value,
+            "model": self.model.value,
+        }
 
 
 @dataclass

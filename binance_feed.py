@@ -42,13 +42,15 @@ class SymbolFeed:
         self.book = LocalBook(symbol=self.symbol)
         self.trades: deque[Trade] = deque(maxlen=ring_max)
         self.prices: deque[tuple[int, float]] = deque(maxlen=ring_max)  # (ts_ms, price)
-        self.last_trade_ts_ms: int = 0
-        self.last_depth_ts_ms: int = 0
+        self.last_trade_ts_ms: int = 0  # source event time (trade T)
+        self.last_depth_ts_ms: int = 0  # source event time (depth E)
+        self.last_frame_recv_ms: float = 0.0  # WS TRANSPORT: son frame varis (wall)
         self._pending: deque[dict] = deque()  # senkron oncesi tamponlanan diff olaylari
         self._prev_u: int = 0
 
     # ---- trade akisi ----
     def on_trade(self, data: dict) -> None:
+        self.last_frame_recv_ms = time.time() * 1000
         try:
             price = float(data["p"])
             qty = float(data["q"])
@@ -62,11 +64,31 @@ class SymbolFeed:
 
     # ---- diff-depth akisi ----
     def on_depth(self, data: dict) -> None:
+        self.last_frame_recv_ms = time.time() * 1000
         self.last_depth_ts_ms = int(data.get("E") or 0)
         if not self.book.synced:
             self._pending.append(data)
             return
         self._apply_diff(data)
+
+    # ---- ayrisik tazelik olculeri (feed health != last-trade-age) ----
+    def transport_age_ms(self) -> Optional[float]:
+        """Son WS frame'inin varisindan bu yana (transport sagligi)."""
+        if self.last_frame_recv_ms <= 0:
+            return None
+        return max(0.0, time.time() * 1000 - self.last_frame_recv_ms)
+
+    def source_event_age_ms(self) -> Optional[float]:
+        """En yeni SOURCE event (trade T veya depth E) yasi."""
+        newest = max(self.last_trade_ts_ms, self.last_depth_ts_ms)
+        if newest <= 0:
+            return None
+        return max(0.0, time.time() * 1000 - newest)
+
+    def last_trade_age_ms(self) -> Optional[float]:
+        if self.last_trade_ts_ms <= 0:
+            return None
+        return max(0.0, time.time() * 1000 - self.last_trade_ts_ms)
 
     def apply_snapshot(self, snap: dict) -> None:
         """REST snapshot uygula + tamponlanan diff'leri oynat (senkron kur)."""
@@ -181,6 +203,35 @@ class BinanceFeed(ReconnectingWSClient):
         self.feeds: dict[str, SymbolFeed] = {
             sym.upper(): SymbolFeed(sym, settings.ring_buffer_max) for sym in symbols
         }
+        # clock: Binance serverTime ile offset (yerel saat kaymis mi)
+        self.clock_offset_ms: Optional[float] = None
+        self.clock_checked_at: float = 0.0
+
+    @property
+    def clock_synced(self) -> bool:
+        """Offset olculdu ve esigin altinda mi (olculemedi -> True, engelleme yapma)."""
+        if self.clock_offset_ms is None:
+            return True
+        return abs(self.clock_offset_ms) <= self.settings.max_clock_skew_ms
+
+    async def refresh_clock(self) -> None:
+        """Binance /time ile yerel saat offsetini olc (RTT/2 duzeltmeli)."""
+        url = f"{self.settings.binance_rest_base}/api/v3/time"
+        try:
+            t0 = time.time() * 1000
+            async with self._session.get(url, timeout=8) as resp:
+                if resp.status != 200:
+                    return
+                payload = await resp.json()
+            t1 = time.time() * 1000
+            server = float(payload.get("serverTime", 0))
+            if server > 0:
+                # yerel orta an vs server; RTT/2 duzeltme
+                local_mid = (t0 + t1) / 2.0
+                self.clock_offset_ms = local_mid - server
+                self.clock_checked_at = time.time()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("clock offset olculemedi: %s", exc)
 
     async def _on_connect(self) -> None:
         # yeni baglantida her sembol icin snapshot'i yeniden al (senkron sifirla)
@@ -189,6 +240,7 @@ class BinanceFeed(ReconnectingWSClient):
             feed._pending.clear()
         for sym in list(self.feeds):
             asyncio.create_task(self._snapshot(sym))
+        asyncio.create_task(self.refresh_clock())
 
     async def _snapshot(self, symbol: str) -> None:
         """REST snapshot al ve local book'u senkronize et."""

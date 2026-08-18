@@ -84,11 +84,31 @@ class Settings(BaseSettings):
     )
     snapshot_loop_ms: int = Field(default=500, alias="SNAPSHOT_LOOP_MS")
 
-    # ----- Freshness (ms) -> stale ise ABSTAIN(STALE_DATA) -----
-    max_spot_age_ms: float = Field(default=1500, alias="MAX_SPOT_AGE_MS")
-    max_book_age_ms: float = Field(default=2000, alias="MAX_BOOK_AGE_MS")
-    max_clob_age_ms: float = Field(default=4000, alias="MAX_CLOB_AGE_MS")
+    # ----- Freshness (ms) — AYRISIK olculer -----
+    # Feed health = transport (son WS frame) + source event tazeligi. Seyrek trade
+    # STALE saydirmaz; bu yuzden spot yerine transport/source esikleri kullanilir.
+    max_spot_age_ms: float = Field(default=2500, alias="MAX_SPOT_AGE_MS")
+    max_book_age_ms: float = Field(default=3000, alias="MAX_BOOK_AGE_MS")
+    max_transport_age_ms: float = Field(default=5000, alias="MAX_TRANSPORT_AGE_MS")
+    max_source_age_ms: float = Field(default=5000, alias="MAX_SOURCE_AGE_MS")
+    max_clob_age_ms: float = Field(default=6000, alias="MAX_CLOB_AGE_MS")
     max_reference_age_ms: float = Field(default=8000, alias="MAX_REFERENCE_AGE_MS")
+    # clock: yerel saat Binance serverTime'dan bu kadar kayarsa ABSTAIN(CLOCK_UNSYNC)
+    max_clock_skew_ms: float = Field(default=3000, alias="MAX_CLOCK_SKEW_MS")
+
+    # ----- Backfill (P1 settlement/label testi; snapshot/feature URETMEZ) -----
+    backfill_resolved_markets: int = Field(default=0, alias="BACKFILL_RESOLVED_MARKETS")
+
+    # ----- Checkpoint setleri (horizon bazli; edge-crossing) -----
+    checkpoints_5m_csv: str = Field(
+        default="240,180,150,120,90,60,45,30,20,10", alias="CHECKPOINTS_5M"
+    )
+    checkpoints_15m_csv: str = Field(
+        default="840,720,600,480,360,240,120,60,30", alias="CHECKPOINTS_15M"
+    )
+    checkpoints_1h_csv: str = Field(
+        default="3300,3000,2400,1800,1200,900,600,300,120,60", alias="CHECKPOINTS_1H"
+    )
 
     # ----- Reconnect (exponential backoff) -----
     backoff_base_sec: float = Field(default=1.0, alias="BACKOFF_BASE_SEC")
@@ -118,6 +138,16 @@ class Settings(BaseSettings):
             tok = tok.strip()
             if tok.isdigit():
                 out.append(int(tok))
+        return sorted(set(out), reverse=True)
+
+    def checkpoints_for(self, horizon: str) -> list[int]:
+        """Horizon'a gore checkpoint seti (desc). Bilinmeyen -> generic."""
+        csv = {
+            "5m": self.checkpoints_5m_csv,
+            "15m": self.checkpoints_15m_csv,
+            "1h": self.checkpoints_1h_csv,
+        }.get(horizon, self.snapshot_checkpoints_csv)
+        out = [int(t.strip()) for t in csv.split(",") if t.strip().isdigit()]
         return sorted(set(out), reverse=True)
 
 

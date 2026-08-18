@@ -31,9 +31,12 @@ from models import (
     Asset,
     AssetHorizon,
     Decision,
+    DiscoveryStatus,
     Horizon,
+    LabelStatus,
     MarketRef,
     ResolutionType,
+    TimeStatus,
 )
 
 log = logging.getLogger("direction_engine.discovery")
@@ -60,6 +63,55 @@ def build_slug(asset: Asset, horizon: Horizon, window_unix: int) -> str:
     return f"{asset.value.lower()}-updown-{horizon.value}-{window_unix}"
 
 
+def parse_slug_unix(slug: str) -> Optional[int]:
+    """slug'daki pencere unix'i (canonical market_start). Yoksa None."""
+    if not slug:
+        return None
+    m = _SLUG_RE.search(slug.lower())
+    if not m:
+        return None
+    try:
+        return int(m.group(3))
+    except (ValueError, TypeError):
+        return None
+
+
+def canonical_time(
+    combo: AssetHorizon, slug: str, meta_start: float, meta_end: float
+) -> tuple[Optional[float], Optional[float], TimeStatus]:
+    """Canonical market_start/end + time_status uret.
+
+    5m/15m: slug-unix OTORİTER (market_start=unix, market_end=unix+horizon). Generic
+    endDate yalnız cross-check (buyuk sapma -> WARNING, UNSAFE DEGIL). slug-unix yoksa
+    5m/15m icin UNSAFE_TIME_METADATA. 1h: slug-unix varsa o, yoksa metadata; canonical
+    sure horizon'a uymuyorsa UNSAFE.
+    """
+    horizon_sec = combo.horizon.seconds
+    slug_unix = parse_slug_unix(slug)
+    if slug_unix:
+        start = float(slug_unix)
+        end = float(slug_unix + horizon_sec)
+        if meta_end > 0 and abs(meta_end - end) > 120:
+            log.warning(
+                "%s canonical/endDate uyusmuyor (canon_end=%.0f meta_end=%.0f) -> canonical'a guveniliyor",
+                slug, end, meta_end,
+            )
+        return start, end, TimeStatus.OK
+    # slug-unix yok
+    if combo.horizon in (Horizon.H5M, Horizon.H15M):
+        # 5m/15m'de slug-unix sart; yoksa metadata guvenilmez
+        return (meta_start or None), (meta_end or None), TimeStatus.UNSAFE_TIME_METADATA
+    # 1h: metadata start/end
+    if meta_end <= 0:
+        return None, None, TimeStatus.UNSAFE_TIME_METADATA
+    start = meta_start if meta_start > 0 else (meta_end - horizon_sec)
+    end = meta_end
+    # canonical sure horizon'a makul uymali
+    if abs((end - start) - horizon_sec) > max(120, 0.25 * horizon_sec):
+        return start, end, TimeStatus.UNSAFE_TIME_METADATA
+    return start, end, TimeStatus.OK
+
+
 def match_combo(text: str) -> Optional[AssetHorizon]:
     """slug/title icinden AssetHorizon cikar. Eslesme yoksa None."""
     if not text:
@@ -83,11 +135,12 @@ def _more_current(new: "MarketRef", cur: "MarketRef", now: float) -> bool:
     Kisa-vade rolling marketlerde 'en gec biten' YANLIS secim; o anda ACIK olan
     (start<=now<end) ve en yakin kapanan pencere dogru olandir.
     """
-    new_open = new.start_ts <= now
-    cur_open = cur.start_ts <= now
+    new_open = (new.market_start_ts or new.start_ts) <= now
+    cur_open = (cur.market_start_ts or cur.start_ts) <= now
     if new_open != cur_open:
         return new_open  # o an acik olani tercih et
-    return new.end_ts < cur.end_ts  # ayni sinif -> en yakin kapanan
+    # ayni sinif -> canonical end en yakin kapanan
+    return (new.market_end_ts or new.end_ts) < (cur.market_end_ts or cur.end_ts)
 
 
 def classify_resolution(source_text: str, horizon: Horizon) -> ResolutionType:
@@ -102,12 +155,57 @@ def classify_resolution(source_text: str, horizon: Horizon) -> ResolutionType:
     if not t.strip():
         return ResolutionType.UNKNOWN
     if "chainlink" in t:
+        # TWAP (time-weighted) ayri tip -> pencere+gozlem ani saklanir
+        if "twap" in t or "time-weighted" in t or "time weighted" in t:
+            return ResolutionType.CHAINLINK_TWAP
         return ResolutionType.CHAINLINK
     if "binance" in t:
         return ResolutionType.BINANCE_CANDLE
     if "uma" in t or "optimistic oracle" in t or "optimistic-oracle" in t:
         return ResolutionType.UMA
     return ResolutionType.UNKNOWN
+
+
+def parse_official_result(
+    market: dict, up_token_id: str = "", down_token_id: str = ""
+) -> tuple[Optional[Decision], str]:
+    """**Explicit official** resolution -> (Decision, kaynak_notu).
+
+    Oncelik: (1) explicit winner outcome adi, (2) winning asset/token id -> up/down
+    eslesme, (3) explicit resolution STATUS (umaResolutionStatus/resolved) onaylıysa
+    outcomePrices'tan turet. Hicbiri yoksa (None, "none") — labeled sayma.
+    Gamma `outcomePrices` TEK BASINA official DEGIL; yalniz status onayiyla gecerli.
+    """
+    if not isinstance(market, dict):
+        return None, "none"
+    # 1) explicit winner outcome adi
+    for k in ("winning_outcome", "winningOutcome", "winner"):
+        v = market.get(k)
+        if isinstance(v, str) and v.strip():
+            name = v.strip().lower()
+            if name in ("up", "yes"):
+                return Decision.UP, "winning_outcome"
+            if name in ("down", "no"):
+                return Decision.DOWN, "winning_outcome"
+    # 2) winning asset/token id -> up/down token eslesme
+    for k in ("winning_asset_id", "winningTokenId", "winning_token_id", "resolvedTokenId"):
+        v = market.get(k)
+        if v is not None and str(v).strip():
+            s = str(v).strip()
+            if up_token_id and s == up_token_id:
+                return Decision.UP, "winning_asset_id"
+            if down_token_id and s == down_token_id:
+                return Decision.DOWN, "winning_asset_id"
+    # 3) explicit resolution status onayi + outcomePrices
+    status = str(
+        market.get("umaResolutionStatus") or market.get("resolutionStatus") or ""
+    ).lower()
+    resolved_flag = bool(market.get("resolved")) or "resolved" in status
+    if resolved_flag:
+        oc = parse_resolved_outcome(market)  # outcomePrices
+        if oc is not None:
+            return oc, "resolved_status+outcomePrices"
+    return None, "none"
 
 
 def extract_resolution_source(market: dict, event: Optional[dict] = None) -> str:
@@ -199,14 +297,21 @@ def parse_event_markets(
         return None
     up_idx, down_idx = _up_down_indices(outcomes)
 
-    end_ts = _iso_to_ts(gm.get("endDate")) or _iso_to_ts(event.get("endDate"))
-    if end_ts <= 0:
-        return None
-    start_ts = (
+    # HAM metadata zaman (cross-check icin)
+    meta_end = _iso_to_ts(gm.get("endDate")) or _iso_to_ts(event.get("endDate"))
+    meta_start = (
         _iso_to_ts(gm.get("startDate"))
         or _iso_to_ts(event.get("startDate"))
-        or (end_ts - combo.horizon.seconds)
+        or (meta_end - combo.horizon.seconds if meta_end > 0 else 0.0)
     )
+    the_slug = slug or str(gm.get("slug", ""))
+    # CANONICAL zaman (5m/15m slug-unix OTORİTER)
+    market_start, market_end, time_status = canonical_time(
+        combo, the_slug, meta_start, meta_end
+    )
+    if market_end is None or market_start is None:
+        # canonical zaman hic kurulamadi -> market yerlestirilemez
+        return None
 
     source = extract_resolution_source(gm, event)
     rtype = classify_resolution(source, combo.horizon)
@@ -214,12 +319,15 @@ def parse_event_markets(
     return MarketRef(
         combo=combo,
         condition_id=str(gm.get("conditionId", "")),
-        slug=slug or str(gm.get("slug", "")),
+        slug=the_slug,
         question=str(gm.get("question") or event.get("title", "")),
         up_token_id=str(token_ids[up_idx]),
         down_token_id=str(token_ids[down_idx]),
-        start_ts=start_ts,
-        end_ts=end_ts,
+        start_ts=meta_start,
+        end_ts=meta_end,
+        market_start_ts=market_start,
+        market_end_ts=market_end,
+        time_status=time_status,
         resolution_source=source,
         resolution_type=rtype,
     )
@@ -282,12 +390,20 @@ class MarketDiscovery:
         self._on_resolved: list[Callable[[MarketRef], None]] = []
         self._lock = asyncio.Lock()
         self.last_discovery_ts: float = 0.0
+        # combo.key -> DiscoveryStatus (generic 'YOK' yerine 4 durum)
+        self.status: dict[str, DiscoveryStatus] = {
+            c.key: DiscoveryStatus.NOT_FOUND for c in combos
+        }
+        self.discovery_errors: int = 0
 
     def on_resolved(self, cb: Callable[[MarketRef], None]) -> None:
         self._on_resolved.append(cb)
 
     def snapshot_active(self) -> dict[str, MarketRef]:
         return dict(self.active)
+
+    def snapshot_status(self) -> dict[str, str]:
+        return {k: v.value for k, v in self.status.items()}
 
     async def _fetch_json(self, url: str, params: Optional[dict] = None) -> object:
         async with self._session.get(url, params=params, timeout=12) as resp:
@@ -330,8 +446,8 @@ class MarketDiscovery:
             if combo is None or combo.key not in wanted:
                 continue
             ref = parse_event_markets(ev, combo)
-            if ref is None or ref.end_ts <= now:
-                continue  # bitmis pencereyi alma
+            if ref is None or ref.remaining_sec(now) <= 0:
+                continue  # bitmis pencereyi alma (canonical)
             # ayni combo icin O ANKI (aktif/en yakin) pencereyi sec — en gec biteni DEGIL
             cur = found.get(combo.key)
             if cur is None or _more_current(ref, cur, now):
@@ -340,6 +456,8 @@ class MarketDiscovery:
 
     async def discover_once(self) -> None:
         found: dict[str, MarketRef] = {}
+        errored: set[str] = set()
+        now = time.time()
         # 1) 5m/15m: fast path ONCE — deterministik O ANKI pencere (guvenilir)
         for combo in self.combos:
             if combo.horizon in (Horizon.H5M, Horizon.H15M):
@@ -348,11 +466,20 @@ class MarketDiscovery:
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
+                    self.discovery_errors += 1
+                    errored.add(combo.key)
                     ref = None
-                if ref is not None and ref.remaining_sec() > 0:
+                if ref is not None and ref.remaining_sec(now) > 0:
                     found[combo.key] = ref
         # 2) active-event discovery: 1h + fast path'in bulamadigi combo'lar
-        ae = await self._active_event_discovery()
+        try:
+            ae = await self._active_event_discovery()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            self.discovery_errors += 1
+            ae = {}
+            errored.update(c.key for c in self.combos if c.key not in found)
         for key, ref in ae.items():
             if key not in found:
                 found[key] = ref
@@ -360,6 +487,7 @@ class MarketDiscovery:
             for key, ref in found.items():
                 prev = self.active.get(key)
                 self.active[key] = ref
+                self.status[key] = DiscoveryStatus.FOUND
                 if ref.condition_id:
                     self._tracked[ref.condition_id] = ref
                 if not ref.has_resolution_meta:
@@ -369,20 +497,33 @@ class MarketDiscovery:
                     )
                 if prev is None or prev.condition_id != ref.condition_id:
                     log.info(
-                        "AKTIF market %s slug=%s resolve=%s kalan=%.0fs",
-                        key,
-                        ref.slug,
-                        ref.resolution_type.value,
-                        ref.remaining_sec(),
+                        "AKTIF market %s slug=%s resolve=%s canon_kalan=%.0fs time=%s",
+                        key, ref.slug, ref.resolution_type.value,
+                        ref.remaining_sec(now), ref.time_status.value,
                     )
+            # bulunmayan combo'lar: hata mi, gercekten yok mu
+            for combo in self.combos:
+                if combo.key in found:
+                    continue
+                self.active.pop(combo.key, None)
+                self.status[combo.key] = (
+                    DiscoveryStatus.DISCOVERY_ERROR
+                    if combo.key in errored
+                    else DiscoveryStatus.NOT_FOUND
+                )
             self.last_discovery_ts = time.time()
 
     async def _poll_resolutions(self) -> None:
-        """Izlenen kapanmis marketlerin RESMI sonucunu yokla; on_resolved tetikle."""
+        """Kapanmis marketlerin **EXPLICIT official** sonucunu yokla; on_resolved tetikle.
+
+        official = explicit resolution metadata (winning_outcome/asset_id/status). Gamma
+        outcomePrices yalniz **sanity-check** (label_status). official yoksa beklemeye devam.
+        """
+        now = time.time()
         pending = [
             ref
             for cid, ref in list(self._tracked.items())
-            if cid and cid not in self._resolved_seen and ref.remaining_sec() < 30
+            if cid and cid not in self._resolved_seen and ref.remaining_sec(now) < 30
         ]
         for ref in pending:
             url = f"{self.settings.gamma_host}/markets"
@@ -394,19 +535,78 @@ class MarketDiscovery:
                 market = data
             if not isinstance(market, dict):
                 continue
-            outcome = parse_resolved_outcome(market)
-            if outcome is None:
-                continue
+            official, note = parse_official_result(
+                market, ref.up_token_id, ref.down_token_id
+            )
+            if official is None:
+                continue  # explicit official yok -> bekle (labeled sayma)
+            sanity = parse_resolved_outcome(market)  # outcomePrices (sanity-check)
+            if sanity is not None and sanity != official:
+                ref.label_status = LabelStatus.MISMATCH
+            else:
+                ref.label_status = LabelStatus.MATCH
             ref.resolved = True
-            ref.resolved_outcome = outcome
+            ref.official_result = official
+            ref.resolved_outcome = official  # geriye uyum
             self._resolved_seen.add(ref.condition_id)
             self.resolved_log.appendleft(ref)
-            log.info("RESOLVED %s -> %s (resmi)", ref.combo.key, outcome.value)
+            log.info(
+                "RESOLVED %s -> %s (official via %s, label=%s)",
+                ref.combo.key, official.value, note, ref.label_status.value,
+            )
             for cb in self._on_resolved:
                 try:
                     cb(ref)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("on_resolved callback hatasi: %s", exc)
+
+    async def backfill_resolved(self, n: int, sink: Callable[[MarketRef], None]) -> int:
+        """Son N resolved *supported* market'i cek, EXPLICIT official ile `sink`e ver.
+
+        Yalniz market + resolution + label pipeline testi. **Snapshot/feature URETMEZ.**
+        """
+        loaded = 0
+        url = f"{self.settings.gamma_host}/events"
+        params = {
+            "closed": "true", "limit": str(max(50, n * 10)),
+            "order": "endDate", "ascending": "false",
+        }
+        data = await self._fetch_json(url, params)
+        if not isinstance(data, list):
+            return 0
+        wanted = {c.key for c in self.combos}
+        for ev in data:
+            if loaded >= n:
+                break
+            if not isinstance(ev, dict):
+                continue
+            combo = match_combo(str(ev.get("slug", ""))) or match_combo(str(ev.get("title", "")))
+            if combo is None or combo.key not in wanted:
+                continue
+            markets = ev.get("markets") or []
+            gm = markets[0] if markets else None
+            if not isinstance(gm, dict):
+                continue
+            ref = parse_event_markets({**ev, "markets": [gm]}, combo)
+            if ref is None:
+                continue
+            official, note = parse_official_result(gm, ref.up_token_id, ref.down_token_id)
+            if official is None:
+                continue
+            sanity = parse_resolved_outcome(gm)
+            ref.label_status = (
+                LabelStatus.MISMATCH if (sanity is not None and sanity != official)
+                else LabelStatus.MATCH
+            )
+            ref.resolved = True
+            ref.official_result = official
+            ref.resolved_outcome = official
+            try:
+                sink(ref)
+                loaded += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("backfill sink hatasi: %s", exc)
+        return loaded
 
     async def run(self, stop: asyncio.Event) -> None:
         last_res = 0.0

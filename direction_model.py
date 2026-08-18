@@ -181,6 +181,13 @@ class DirectionModel:
         confidence = 2.0 * abs(p_clob - 0.5)
         return ModelOutput(p_clob, confidence, True, source, p_noclob)
 
+    def ready_for(self, combo_key: str) -> bool:
+        """fv olmadan: bu combo icin (per-combo veya shared) CLOB'lu model hazir mi."""
+        cm = self.with_clob.per_combo.get(combo_key)
+        if cm is not None and cm.n_markets >= self.with_clob.per_combo_min and cm.ready:
+            return True
+        return self.with_clob.shared.ready
+
     def stats(self) -> dict:
         return {
             "with_clob": self.with_clob.stats(),

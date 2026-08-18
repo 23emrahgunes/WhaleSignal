@@ -64,15 +64,16 @@ class DataHub:
         now = time.time() if now is None else now
         feed = self.binance.get_feed(ref.combo.binance_symbol)
         spot, spot_age = (None, None)
-        book_age = None
+        book_age = transport_age = source_age = None
         if feed is not None:
             spot, spot_age = feed.spot_price()
             book_age = feed.book_age_ms()
+            transport_age = feed.transport_age_ms()
+            source_age = feed.source_event_age_ms()
 
-        rp = self.reference_cache.get(ref.condition_id)
-        reference_price = getattr(rp, "price", None) if rp is not None else None
-        # PTB sabit bir capa: mevcutsa daima "taze" (0), yoksa None (eksik)
-        reference_age = 0.0 if reference_price else None
+        # PTB = market'e sabitlenen reference_open (resolution-tipine gore). Sabit capa.
+        reference_price = ref.reference_open
+        reference_age = 0.0 if reference_price is not None else None
 
         distance_usd = None
         distance_bps = None
@@ -80,30 +81,46 @@ class DataHub:
             distance_usd = spot - reference_price
             distance_bps = (distance_usd / reference_price) * 10000.0
 
+        # CLOB: up VE down token'in gercek bid/ask/mid. **0.505 fallback YOK** —
+        # bid/ask yoksa None. token_id -> market_id reverse index (store token-anahtarli).
         up_q = self.clob_store.get(ref.up_token_id)
         down_q = self.clob_store.get(ref.down_token_id)
-        up_mid = up_q.mid if up_q else None
+        up_bid = up_q.best_bid if up_q else None
+        up_ask = up_q.best_ask if up_q else None
+        up_mid = up_q.mid if up_q else None  # ClobQuote.mid None-guard'li
+        down_bid = down_q.best_bid if down_q else None
+        down_ask = down_q.best_ask if down_q else None
         down_mid = down_q.mid if down_q else None
         clob_spread = None
         clob_age = None
         if up_q is not None:
-            if up_q.best_bid is not None and up_q.best_ask is not None:
-                clob_spread = up_q.best_ask - up_q.best_bid
+            if up_bid is not None and up_ask is not None:
+                clob_spread = up_ask - up_bid
             clob_age = max(0.0, now * 1000 - up_q.ts * 1000)
 
+        tte = ref.remaining_sec(now)
         return FeatureSnapshot(
             combo=ref.combo,
             ts=now,
-            seconds_remaining=ref.remaining_sec(now),
+            seconds_remaining=tte,
+            market_start=ref.market_start_ts,
+            market_end=ref.market_end_ts,
+            tte_sec=tte,
             spot_price=spot,
             reference_price=reference_price,
             distance_usd=distance_usd,
             distance_bps=distance_bps,
+            up_bid=up_bid,
+            up_ask=up_ask,
             up_mid=up_mid,
+            down_bid=down_bid,
+            down_ask=down_ask,
             down_mid=down_mid,
             clob_spread=clob_spread,
             spot_age_ms=spot_age,
             book_age_ms=book_age,
+            transport_age_ms=transport_age,
+            source_age_ms=source_age,
             clob_age_ms=clob_age,
             reference_age_ms=reference_age,
         )

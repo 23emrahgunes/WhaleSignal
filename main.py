@@ -33,12 +33,13 @@ from hub import DataHub
 from models import (
     AssetHorizon,
     Decision,
+    LabelStatus,
     Prediction,
     Regime,
     AbstainReason,
     all_combos,
 )
-from quality import check_freshness
+from quality import assess, check_freshness
 from recorder import Recorder
 from reference import ReferenceRouter
 from regime import classify_regime
@@ -95,26 +96,41 @@ class ShadowEngine:
         self.recorder = recorder
         self.model = model
         self.calib = calib
-        self.checkpoints = cfg.snapshot_checkpoints()
+        # canonical state: hepsi market_id (condition_id) anahtarli
         self._recorded_markets: set[str] = set()
-        self._fired: dict[str, set[int]] = {}
-        self._feature_engines: dict[str, FeatureEngine] = {}
-        self._combo_market: dict[str, str] = {}  # combo_key -> aktif condition_id
-        self._acc: dict[str, _MarketAcc] = {}  # condition_id -> accumulator
+        self._fired: dict[str, set[int]] = {}  # market_id -> yazilmis checkpoint'ler
+        self._prev_tte: dict[str, float] = {}  # market_id -> onceki TTE (edge-crossing)
+        self._feature_engines: dict[str, FeatureEngine] = {}  # combo.key (asset feed shared)
+        self._combo_market: dict[str, str] = {}  # combo_key -> aktif market_id
+        self._acc: dict[str, _MarketAcc] = {}  # market_id -> accumulator
+        self._token_market: dict[str, str] = {}  # token_id -> market_id (reverse index)
         self.latest: dict[str, dict] = {}
         self.events: deque[dict] = deque(maxlen=100)
         self.started_at = time.time()
         self._resolve_count = 0
+        self._data_quality_errors = 0
 
     def _event(self, kind: str, detail: str) -> None:
         self.events.appendleft({"ts": time.time(), "kind": kind, "detail": detail})
 
     def _maybe_record_market(self, ref) -> None:  # noqa: ANN001
-        if ref.condition_id and ref.condition_id not in self._recorded_markets:
+        mid = ref.market_id
+        # token -> market_id reverse index (CLOB dogru instance'a yonlensin)
+        if ref.up_token_id:
+            self._token_market[ref.up_token_id] = mid
+        if ref.down_token_id:
+            self._token_market[ref.down_token_id] = mid
+        if mid and mid not in self._recorded_markets:
             self.recorder.record_market(ref)
-            self._recorded_markets.add(ref.condition_id)
-            self._acc[ref.condition_id] = _MarketAcc(ref.combo.key)
-            self._event("MARKET", f"{ref.combo.key} {ref.resolution_type.value}")
+            self._recorded_markets.add(mid)
+            self._acc[mid] = _MarketAcc(ref.combo.key)
+            self._event(
+                "MARKET",
+                f"{ref.combo.key} {ref.resolution_type.value} time={ref.time_status.value}",
+            )
+
+    def token_market_index(self) -> dict[str, str]:
+        return dict(self._token_market)
 
     def _feature_engine(self, ref) -> FeatureEngine:  # noqa: ANN001
         fe = self._feature_engines.get(ref.combo.key)
@@ -122,45 +138,65 @@ class ShadowEngine:
             fe = FeatureEngine(ref.combo)
             self._feature_engines[ref.combo.key] = fe
         # market degistiyse market-bazli durumu sifirla (PTB slope/CLOB trajectory)
-        if self._combo_market.get(ref.combo.key) != ref.condition_id:
+        if self._combo_market.get(ref.combo.key) != ref.market_id:
             fe.on_market_change()
-            self._combo_market[ref.combo.key] = ref.condition_id
+            self._combo_market[ref.combo.key] = ref.market_id
         return fe
 
-    def _checkpoint_crossed(self, ref, seconds_remaining: float) -> Optional[int]:  # noqa: ANN001
-        fired = self._fired.setdefault(ref.condition_id, set())
-        for cp in self.checkpoints:
-            if seconds_remaining <= cp and cp not in fired:
+    def _checkpoint_crossed(self, ref, tte: float) -> Optional[int]:  # noqa: ANN001
+        """EDGE-CROSSING: cp yalniz `prev_tte > cp >= tte` gecisinde tetiklenir.
+
+        Mid-window join'de (prev_tte yok) yuksek cp'ler BACKFILL EDILMEZ; yalniz o
+        andan sonraki gecisler yazilir."""
+        mid = ref.market_id
+        prev = self._prev_tte.get(mid)
+        self._prev_tte[mid] = tte
+        if prev is None:
+            return None  # ilk gozlem: referans al, backfill etme
+        fired = self._fired.setdefault(mid, set())
+        for cp in self.cfg.checkpoints_for(ref.combo.horizon.value):
+            if prev > cp >= tte and cp not in fired:
                 fired.add(cp)
                 return cp
         return None
 
     def _decide(self, ref, snap, q, fv):  # noqa: ANN001
-        """quality -> regime -> model. Prediction dondurur."""
+        """7-boyut quality -> (prediction_ready ise) regime -> model. Prediction dondurur.
+
+        P1'de model egitilmedigi icin prediction_ready False -> ABSTAIN(MODEL_NOT_TRAINED).
+        Diger eksiklerde de q.abstain_reason (UNSAFE_TIME/CLOB_MISSING/PTB_MISSING/...).
+        """
         combo = ref.combo
-        market_up = snap.up_mid
-        if not q.ok:
+        market_up = snap.up_mid  # gercek up_mid (yoksa None; 0.505 YOK)
+        # HEURISTIC predictability (P1'de model degil) — fv varsa hesapla
+        reg = classify_regime(fv) if fv is not None else None
+        predictability = reg.predictability if reg is not None else 0.0
+
+        if not q.prediction_ready:
+            reasons = list(q.notes)
+            if reg is not None:
+                reasons.append(f"rejim(HEURISTIC)={reg.regime.value} p={predictability:.2f}")
             return Prediction(
                 combo=combo, ts=snap.ts, decision=Decision.ABSTAIN,
-                abstain_reason=q.reason, regime=Regime.UNKNOWN,
-                reasons=q.notes, market_implied_up=market_up,
+                abstain_reason=q.abstain_reason, predictability=predictability,
+                regime=(reg.regime if reg else Regime.UNKNOWN), reasons=reasons,
+                market_implied_up=market_up,
             )
-        reg = classify_regime(fv)
-        if reg.abstain:
+        # buraya gelindiyse: time/market/tokens/clob/reference/clock/model OK
+        if reg is not None and reg.abstain:
             return Prediction(
                 combo=combo, ts=snap.ts, decision=Decision.ABSTAIN,
                 abstain_reason=reg.abstain_reason, regime=reg.regime,
-                predictability=reg.predictability, reasons=reg.reasons,
+                predictability=predictability, reasons=reg.reasons,
                 market_implied_up=market_up,
             )
         mo = self.model.predict(combo.key, fv)
         if not mo.ready or mo.p_up is None:
             return Prediction(
                 combo=combo, ts=snap.ts, decision=Decision.ABSTAIN,
-                abstain_reason=AbstainReason.INSUFFICIENT_DATA, regime=reg.regime,
-                predictability=reg.predictability,
-                reasons=["model ogrenme asamasinda"] + reg.reasons,
-                market_implied_up=market_up,
+                abstain_reason=AbstainReason.MODEL_NOT_TRAINED,
+                regime=(reg.regime if reg else Regime.UNKNOWN),
+                predictability=predictability, market_implied_up=market_up,
             )
         p_up = mo.p_up
         if p_up > 0.5 + DECISION_MARGIN:
@@ -174,7 +210,7 @@ class ShadowEngine:
         )
         return Prediction(
             combo=combo, ts=snap.ts, p_up=p_up, p_down=1.0 - p_up,
-            confidence=mo.confidence, predictability=reg.predictability,
+            confidence=mo.confidence, predictability=predictability,
             regime=reg.regime, decision=decision, abstain_reason=reason,
             reasons=why, market_implied_up=market_up,
         )
@@ -192,49 +228,50 @@ class ShadowEngine:
     def tick(self) -> None:
         active = self.hub.discovery.snapshot_active()
         now = time.time()
+        clock_synced = self.hub.binance.clock_synced
         present_keys = set()
         for key, ref in active.items():
             present_keys.add(key)
             self._maybe_record_market(ref)
             snap = self.hub.build_snapshot(ref, now)
-            q = check_freshness(snap, self.cfg)
+            model_ready = self.model.ready_for(ref.combo.key)
+            q = assess(ref, snap, self.cfg, now, clock_synced, model_ready)
+            snap.quality_status = "OK" if q.prediction_ready else q.abstain_reason.value
+            snap.prediction_ready = q.prediction_ready
+            if q.abstain_reason in (
+                AbstainReason.UNSAFE, AbstainReason.UNSAFE_TIME_METADATA
+            ):
+                self._data_quality_errors += 1
 
+            # feature'lar yalniz snapshot_recordable (time+market+tokens+feed OK) iken
             fv = None
-            if q.ok:
+            if q.snapshot_recordable:
                 fe = self._feature_engine(ref)
                 feed = self.hub.binance.get_feed(ref.combo.binance_symbol)
-                prices = list(feed.prices) if feed else []
-                trades = list(feed.trades) if feed else []
                 book = feed.book if feed else None
                 if book is not None:
                     fv = fe.update(
-                        prices, trades, book, snap.reference_price,
-                        snap.up_mid, snap.down_mid, snap.seconds_remaining, now,
+                        list(feed.prices), list(feed.trades), book, snap.reference_price,
+                        snap.up_mid, snap.down_mid, snap.tte_sec or snap.seconds_remaining, now,
                     )
 
-            if fv is not None:
-                pred = self._decide(ref, snap, q, fv)
-            else:
-                pred = Prediction(
-                    combo=ref.combo, ts=now, decision=Decision.ABSTAIN,
-                    abstain_reason=(q.reason if not q.ok else AbstainReason.INSUFFICIENT_DATA),
-                    regime=Regime.UNKNOWN, reasons=q.notes, market_implied_up=snap.up_mid,
-                )
+            pred = self._decide(ref, snap, q, fv)
 
-            # checkpoint: dataset kaydi (feature extra) + egitim accumulator
-            if q.ok and fv is not None:
-                cp = self._checkpoint_crossed(ref, snap.seconds_remaining)
+            # checkpoint edge-crossing: ham row (feature extra) + egitim accumulator.
+            # UNSAFE_TIME ise snapshot_recordable False -> hic yazilmaz.
+            if q.snapshot_recordable:
+                cp = self._checkpoint_crossed(ref, snap.tte_sec or snap.seconds_remaining)
                 if cp is not None:
-                    snap.extra = fv.to_dict()
+                    if fv is not None:
+                        snap.extra = fv.to_dict()
                     self.recorder.record_snapshot(ref, snap, cp)
-                    acc = self._acc.get(ref.condition_id)
-                    if acc is not None:
+                    acc = self._acc.get(ref.market_id)
+                    if acc is not None and fv is not None:
                         acc.fvs.append(fv)
-                    self._event("SNAPSHOT", f"{ref.combo.key} @ t-{cp}s")
+                    self._event("SNAPSHOT", f"{ref.combo.key} @ t-{cp}s q={snap.quality_status}")
 
-            # son ABSTAIN-olmayan tahmini kalibrasyon icin sakla
             if pred.decision != Decision.ABSTAIN:
-                acc = self._acc.get(ref.condition_id)
+                acc = self._acc.get(ref.market_id)
                 if acc is not None:
                     acc.last_pred = {
                         "p_up": pred.p_up,
@@ -251,13 +288,19 @@ class ShadowEngine:
         self._prune_acc()
 
     def on_market_resolved(self, ref) -> None:  # noqa: ANN001
-        """discovery callback: RESMI resolve -> etiket + model ogrenimi + kalibrasyon."""
-        self.recorder.settle(ref)
-        if ref.resolved_outcome is None:
+        """discovery callback: EXPLICIT official resolve -> computed audit + etiket +
+        (etiket MISMATCH degilse) model ogrenimi + kalibrasyon."""
+        official = ref.official_result or ref.resolved_outcome
+        if official is None:
             return
-        label_up = 1 if ref.resolved_outcome == Decision.UP else 0
-        acc = self._acc.get(ref.condition_id)
-        if acc is not None and acc.fvs:
+        # computed_result (yerel audit): son snapshot spot vs reference_open
+        ref.computed_result = self._compute_result(ref)
+        self.recorder.settle(ref)
+        label_up = 1 if official == Decision.UP else 0
+        acc = self._acc.get(ref.market_id)
+        # MISMATCH -> training-disi (model ogrenmez)
+        trainable = ref.label_status != LabelStatus.MISMATCH
+        if trainable and acc is not None and acc.fvs:
             self.model.learn_with_label(ref.combo.key, acc.fvs, label_up)
         # kalibrasyon ornegi
         lp = acc.last_pred if acc else None
@@ -271,7 +314,10 @@ class ShadowEngine:
             self.calib.record(ref.combo.key, CalSample(
                 decided=False, outcome_up=(label_up == 1)))
         self._resolve_count += 1
-        self._event("RESOLVED", f"{ref.combo.key} -> {ref.resolved_outcome.value}")
+        self._event(
+            "RESOLVED",
+            f"{ref.combo.key} official={official.value} label={ref.label_status.value}",
+        )
         # modeli kalici yap
         try:
             os.makedirs(os.path.dirname(MODEL_PATH) or ".", exist_ok=True)
@@ -279,76 +325,137 @@ class ShadowEngine:
         except Exception as exc:  # noqa: BLE001
             log.warning("model kaydedilemedi: %s", exc)
         # accumulator temizle
-        self._acc.pop(ref.condition_id, None)
+        self._acc.pop(ref.market_id, None)
+
+    def _compute_result(self, ref) -> Optional[Decision]:  # noqa: ANN001
+        """Yerel audit: kapanis spot vs reference_open (official DEGIL, yalniz kiyas)."""
+        if ref.reference_open is None:
+            return None
+        feed = self.hub.binance.get_feed(ref.combo.binance_symbol)
+        spot = None
+        if feed is not None:
+            spot, _ = feed.spot_price()
+        if spot is None:
+            return None
+        return Decision.UP if spot >= ref.reference_open else Decision.DOWN
 
     def _prune_acc(self) -> None:
         if len(self._acc) <= 600:
             return
-        # en eski girisleri at (resolve olmayan artiklar)
         for cid in sorted(self._acc, key=lambda c: self._acc[c].created)[:100]:
             self._acc.pop(cid, None)
 
     def _card(self, ref, snap, q, pred, fv) -> dict:  # noqa: ANN001
-        card = {
+        def r(x, n=3):
+            return round(x, n) if x is not None else None
+        return {
             "combo": ref.combo.key,
             "active": True,
+            # --- debug kimligi (BTC5m != BTC15m gozle dogrula) ---
+            "market_id": (ref.market_id or "")[-8:],
             "slug": ref.slug,
+            "condition_id": (ref.condition_id or "")[-8:],
+            "up_token": (ref.up_token_id or "")[-8:],
+            "down_token": (ref.down_token_id or "")[-8:],
+            # --- zaman ---
+            "tte_sec": r(snap.tte_sec, 1),
+            "time_status": ref.time_status.value,
+            # --- reference / PTB ---
             "resolution_type": ref.resolution_type.value,
             "resolution_meta_ok": ref.has_resolution_meta,
-            "seconds_remaining": round(snap.seconds_remaining, 1),
-            "spot_price": snap.spot_price,
-            "reference_price": snap.reference_price,
-            "distance_bps": round(snap.distance_bps, 2) if snap.distance_bps is not None else None,
-            "up_mid": snap.up_mid,
-            "down_mid": snap.down_mid,
-            "freshness": {
-                "ok": q.ok,
-                "spot_age_ms": round(snap.spot_age_ms, 0) if snap.spot_age_ms is not None else None,
-                "book_age_ms": round(snap.book_age_ms, 0) if snap.book_age_ms is not None else None,
-                "notes": q.notes,
-            },
+            "reference_open": r(ref.reference_open, 2),
+            "spot_price": r(snap.spot_price, 2),
+            "distance_bps": r(snap.distance_bps, 2),
+            # --- CLOB (up/down bid/ask/mid; 0.505 YOK) ---
+            "up_bid": r(snap.up_bid), "up_ask": r(snap.up_ask), "up_mid": r(snap.up_mid),
+            "down_bid": r(snap.down_bid), "down_ask": r(snap.down_ask), "down_mid": r(snap.down_mid),
+            "clob_age_ms": r(snap.clob_age_ms, 0),
+            # --- ayrisik yaslar ---
+            "transport_age_ms": r(snap.transport_age_ms, 0),
+            "source_age_ms": r(snap.source_age_ms, 0),
+            "book_age_ms": r(snap.book_age_ms, 0),
+            # --- 7 boyut quality + prediction_ready ---
+            "quality": q.dims(),
+            "prediction_ready": q.prediction_ready,
+            "quality_notes": q.notes,
+            # --- karar (P1: heuristic/model_not_trained) ---
             "decision": pred.decision.value,
             "abstain_reason": pred.abstain_reason.value,
             "regime": pred.regime.value,
-            "predictability": round(pred.predictability, 3),
-            "p_up": round(pred.p_up, 4),
-            "confidence": round(pred.confidence, 3),
-            "price_edge": round(pred.price_edge, 4) if pred.price_edge is not None else None,
+            "predictability_heuristic": r(pred.predictability, 3),
+            "p_up": r(pred.p_up, 4),
+            "confidence": r(pred.confidence, 3),
             "why": pred.reasons,
         }
-        return card
 
     def snapshot(self) -> dict:
         combos = build_combos(self.cfg)
+        status = self.hub.discovery.snapshot_status()
         cards = []
+        up_mids: list[float] = []
+        clob_healthy = ptb_healthy = 0
         for combo in combos:
             card = self.latest.get(combo.key)
-            if card is None:
+            if card is None or not card.get("active"):
                 card = {
                     "combo": combo.key, "active": False,
+                    "discovery_status": status.get(combo.key, "NOT_FOUND"),
                     "decision": Decision.ABSTAIN.value,
                     "abstain_reason": AbstainReason.NO_MARKET.value,
-                    "why": ["market kesfedilmedi (YOK)"],
+                    "why": [f"discovery={status.get(combo.key, 'NOT_FOUND')}"],
                 }
+            else:
+                card["discovery_status"] = status.get(combo.key, "FOUND")
+                if card.get("up_mid") is not None:
+                    up_mids.append(card["up_mid"])
+                    clob_healthy += 1
+                if card.get("reference_open") is not None:
+                    ptb_healthy += 1
             cards.append(card)
+
+        # SUSPICIOUS_IDENTICAL_QUOTES: >=3 aktif markette ayni up_mid
+        suspicious = False
+        if len(up_mids) >= 3:
+            from collections import Counter
+            most = Counter(round(m, 3) for m in up_mids).most_common(1)[0]
+            suspicious = most[1] >= 3
+
+        rec = self.recorder.stats()
         return {
             "now": time.time(),
             "uptime_sec": round(time.time() - self.started_at, 1),
             "mode": "SHADOW",
-            "phase": "P2",
+            "phase": "P1-hardened",
             "cards": cards,
-            "recorder": self.recorder.stats(),
+            "recorder": rec,
             "model": self.model.stats(),
             "calibration": self.calib.summary(),
             "min_markets_for_stats": self.cfg.min_markets_for_stats,
             "events": list(self.events),
+            "discovery_status": status,
             "discovery_last_ts": self.hub.discovery.last_discovery_ts,
             "binance_connected": self.hub.binance.connected,
+            "clock_synced": self.hub.binance.clock_synced,
+            "clock_offset_ms": self.hub.binance.clock_offset_ms,
+            # --- footer metrikleri ---
+            "footer": {
+                "markets_active": sum(1 for c in cards if c.get("active")),
+                "markets_discovered_total": rec["markets"],
+                "snapshots_total": rec["snapshots"],
+                "snapshots_labeled": rec["labeled_snapshots"],
+                "resolved_total": rec["resolved_markets"],
+                "label_mismatch": rec["label_mismatch"],
+                "clob_states_healthy": clob_healthy,
+                "ptb_states_healthy": ptb_healthy,
+                "discovery_errors": self.hub.discovery.discovery_errors,
+                "data_quality_errors": self._data_quality_errors,
+                "suspicious_identical_quotes": suspicious,
+            },
         }
 
     async def run(self, stop: asyncio.Event) -> None:
         interval = self.cfg.snapshot_loop_ms / 1000.0
-        log.info("ShadowEngine dongusu basladi (SHADOW, P2)")
+        log.info("ShadowEngine dongusu basladi (SHADOW, P1-hardened)")
         while not stop.is_set():
             try:
                 self.tick()
@@ -362,9 +469,14 @@ class ShadowEngine:
 async def _reference_refresher(
     hub: DataHub, session: aiohttp.ClientSession, stop: asyncio.Event, interval: float = 2.0
 ) -> None:
+    last_clock = 0.0
     while not stop.is_set():
         try:
             await hub.refresh_references(session)
+            now = time.time()
+            if now - last_clock >= 60.0:  # clock offset periyodik
+                await hub.binance.refresh_clock()
+                last_clock = now
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -408,6 +520,16 @@ async def run() -> None:
         engine = ShadowEngine(cfg, hub, recorder, model, calib)
         discovery.on_resolved(engine.on_market_resolved)  # settle + ogren + kalibrasyon
         clob = ClobSupervisor(cfg, clob_store, session, hub.active_token_ids)
+
+        # P1 backfill: resolved market + resolution + label pipeline testi (snapshot URETMEZ)
+        if cfg.backfill_resolved_markets > 0:
+            try:
+                n = await discovery.backfill_resolved(
+                    cfg.backfill_resolved_markets, recorder.backfill_market
+                )
+                log.info("backfill: %d resolved market yuklendi (source=backfill)", n)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("backfill hatasi: %s", exc)
 
         try:
             async with asyncio.TaskGroup() as tg:

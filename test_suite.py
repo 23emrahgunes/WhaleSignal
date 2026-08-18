@@ -630,3 +630,260 @@ def test_spot_price_prefers_fresher_source():
     price, age = feed.spot_price()
     assert age is not None and age <= 200  # book-mid (taze) secildi
     assert price == pytest.approx(76.0)  # mid = (75.9+76.1)/2
+
+
+# ==========================================================================
+# P1 HARDENING (spec 22): canonical time, quality invariants, isolation,
+# checkpoint edge-crossing, dedup, settlement, freshness, discovery
+# ==========================================================================
+
+import time as _time  # noqa: E402
+
+from models import (  # noqa: E402
+    AbstainReason,
+    FeatureSnapshot as _FS,
+    LabelStatus,
+    MarketRef as _MR,
+    QStatus,
+    TimeStatus,
+)
+
+
+def _ref5m(cid="cid", up="utok", down="dtok", start=None, dur=300):
+    start = _time.time() if start is None else start
+    return _MR(
+        combo=AssetHorizon(Asset.BTC, Horizon.H5M),
+        condition_id=cid, slug=f"btc-updown-5m-{int(start)}", question="q",
+        up_token_id=up, down_token_id=down,
+        start_ts=start, end_ts=start + dur,
+        market_start_ts=start, market_end_ts=start + dur,
+        resolution_source="Chainlink", resolution_type=ResolutionType.CHAINLINK,
+    )
+
+
+def _full_snap(ref, tte=120.0, **kw):
+    base = dict(
+        combo=ref.combo, ts=_time.time(), seconds_remaining=tte, tte_sec=tte,
+        reference_price=100.0, up_bid=0.54, up_ask=0.56, up_mid=0.55,
+        down_bid=0.44, down_ask=0.46, down_mid=0.45, transport_age_ms=50.0,
+    )
+    base.update(kw)
+    return _FS(**base)
+
+
+# --- canonical time / TTE ---
+
+
+def test_canonical_time_horizon_bounds():
+    from discovery import canonical_time
+
+    for tf, secs in (("5m", 300), ("15m", 900)):
+        c = AssetHorizon(Asset.BTC, Horizon(tf))
+        s, e, ts = canonical_time(c, f"btc-updown-{tf}-1787175000", 0, 0)
+        assert e - s == secs and ts == TimeStatus.OK
+    # 1h metadata
+    c1 = AssetHorizon(Asset.BTC, Horizon.H1H)
+    s, e, ts = canonical_time(c1, "", 1000.0, 1000.0 + 3600)
+    assert e - s == 3600 and ts == TimeStatus.OK
+    # 5m no slug -> UNSAFE
+    _, _, ts2 = canonical_time(AssetHorizon(Asset.BTC, Horizon.H5M), "", 1000, 1300)
+    assert ts2 == TimeStatus.UNSAFE_TIME_METADATA
+
+
+def test_tte_never_exceeds_horizon():
+    now = _time.time()
+    ref = _ref5m(start=now)
+    assert 0 <= ref.remaining_sec(now) <= 300
+
+
+# --- quality invariants ---
+
+
+def test_quality_missing_clob_no_fallback():
+    from quality import assess
+
+    ref = _ref5m()
+    snap = _full_snap(ref, up_bid=None, up_ask=None, up_mid=None)
+    q = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert snap.up_mid is None  # 0.505 fallback YOK
+    assert q.clob == QStatus.WAITING
+    assert q.abstain_reason == AbstainReason.CLOB_MISSING
+    assert q.prediction_ready is False
+
+
+def test_quality_ptb_missing():
+    from quality import assess
+
+    ref = _ref5m()
+    snap = _full_snap(ref, reference_price=None)
+    q = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q.reference == QStatus.WAITING
+    assert q.abstain_reason == AbstainReason.PTB_MISSING
+
+
+def test_quality_bid_gt_ask_and_range_fail():
+    from quality import assess
+
+    ref = _ref5m()
+    q1 = assess(ref, _full_snap(ref, up_bid=0.6, up_ask=0.5), Settings(), _time.time(),
+                model_ready=True)
+    assert q1.clob == QStatus.FAIL
+    q2 = assess(ref, _full_snap(ref, up_bid=-0.1, up_ask=0.5), Settings(), _time.time(),
+                model_ready=True)
+    assert q2.clob == QStatus.FAIL
+
+
+def test_quality_identical_tokens_fail():
+    from quality import assess
+
+    ref = _ref5m(up="same", down="same")
+    q = assess(ref, _full_snap(ref), Settings(), _time.time(), model_ready=True)
+    assert q.tokens == QStatus.FAIL
+    assert q.abstain_reason == AbstainReason.UNSAFE
+
+
+def test_quality_prediction_ready_true_only_all_dims():
+    from quality import assess
+
+    ref = _ref5m()
+    snap = _full_snap(ref)
+    # model not ready -> MODEL WARN -> not ready
+    q0 = assess(ref, snap, Settings(), _time.time(), model_ready=False)
+    assert q0.prediction_ready is False and q0.abstain_reason == AbstainReason.MODEL_NOT_TRAINED
+    # all OK + model ready -> ready
+    q1 = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q1.prediction_ready is True
+
+
+def test_quality_unsafe_time_blocks_snapshot():
+    from quality import assess
+
+    ref = _ref5m()
+    ref.time_status = TimeStatus.UNSAFE_TIME_METADATA
+    q = assess(ref, _full_snap(ref), Settings(), _time.time(), model_ready=True)
+    assert q.snapshot_recordable is False
+    assert q.abstain_reason == AbstainReason.UNSAFE_TIME_METADATA
+
+
+# --- isolation + reverse index ---
+
+
+def test_clob_store_per_token_isolation():
+    from clob_feed import ClobQuoteStore
+
+    store = ClobQuoteStore()
+    store.update("utok_btc5m", 0.50, 0.60)
+    a = store.get("utok_btc5m")
+    b = store.get("utok_btc15m")  # farkli token
+    assert a is not None and a.mid == pytest.approx(0.55)
+    assert b is None  # BTC5m kotasi BTC15m'e sizmaz
+
+
+def test_token_market_reverse_index(tmp_path):
+    from main import ShadowEngine
+    from recorder import Recorder
+
+    rec = Recorder(str(tmp_path / "ri.sqlite"))
+    eng = ShadowEngine(Settings(), None, rec, None, None)
+    ref = _ref5m("cidA", "uA", "dA")
+    eng._maybe_record_market(ref)
+    idx = eng.token_market_index()
+    assert idx["uA"] == ref.market_id and idx["dA"] == ref.market_id
+    rec.close()
+
+
+# --- checkpoint edge-crossing + dedup ---
+
+
+def test_checkpoint_edge_crossing_no_backfill(tmp_path):
+    from main import ShadowEngine
+    from recorder import Recorder
+
+    rec = Recorder(str(tmp_path / "cp.sqlite"))
+    eng = ShadowEngine(Settings(), None, rec, None, None)
+    ref = _ref5m("cidCP")
+    # ilk gozlem tte=100 -> None (mid-window join, backfill YOK)
+    assert eng._checkpoint_crossed(ref, 100.0) is None
+    # 61 -> 59 gecisi T-60 yazar
+    eng._prev_tte[ref.market_id] = 61.0
+    assert eng._checkpoint_crossed(ref, 59.0) == 60
+    # ayni checkpoint tekrar tetiklenmez
+    eng._prev_tte[ref.market_id] = 59.5
+    assert eng._checkpoint_crossed(ref, 59.0) is None
+    rec.close()
+
+
+def test_snapshot_dedup_unique(tmp_path):
+    from recorder import Recorder
+
+    rec = Recorder(str(tmp_path / "dd.sqlite"))
+    ref = _ref5m("cidDD")
+    rec.record_market(ref)
+    snap = _full_snap(ref, tte=60.0)
+    rec.record_snapshot(ref, snap, 60)
+    rec.record_snapshot(ref, snap, 60)  # ayni checkpoint
+    assert rec.stats()["snapshots"] == 1
+    rec.close()
+
+
+# --- settlement: explicit official + mismatch ---
+
+
+def test_settlement_explicit_official_and_mismatch(tmp_path):
+    from recorder import Recorder
+
+    rec = Recorder(str(tmp_path / "st.sqlite"))
+    # MATCH
+    ref = _ref5m("cidM")
+    rec.record_market(ref)
+    rec.record_snapshot(ref, _full_snap(ref, tte=30.0), 30)
+    ref.resolved = True
+    ref.official_result = Decision.UP
+    ref.computed_result = Decision.UP
+    ref.label_status = LabelStatus.MATCH
+    rec.settle(ref)
+    s = rec.stats()
+    assert s["resolved_markets"] == 1 and s["labeled_snapshots"] == 1
+
+    # MISMATCH -> training-disi (labeled artmaz)
+    ref2 = _ref5m("cidX")
+    rec.record_market(ref2)
+    rec.record_snapshot(ref2, _full_snap(ref2, tte=30.0), 30)
+    ref2.resolved = True
+    ref2.official_result = Decision.DOWN
+    ref2.label_status = LabelStatus.MISMATCH
+    rec.settle(ref2)
+    s2 = rec.stats()
+    assert s2["label_mismatch"] == 1 and s2["labeled_snapshots"] == 1  # mismatch etiketlenmedi
+    rec.close()
+
+
+def test_official_gated_not_from_outcomeprices_alone():
+    from discovery import parse_official_result
+
+    # yalniz outcomePrices, resolution status YOK -> official None
+    off, _ = parse_official_result({"outcomePrices": '["1","0"]'})
+    assert off is None
+    # status onayi + outcomePrices -> official
+    off2, note = parse_official_result(
+        {"umaResolutionStatus": "resolved", "closed": True, "outcomePrices": '["1","0"]'}
+    )
+    assert off2 == Decision.UP
+
+
+# --- freshness separation ---
+
+
+def test_freshness_transport_vs_trade_age_separate():
+    from binance_feed import SymbolFeed
+    from models import LocalBook
+
+    feed = SymbolFeed("XRPUSDT", 100)
+    now_ms = _time.time() * 1000
+    feed.last_frame_recv_ms = now_ms - 80  # transport taze (frame yeni geldi)
+    feed.last_trade_ts_ms = int(now_ms - 9000)  # trade 9s once (seyrek)
+    feed.book = LocalBook("XRPUSDT", bids={0.5: 1.0}, asks={0.51: 1.0}, synced=True)
+    feed.last_depth_ts_ms = int(now_ms - 80)
+    assert feed.transport_age_ms() < 500  # transport taze
+    assert feed.last_trade_age_ms() > 8000  # trade eski
+    # -> seyrek trade transport'u bayat yapmaz (ayrisik)
