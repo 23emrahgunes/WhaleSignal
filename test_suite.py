@@ -467,3 +467,121 @@ def test_calibration_honesty_and_accuracy():
     assert s["insufficient"] is False
     assert s["accuracy"] == pytest.approx(1.0)
     assert s["price_edge"]["mean_edge"] == pytest.approx(0.2)
+
+
+# ==========================================================================
+# P3: train_offline (walk-forward, reconstruction, metrics, full report)
+# ==========================================================================
+
+
+def test_walk_forward_no_market_leakage():
+    from train_offline import MarketData, walk_forward_folds
+
+    markets = [
+        MarketData(condition_id=f"m{i:03d}", combo_key="BTC:5m", start_ts=float(i), label_up=i % 2)
+        for i in range(40)
+    ]
+    folds = walk_forward_folds(markets, n_folds=4)
+    assert len(folds) >= 2
+    for train, test in folds:
+        tr_ids = {m.condition_id for m in train}
+        te_ids = {m.condition_id for m in test}
+        assert tr_ids.isdisjoint(te_ids)  # ayni market ikisinde birden YOK
+        # test kronolojik olarak train'den SONRA
+        assert max(m.start_ts for m in train) < min(m.start_ts for m in test)
+
+
+def test_feature_vector_reconstruction():
+    from features import FeatureVector
+    from train_offline import feature_vector
+
+    feats = {n: 1.0 for n in FeatureVector._BASE_FIELDS}
+    feats.update({n: 2.0 for n in FeatureVector._CLOB_FIELDS})
+    base = feature_vector(feats, include_clob=False)
+    full = feature_vector(feats, include_clob=True)
+    assert len(base) == len(FeatureVector._BASE_FIELDS)
+    assert len(full) == len(base) + len(FeatureVector._CLOB_FIELDS)
+    assert full[len(base)] == 2.0  # ilk CLOB feature
+
+
+def test_metrics_perfect():
+    import numpy as np
+
+    from train_offline import metrics
+
+    y = np.array([1, 0, 1, 0])
+    p = np.array([0.99, 0.01, 0.98, 0.02])
+    m = metrics(y, p)
+    assert m["accuracy"] == 1.0
+    assert m["brier"] < 0.01
+
+
+def _build_synth_db(path, n_markets=40):
+    from features import FeatureVector
+    from models import (
+        Asset, AssetHorizon, Decision, FeatureSnapshot, Horizon, MarketRef, ResolutionType,
+    )
+    from recorder import Recorder
+
+    combo = AssetHorizon(Asset.BTC, Horizon.H5M)
+    rec = Recorder(path)
+
+    def feats(sign):
+        d = {n: 0.0 for n in FeatureVector._BASE_FIELDS + FeatureVector._CLOB_FIELDS}
+        d["distance_bps"] = 5.0 * sign
+        d["ptb_z"] = 1.0 * sign
+        d["ret_slow"] = 0.001 * sign
+        d["flow_mid"] = 0.5 * sign
+        d["sign_persistence"] = 0.8
+        d["obi"] = 0.3 * sign
+        d["up_mid_vel"] = 0.01 * sign
+        return d
+
+    for i in range(n_markets):
+        sign = 1 if i % 2 == 0 else -1
+        cid = f"m{i:03d}"
+        ref = MarketRef(
+            combo=combo, condition_id=cid, slug=f"btc-updown-5m-{1000+i}",
+            question="BTC Up?", up_token_id="u", down_token_id="d",
+            start_ts=1000.0 + i, end_ts=1300.0 + i,
+            resolution_source="Chainlink", resolution_type=ResolutionType.CHAINLINK,
+        )
+        rec.record_market(ref)
+        for cp in (60, 30, 10):
+            snap = FeatureSnapshot(
+                combo=combo, ts=1000.0 + i, seconds_remaining=float(cp),
+                up_mid=(0.6 if sign > 0 else 0.4),
+            )
+            snap.extra = feats(sign)
+            rec.record_snapshot(ref, snap, cp)
+        ref.resolved = True
+        ref.resolved_outcome = Decision.UP if sign > 0 else Decision.DOWN
+        rec.settle(ref)
+    rec.close()
+
+
+def test_build_report_insufficient(tmp_path):
+    from train_offline import build_report
+
+    db = str(tmp_path / "few.sqlite")
+    _build_synth_db(db, n_markets=10)
+    rep = build_report(db)
+    assert rep["insufficient"] is True
+    assert rep["n_resolved_markets"] == 10
+
+
+def test_build_report_sufficient_walk_forward(tmp_path):
+    from train_offline import build_report
+
+    db = str(tmp_path / "many.sqlite")
+    _build_synth_db(db, n_markets=40)
+    rep = build_report(db)
+    assert rep["insufficient"] is False
+    assert rep["n_resolved_markets"] == 40
+    assert "walk_forward" in rep["split"]
+    mb = rep["model_B_with_clob"]
+    assert mb["n_folds"] >= 1
+    # ayrilabilir sentetik veri -> yuksek dogruluk (GERCEK iddia degil, test)
+    assert mb["mean_accuracy"] >= 0.8
+    # CLOB'suz varyant da uretildi
+    assert rep["model_B_no_clob"]["n_folds"] >= 1
