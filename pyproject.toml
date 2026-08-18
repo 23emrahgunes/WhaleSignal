@@ -1,0 +1,14 @@
+[project]
+name = "direction-engine"
+version = "0.1.0"
+description = "Cok-varlikli Polymarket kisa-vade yon tahmini (SHADOW): BTC/ETH/SOL/XRP x 5m/15m/1h"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-q"
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

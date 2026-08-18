@@ -1,0 +1,16 @@
+# Cekirdek bagimliliklar (P1 shadow + testler icin yeterli)
+aiohttp>=3.9
+pydantic>=2.5
+pydantic-settings>=2.1
+numpy>=1.26
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# P2 (feature + logistic baseline + calibration):
+scikit-learn>=1.4
+
+# P3 (offline GBT egitim) — opsiyonel, lazy import:
+#   lightgbm>=4.0
+#
+# NOT: Bu servis SHADOW'dur; canli emir/imza kutuphanesi (py_clob_client)
+# BILEREK yoktur. Yalniz veri okur, tahmin eder, kaydeder.
