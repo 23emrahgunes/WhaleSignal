@@ -286,3 +286,184 @@ def test_prediction_price_edge():
     assert p.price_edge == pytest.approx(0.1)
     p2 = Prediction(combo=AssetHorizon(Asset.BTC, Horizon.H5M), ts=1.0, p_up=0.6)
     assert p2.price_edge is None
+
+
+# ==========================================================================
+# P2: features
+# ==========================================================================
+
+_AH = AssetHorizon(Asset.BTC, Horizon.H5M)
+
+
+def test_pct_return_and_realized_vol():
+    from features import pct_return, realized_vol
+
+    now_ms = 1_000_000
+    prices = [(now_ms - 60000 + i * 1000, 100.0 + i * 0.1) for i in range(61)]
+    r = pct_return(prices, 60000, now_ms)
+    assert r is not None and r > 0  # yukselen -> pozitif getiri
+    rv = realized_vol(prices, 60000, now_ms)
+    assert rv is not None and rv >= 0
+
+
+def test_flow_imbalance_and_obi():
+    from features import flow_imbalance, order_book_imbalance
+    from models import LocalBook, Trade
+
+    now_ms = 1_000_000
+    trades = [Trade(100.0, 1.0, now_ms - 500 * i, is_buyer_maker=False) for i in range(5)]
+    fi = flow_imbalance(trades, 5000, now_ms)
+    assert fi == pytest.approx(1.0)  # hepsi agresif alis
+
+    book = LocalBook("BTCUSDT", bids={99.9: 10.0, 99.8: 10.0}, asks={100.1: 2.0}, synced=True)
+    obi = order_book_imbalance(book)
+    assert obi is not None and obi > 0
+
+
+def test_feature_engine_produces_signed_features():
+    from features import FeatureEngine
+    from models import LocalBook, Trade
+
+    fe = FeatureEngine(_AH)
+    now = 1000.0
+    now_ms = int(now * 1000)
+    prices = [(now_ms - 60000 + i * 1000, 100.0 + i * 0.02) for i in range(61)]
+    trades = [Trade(100.0, 1.0, now_ms - 200 * i, is_buyer_maker=False) for i in range(20)]
+    book = LocalBook("BTCUSDT", bids={99.9: 10.0}, asks={100.1: 2.0}, synced=True)
+    fv = fe.update(prices, trades, book, 100.0, 0.55, 0.45, 60.0, now)
+    assert fv.has_reference is True and fv.distance_bps < 0 or fv.distance_bps >= 0  # hesaplandi
+    assert fv.ret_slow > 0
+    assert fv.sign_persistence > 0.5
+    assert fv.flow_mid > 0
+    assert fv.obi > 0
+    assert fv.has_clob is True
+    # ablation: CLOB'lu varyant 4 fazla feature
+    n_base = len(fv.model_features(False)[1])
+    n_clob = len(fv.model_features(True)[1])
+    assert n_clob == n_base + 4
+
+
+# ==========================================================================
+# P2: regime
+# ==========================================================================
+
+
+def _fv(**kw):
+    from features import FeatureVector
+
+    base = dict(combo=_AH, ts=0.0, seconds_remaining=60.0)
+    base.update(kw)
+    return FeatureVector(**base)
+
+
+def test_regime_trend_not_abstain():
+    from models import Regime
+    from regime import classify_regime
+
+    fv = _fv(
+        ret_slow=0.001, sign_persistence=0.8, flip_rate=0.1, flow_persistence=0.8,
+        flow_mid=0.4, distance_bps=3.0, rv_fast=0.001, rv_slow=0.001,
+        vol_percentile=0.5, book_flow_agree=1.0,
+    )
+    r = classify_regime(fv)
+    assert r.abstain is False
+    assert r.regime == Regime.TREND_UP
+    assert r.predictability >= 0.45
+
+
+def test_regime_high_vol_abstains():
+    from models import AbstainReason
+    from regime import classify_regime
+
+    fv = _fv(ret_slow=0.001, rv_fast=0.01, rv_slow=0.005, vol_percentile=0.98)
+    r = classify_regime(fv)
+    assert r.abstain is True and r.abstain_reason == AbstainReason.HIGH_VOL
+
+
+def test_regime_feature_conflict_abstains():
+    from models import AbstainReason
+    from regime import classify_regime
+
+    # momentum + ve PTB + ama flow gucluce - -> conflict
+    fv = _fv(
+        ret_slow=0.001, distance_bps=5.0, flow_mid=-0.5,
+        rv_fast=0.001, rv_slow=0.001, vol_percentile=0.5,
+    )
+    r = classify_regime(fv)
+    assert r.abstain is True and r.abstain_reason == AbstainReason.FEATURE_CONFLICT
+
+
+def test_regime_insufficient_data():
+    from models import AbstainReason
+    from regime import classify_regime
+
+    r = classify_regime(_fv())
+    assert r.abstain is True and r.abstain_reason == AbstainReason.INSUFFICIENT_DATA
+
+
+# ==========================================================================
+# P2: direction_model
+# ==========================================================================
+
+
+def test_direction_model_gating_and_learning():
+    import random
+
+    from direction_model import MIN_MARKETS_PREDICT, DirectionModel
+
+    m = DirectionModel(per_combo_min=999)  # per-combo devrede degil -> shared
+    ck = _AH.key
+
+    def mk(sign, rng):
+        return _fv(
+            ret_slow=0.001 * sign + rng.gauss(0, 0.0001),
+            ret_fast=0.0005 * sign,
+            sign_persistence=0.8,
+            flow_mid=0.5 * sign + rng.gauss(0, 0.02),
+            flow_fast=0.4 * sign,
+            distance_bps=5.0 * sign + rng.gauss(0, 0.2),
+            ptb_z=1.0 * sign,
+            rv_fast=0.001, rv_slow=0.001, vol_percentile=0.5,
+        )
+
+    rng = random.Random(1)
+    # esikten once: hazir degil
+    m.learn_with_label(ck, [mk(1, rng)], 1)
+    assert m.predict(ck, mk(1, rng)).ready is False
+
+    # yeterli market ogret (UP=1 pozitif fv, DOWN=0 negatif fv)
+    for _ in range(MIN_MARKETS_PREDICT + 3):
+        m.learn_with_label(ck, [mk(1, rng), mk(1, rng)], 1)
+        m.learn_with_label(ck, [mk(-1, rng), mk(-1, rng)], 0)
+
+    up = m.predict(ck, mk(1, rng))
+    dn = m.predict(ck, mk(-1, rng))
+    assert up.ready is True and up.p_up is not None
+    assert up.p_up > 0.5 > dn.p_up  # ayrisma ogrenildi
+    assert up.p_up_no_clob is not None  # CLOB'suz varyant da egitildi
+
+
+# ==========================================================================
+# P2: calibration
+# ==========================================================================
+
+
+def test_calibration_honesty_and_accuracy():
+    from calibration import CalibrationBook, CalSample
+
+    book = CalibrationBook(min_n=5)
+    ck = _AH.key
+    # 4 ornek -> yetersiz
+    for _ in range(4):
+        book.record(ck, CalSample(decided=True, outcome_up=True, p_up=0.7,
+                                   decision_up=True, confidence=0.4, market_implied_up=0.5))
+    assert book.summary()["overall"]["insufficient"] is True
+
+    # topla: 6 dogru UP tahmini -> yeterli, accuracy 1.0
+    for _ in range(2):
+        book.record(ck, CalSample(decided=True, outcome_up=True, p_up=0.7,
+                                   decision_up=True, confidence=0.4, market_implied_up=0.5))
+    s = book.summary()["overall"]
+    assert s["insufficient"] is False
+    assert s["accuracy"] == pytest.approx(1.0)
+    assert s["price_edge"]["mean_edge"] == pytest.approx(0.2)

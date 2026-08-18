@@ -82,6 +82,8 @@ h1{margin:0;font-size:19px;color:var(--blue)}
     <span id="rec_resolved">resolved: —</span>
     <span id="rec_snaps">snapshot: —</span>
     <span id="rec_labeled">etiketli: —</span>
+    <span id="model">model: —</span>
+    <span id="calib">kalibrasyon: —</span>
     <span id="stamp"></span>
   </div>
 </div>
@@ -101,13 +103,16 @@ function card(c){
     body=`<div class="why">${(c.why||['market YOK']).join(' · ')}</div>`;
   }else{
     const db=c.distance_bps;
+    const pu=c.p_up, edge=c.price_edge;
     body=`
     <div class="row"><span>kalan</span><b>${num(c.seconds_remaining,0)} sn</b></div>
+    <div class="row"><span>P(UP) / güven</span><b class="${pu>0.55?'pos':pu<0.45?'neg':'neu'}">${num(pu,3)} / ${num(c.confidence,2)}</b></div>
+    <div class="row"><span>predictability / rejim</span><b>${num(c.predictability,2)} · ${c.regime||'—'}</b></div>
     <div class="row"><span>spot / PTB</span><b>${num(c.spot_price,2)} / ${num(c.reference_price,2)}</b></div>
     <div class="row"><span>mesafe (bps)</span><b class="${cls(db)}">${num(db,1)}</b></div>
-    <div class="row"><span>UP mid / DOWN mid</span><b>${num(c.up_mid,3)} / ${num(c.down_mid,3)}</b></div>
+    <div class="row"><span>UP mid / edge</span><b>${num(c.up_mid,3)} / <span class="${cls(edge)}">${edge==null?'—':num(edge,3)}</span></b></div>
     <div class="row"><span>veri</span><b>${frtxt}</b></div>
-    <div class="why">${dec==='ABSTAIN'?('ABSTAIN: '+(c.abstain_reason||'')):''} ${(c.why||[]).join(' · ')}</div>`;
+    <div class="why">${dec==='ABSTAIN'?('ABSTAIN: '+(c.abstain_reason||'')+' · '):''}${(c.why||[]).join(' · ')}</div>`;
   }
   return `<div class="card${dead}">
      <h2>${c.combo} ${rtype}<span class="dtag d-${dec}">${dec}</span></h2>${body}</div>`;
@@ -123,6 +128,12 @@ async function tick(){
   $('rec_resolved').textContent='resolved: '+(r.resolved_markets||0);
   $('rec_snaps').textContent='snapshot: '+(r.snapshots||0);
   $('rec_labeled').textContent='etiketli: '+(r.labeled_snapshots||0);
+  const mdl=d.model||{}, wc=mdl.with_clob||{};
+  $('model').innerHTML='model(CLOB): '+(wc.shared_markets||0)+' market '+(wc.shared_ready?'<span class="ok">hazır</span>':'<span class="bad">öğreniyor</span>')+' (eşik '+(mdl.min_markets_predict||20)+')';
+  const cal=(d.calibration||{}).overall||{};
+  $('calib').textContent = cal.insufficient===false ?
+      ('acc '+(cal.accuracy!=null?(cal.accuracy*100).toFixed(0)+'%':'—')+' · Brier '+num(cal.brier,3)+' · n='+cal.n_decided) :
+      ('kalibrasyon: yetersiz veri (n='+(cal.n_decided||0)+')');
   const need=d.min_markets_for_stats||30;
   if((r.resolved_markets||0)<need){
     $('banner').style.display='block';
