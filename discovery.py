@@ -77,6 +77,19 @@ def match_combo(text: str) -> Optional[AssetHorizon]:
         return None
 
 
+def _more_current(new: "MarketRef", cur: "MarketRef", now: float) -> bool:
+    """new, cur'a gore O ANA daha uygun (aktif/en yakin kapanan) pencere mi?
+
+    Kisa-vade rolling marketlerde 'en gec biten' YANLIS secim; o anda ACIK olan
+    (start<=now<end) ve en yakin kapanan pencere dogru olandir.
+    """
+    new_open = new.start_ts <= now
+    cur_open = cur.start_ts <= now
+    if new_open != cur_open:
+        return new_open  # o an acik olani tercih et
+    return new.end_ts < cur.end_ts  # ayni sinif -> en yakin kapanan
+
+
 def classify_resolution(source_text: str, horizon: Horizon) -> ResolutionType:
     """Resolution kaynak metnini tipe cevir.
 
@@ -307,6 +320,7 @@ class MarketDiscovery:
         if not isinstance(data, list):
             return found
         wanted = {c.key for c in self.combos}
+        now = time.time()
         for ev in data:
             if not isinstance(ev, dict):
                 continue
@@ -316,21 +330,18 @@ class MarketDiscovery:
             if combo is None or combo.key not in wanted:
                 continue
             ref = parse_event_markets(ev, combo)
-            if ref is None:
-                continue
-            # ayni combo icin en gec biten (guncel pencere) tercih
+            if ref is None or ref.end_ts <= now:
+                continue  # bitmis pencereyi alma
+            # ayni combo icin O ANKI (aktif/en yakin) pencereyi sec — en gec biteni DEGIL
             cur = found.get(combo.key)
-            if cur is None or ref.end_ts > cur.end_ts:
+            if cur is None or _more_current(ref, cur, now):
                 found[combo.key] = ref
         return found
 
     async def discover_once(self) -> None:
-        # 1) asil: active-event discovery (tum combo'lar, 1h dahil)
-        found = await self._active_event_discovery()
-        # 2) fast path: eksik kalan 5m/15m combo'lari slug ile doldur
+        found: dict[str, MarketRef] = {}
+        # 1) 5m/15m: fast path ONCE — deterministik O ANKI pencere (guvenilir)
         for combo in self.combos:
-            if combo.key in found:
-                continue
             if combo.horizon in (Horizon.H5M, Horizon.H15M):
                 try:
                     ref = await self._fast_path_slug(combo)
@@ -338,8 +349,13 @@ class MarketDiscovery:
                     raise
                 except Exception:  # noqa: BLE001
                     ref = None
-                if ref is not None:
+                if ref is not None and ref.remaining_sec() > 0:
                     found[combo.key] = ref
+        # 2) active-event discovery: 1h + fast path'in bulamadigi combo'lar
+        ae = await self._active_event_discovery()
+        for key, ref in ae.items():
+            if key not in found:
+                found[key] = ref
         async with self._lock:
             for key, ref in found.items():
                 prev = self.active.get(key)

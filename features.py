@@ -26,6 +26,8 @@ _BASE_WINDOWS_MS = [500, 1000, 3000, 5000, 15000, 30000, 60000, 120000, 180000]
 # 1h icin ek uzun pencereler
 _LONG_WINDOWS_MS = [300000, 600000, 900000, 1800000]
 _FLOW_WINDOWS_MS = [1000, 3000, 5000, 15000, 30000]
+# vol persentili anlamli olana kadar gereken minimum gecmis ornek sayisi
+_VOL_WARMUP = 30
 
 
 def windows_for(horizon: Horizon) -> list[int]:
@@ -363,9 +365,13 @@ class FeatureEngine:
         fv.vol_accel = (fv.rv_fast / fv.rv_slow) if fv.rv_slow > 0 else 0.0
         if fv.rv_fast > 0:
             self._vol_hist.append(fv.rv_fast)
-        if self._vol_hist:
+        # persentil ancak yeterli gecmis isinmisken anlamli; oncesinde notr 0.5
+        # (aksi halde ilk orneklerde 1.00'a saplanip SAHTE HIGH_VOL uretir)
+        if len(self._vol_hist) >= _VOL_WARMUP:
             below = sum(1 for v in self._vol_hist if v <= fv.rv_fast)
             fv.vol_percentile = below / len(self._vol_hist)
+        else:
+            fv.vol_percentile = 0.5
         fv.mom_vol_ratio = (fv.ret_slow / fv.rv_slow) if fv.rv_slow > 0 else 0.0
 
         # PTB

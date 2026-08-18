@@ -129,15 +129,22 @@ class SymbolFeed:
 
     # ---- okuyucular ----
     def spot_price(self) -> tuple[Optional[float], Optional[float]]:
-        """(son_fiyat, yas_ms). Once son trade, yoksa book mid."""
+        """(son_fiyat, yas_ms). Son trade ile book-mid'den DAHA TAZE olani sec.
+
+        Dusuk hacimli varliklarda (SOL/XRP) trade'ler seyrek gelir; book diff-depth
+        ile ~100ms'de guncellendiginden book-mid genelde daha tazedir -> spot bayat
+        sanilmaz. Fiyat ring'i yine trade-tabanli (returns/vol icin)."""
         now_ms = time.time() * 1000
+        candidates: list[tuple[float, float]] = []  # (price, age_ms)
         if self.prices:
             ts_ms, price = self.prices[-1]
-            return price, max(0.0, now_ms - ts_ms)
-        mid = self.book.mid
-        if mid is not None:
-            return mid, max(0.0, now_ms - self.book.ts * 1000)
-        return None, None
+            candidates.append((price, max(0.0, now_ms - ts_ms)))
+        if self.book.synced and self.book.mid is not None and self.last_depth_ts_ms:
+            candidates.append((self.book.mid, max(0.0, now_ms - self.last_depth_ts_ms)))
+        if not candidates:
+            return None, None
+        price, age = min(candidates, key=lambda c: c[1])  # en taze
+        return price, age
 
     def book_age_ms(self) -> Optional[float]:
         if not self.book.synced or self.last_depth_ts_ms == 0:

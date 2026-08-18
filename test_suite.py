@@ -585,3 +585,48 @@ def test_build_report_sufficient_walk_forward(tmp_path):
     assert mb["mean_accuracy"] >= 0.8
     # CLOB'suz varyant da uretildi
     assert rep["model_B_no_clob"]["n_folds"] >= 1
+
+
+# ==========================================================================
+# Fixler (canli panelden gorulen hatalar): pencere secimi + spot tazelik
+# ==========================================================================
+
+
+def _ref(start, end, cid="x"):
+    return MarketRef(
+        combo=_AH, condition_id=cid, slug="btc-updown-5m-1",
+        question="q", up_token_id="u", down_token_id="d",
+        start_ts=start, end_ts=end,
+        resolution_source="Chainlink", resolution_type=ResolutionType.CHAINLINK,
+    )
+
+
+def test_more_current_prefers_open_then_nearest():
+    from discovery import _more_current
+
+    now = 1000.0
+    open_now = _ref(now - 100, now + 100, "open")      # su an acik
+    far_future = _ref(now + 1000, now + 1300, "far")   # cok ileri pencere
+    near_future = _ref(now + 10, now + 310, "near")     # yakin gelecek
+    # acik pencere, ileri penceredem daha uygun
+    assert _more_current(open_now, far_future, now) is True
+    assert _more_current(far_future, open_now, now) is False
+    # ikisi de gelecekse en yakin kapanan tercih
+    assert _more_current(near_future, far_future, now) is True
+
+
+def test_spot_price_prefers_fresher_source():
+    from binance_feed import SymbolFeed
+    from models import LocalBook
+    import time as _t
+
+    feed = SymbolFeed("SOLUSDT", 100)
+    now_ms = int(_t.time() * 1000)
+    # eski trade (3s once)
+    feed.prices.append((now_ms - 3000, 76.0))
+    # taze book (100ms once)
+    feed.book = LocalBook("SOLUSDT", bids={75.9: 5.0}, asks={76.1: 5.0}, synced=True)
+    feed.last_depth_ts_ms = now_ms - 100
+    price, age = feed.spot_price()
+    assert age is not None and age <= 200  # book-mid (taze) secildi
+    assert price == pytest.approx(76.0)  # mid = (75.9+76.1)/2
