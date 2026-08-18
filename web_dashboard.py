@@ -23,7 +23,7 @@ async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
         return web.json_response(engine.snapshot())
 
     async def health(_req: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "mode": "SHADOW", "phase": "P1"})
+        return web.json_response({"ok": True, "mode": "SHADOW", "phase": "P2"})
 
     app.add_routes(
         [web.get("/", index), web.get("/api/state", state), web.get("/health", health)]
