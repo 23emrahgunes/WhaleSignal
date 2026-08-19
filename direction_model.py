@@ -1,8 +1,9 @@
 """Direction model scaffold.
 
-P2.1 is feature-only SHADOW. This module may remain importable, but inference,
-learning and persistence are hard-disabled while PHASE is P1/P2.1. Later phases
-can explicitly enable the existing online logistic baseline.
+Runtime safety is enforced by Settings.training_active/calibration_active and by
+not loading persisted model artifacts in P1/P2.1. The pure model class remains
+unit-testable so its later-phase behavior can be regression-tested without
+weakening the P2.1 runtime lock.
 """
 from __future__ import annotations
 
@@ -149,17 +150,12 @@ class DirectionModel:
         raise NotImplementedError("engine learn_with_label kullanir")
 
     def learn_with_label(self, combo_key: str, fv_list: list, label_up: int) -> None:
-        if _feature_only_phase():
-            log.warning("feature-only phase: model learn blocked")
-            return
         rows_clob = [fv.model_features(True)[1] for fv in fv_list]
         rows_noclob = [fv.model_features(False)[1] for fv in fv_list]
         self.with_clob.learn(combo_key, rows_clob, label_up)
         self.no_clob.learn(combo_key, rows_noclob, label_up)
 
     def predict(self, combo_key: str, fv) -> ModelOutput:  # noqa: ANN001
-        if _feature_only_phase():
-            return ModelOutput(None, 0.0, False, "feature_only", None)
         _, x_clob = fv.model_features(True)
         _, x_noclob = fv.model_features(False)
         p_clob, source = self.with_clob.predict(combo_key, x_clob)
@@ -170,8 +166,6 @@ class DirectionModel:
         return ModelOutput(p_clob, confidence, True, source, p_noclob)
 
     def ready_for(self, combo_key: str) -> bool:
-        if _feature_only_phase():
-            return False
         cm = self.with_clob.per_combo.get(combo_key)
         if cm is not None and cm.n_markets >= self.with_clob.per_combo_min and cm.ready:
             return True
@@ -182,13 +176,10 @@ class DirectionModel:
             "with_clob": self.with_clob.stats(),
             "no_clob": self.no_clob.stats(),
             "min_markets_predict": MIN_MARKETS_PREDICT,
-            "feature_only_lock": _feature_only_phase(),
+            "runtime_feature_only": _feature_only_phase(),
         }
 
     def save(self, path: str) -> None:
-        if _feature_only_phase():
-            log.warning("feature-only phase: model save blocked")
-            return
         try:
             with open(path, "wb") as f:
                 pickle.dump(self, f)
@@ -197,8 +188,8 @@ class DirectionModel:
 
     @staticmethod
     def load(path: str) -> Optional["DirectionModel"]:
-        # Loading a stale artifact is unnecessary in feature-only P2.1 and can
-        # confuse readiness displays, so fail closed.
+        # Critical P2.1 safety: do not load a stale trained artifact into the live
+        # feature-only process. Main also prevents learn/save via Settings flags.
         if _feature_only_phase():
             return None
         try:
