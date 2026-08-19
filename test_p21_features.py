@@ -1,7 +1,7 @@
 """P2.1 feature-only regression tests."""
 from __future__ import annotations
 
-import math
+import time
 
 import pytest
 
@@ -49,20 +49,22 @@ def test_windows_include_subsecond_and_hourly_long_horizons():
 
 def test_symbol_feed_retains_book_mid_feature_history():
     feed = SymbolFeed("BTCUSDT", 100, feature_ring_max=500)
+    base = int(time.time() * 1000)
     feed.apply_snapshot({
         "lastUpdateId": 10,
         "bids": [["99", "2"]],
         "asks": [["101", "2"]],
     })
+    event_ts = base + 100
     feed.on_depth({
-        "E": 2_000,
+        "E": event_ts,
         "U": 11,
         "u": 11,
         "b": [["100", "2"]],
         "a": [],
     })
     assert feed.feature_prices
-    assert feed.feature_prices[-1][0] == 2000
+    assert feed.feature_prices[-1][0] == event_ts
     assert feed.feature_prices[-1][1] == pytest.approx(100.5)
 
 
