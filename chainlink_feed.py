@@ -11,7 +11,10 @@ Important invariants:
 - application-level text ``PING`` is sent every 5 seconds (configurable);
 - opening references are selected from RTDS source timestamps near the canonical
   market start, never from the current price after a mid-window restart;
-- Binance remains a separate analytics/proxy source elsewhere in the service.
+- Binance remains a separate analytics/proxy source elsewhere in the service;
+- RTDS ``full_accuracy_value`` is fixed-point (1e18) and is never exposed as a
+  human USD price without normalization. Prefer the already-decimal ``value``
+  field whenever it is present.
 """
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ from wsbase import backoff_delay
 log = logging.getLogger("direction_engine.chainlink")
 
 _HISTORY_MAX = 4096
+_FULL_ACCURACY_SCALE = 1_000_000_000_000_000_000.0  # Chainlink RTDS 18-decimal fixed point
 
 _SYMBOL_MAP = {
     "btc": "BTC", "btcusd": "BTC", "btc/usd": "BTC", "btc-usd": "BTC", "bitcoin": "BTC",
@@ -54,17 +58,44 @@ def _to_ts_seconds(raw: object, fallback: float) -> float:
     return value / 1000.0 if value > 1e12 else value
 
 
+def _positive_float(raw: object) -> Optional[float]:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _to_price(payload: dict) -> Optional[float]:
-    for key in ("full_accuracy_value", "value", "price", "p", "px", "answer", "last"):
-        value = payload.get(key)
-        if value is None:
-            continue
-        try:
-            price = float(value)
-        except (TypeError, ValueError):
-            continue
-        if price > 0:
+    """Return the human decimal price from a Chainlink RTDS payload.
+
+    Current RTDS messages commonly contain both::
+
+        value="64332.1085..."
+        full_accuracy_value="643321085...000000000"
+
+    ``full_accuracy_value`` is an 18-decimal fixed-point integer.  The old parser
+    preferred it, which made BTC appear around 6.4e22 even though ratios happened
+    to cancel the scale.  Prefer ``value`` and only use the full-accuracy field as
+    a normalized fallback.
+    """
+    # Human-decimal fields first.
+    for key in ("value", "price", "p", "px", "answer", "last"):
+        price = _positive_float(payload.get(key))
+        if price is not None:
             return price
+
+    # Fixed-point fallback used by Chainlink RTDS.  If an explicit decimals field
+    # exists, respect it; otherwise the documented/current wire value uses 18.
+    raw_full = _positive_float(payload.get("full_accuracy_value"))
+    if raw_full is not None:
+        try:
+            decimals = int(payload.get("decimals", 18))
+        except (TypeError, ValueError):
+            decimals = 18
+        if 0 <= decimals <= 36:
+            return raw_full / (10.0 ** decimals)
+        return raw_full / _FULL_ACCURACY_SCALE
     return None
 
 
@@ -258,31 +289,30 @@ class ChainlinkFeed:
                         await ping_task
                     except (asyncio.CancelledError, Exception):  # noqa: BLE001
                         pass
-        log.info("Chainlink RTDS stopped")
 
     def get_state(self, asset: str) -> Optional[ChainlinkState]:
-        return self.state.get(asset)
+        return self.state.get(asset.upper())
 
     def opening_state(
         self,
         asset: str,
         market_start_ts: float,
-        max_alignment_ms: Optional[float] = None,
+        max_alignment_ms: float = 5000.0,
     ) -> Optional[ChainlinkState]:
-        hist = self.history.get(asset)
+        """Return source-timestamp-nearest official observation to market start.
+
+        This intentionally fails closed if the process restarted mid-window and
+        no buffered boundary point exists within ``max_alignment_ms``.
+        """
+        hist = self.history.get(asset.upper())
         if not hist:
             return None
-        max_alignment_ms = (
-            self.settings.max_reference_open_alignment_ms
-            if max_alignment_ms is None
-            else max_alignment_ms
-        )
-        best = min(hist, key=lambda point: abs(point.source_ts - market_start_ts))
+        best = min(hist, key=lambda p: abs(p.source_ts - market_start_ts))
         if abs(best.source_ts - market_start_ts) * 1000.0 > max_alignment_ms:
             return None
         return best
 
-    def status(self) -> dict:
+    def snapshot(self) -> dict:
         now = time.time()
         return {
             "connection": "connected" if self.connected else "disconnected",
@@ -290,12 +320,12 @@ class ChainlinkFeed:
             "messages": self.messages_handled,
             "feeds": {
                 asset: {
-                    "value": round(point.value, 8),
-                    "source_ts": point.source_ts,
-                    "source_age_ms": round(point.source_age_ms(now), 0),
-                    "recv_age_ms": round(point.age_ms(now), 0),
+                    "value": state.value,
+                    "source_ts": state.source_ts,
+                    "source_age_ms": round(state.source_age_ms(now), 1),
+                    "recv_age_ms": round(state.age_ms(now), 1),
                     "history_points": len(self.history.get(asset, ())),
                 }
-                for asset, point in self.state.items()
+                for asset, state in self.state.items()
             },
         }
