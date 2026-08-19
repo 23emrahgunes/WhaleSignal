@@ -1,7 +1,8 @@
 """P2.5 SHADOW service entrypoint.
 
-Deploy this entrypoint after P2.1. It reuses the proven discovery/feed/reference
-plumbing and swaps in the P2.2-P2.5 engine/recorder. No order execution exists.
+The service produces research forecasts, validation-gated signals and paper-trade
+simulations.  Paper positions are SQLite records only; no order execution,
+credentials, signing or private key exists.
 """
 from __future__ import annotations
 
@@ -21,11 +22,11 @@ from main import (
     build_combos,
 )
 from p25_calibration import CalibrationBook
-from p25_config import Settings
 from p25_discovery import P25MarketDiscovery
 from p25_model import DirectionModel
-from p25_research_recorder import P25ResearchRecorder
-from p25_safety_engine import P25Engine
+from p25_paper_config import PaperSettings as Settings
+from p25_paper_engine import P25Engine
+from p25_paper_recorder import P25PaperRecorder
 from p25_web import run_web
 from reference import ReferenceRouter
 
@@ -43,19 +44,20 @@ async def run() -> None:
     symbols = sorted({combo.binance_symbol for combo in combos})
     log.info(
         "scope=%d combos symbols=%s SHADOW phase=%s "
-        "training=%s calibration=%s forecasts=%s",
+        "training=%s calibration=%s forecasts=%s paper=%s",
         len(combos),
         symbols,
         cfg.phase,
         cfg.training_active,
         cfg.calibration_active,
         cfg.forecast_recording_active,
+        cfg.paper_trading_enabled,
     )
 
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
 
-    recorder = P25ResearchRecorder(cfg.db_path)
+    recorder = P25PaperRecorder(cfg.db_path, cfg)
     if cfg.model_inference_active:
         model = DirectionModel.load(cfg.model_path) or DirectionModel(
             cfg.per_combo_model_min_markets,
