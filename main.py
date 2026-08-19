@@ -627,22 +627,42 @@ async def run() -> None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("backfill hatasi: %s", exc)
 
+        # IZOLE gorevler: tek bir gorev cokse bile digerleri (ozellikle dashboard)
+        # AYAKTA kalir. TaskGroup all-or-nothing oldugu icin KULLANILMAZ.
+        tasks = [
+            asyncio.create_task(_supervise("discovery", discovery.run, stop), name="discovery"),
+            asyncio.create_task(_supervise("binance", binance.run, stop), name="binance"),
+            asyncio.create_task(_supervise("clob", clob.run, stop), name="clob"),
+            asyncio.create_task(_supervise("reference",
+                lambda s: _reference_refresher(hub, session, s), stop), name="reference"),
+            asyncio.create_task(_supervise("engine", engine.run, stop), name="engine"),
+        ]
+        if chainlink is not None:
+            tasks.append(asyncio.create_task(
+                _supervise("chainlink", chainlink.run, stop), name="chainlink"))
+        if cfg.web_enabled:
+            tasks.append(asyncio.create_task(
+                _supervise("web", lambda s: run_web(engine, cfg, s), stop), name="web"))
         try:
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(discovery.run(stop), name="discovery")
-                tg.create_task(binance.run(stop), name="binance")
-                if chainlink is not None:
-                    tg.create_task(chainlink.run(stop), name="chainlink")
-                tg.create_task(clob.run(stop), name="clob")
-                tg.create_task(_reference_refresher(hub, session, stop), name="reference")
-                tg.create_task(engine.run(stop), name="engine")
-                if cfg.web_enabled:
-                    tg.create_task(run_web(engine, cfg, stop), name="web")
-        except* Exception as eg:  # noqa: B001
-            for exc in eg.exceptions:
-                log.error("gorev hatasi: %s", exc)
+            await asyncio.gather(*tasks)
         finally:
             recorder.close()
+
+
+async def _supervise(name: str, coro_factory, stop: asyncio.Event) -> None:
+    """Bir gorevi izole calistir: cokse tam traceback logla + 3s sonra yeniden basla.
+
+    Boylece tek bir feed/engine cokusu tum sureci (ve dashboard'i) OLDURMEZ."""
+    while not stop.is_set():
+        try:
+            await coro_factory(stop)
+            return  # normal bitis (stop set)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("gorev '%s' COKTU (izole); 3s sonra yeniden baslatilacak", name)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=3.0)
 
 
 def main() -> None:
@@ -650,6 +670,11 @@ def main() -> None:
         asyncio.run(run())
     except KeyboardInterrupt:
         log.info("kullanici durdurdu (Ctrl+C)")
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exception("FATAL: run() coktu (tam traceback yukarida)")
+        raise
 
 
 if __name__ == "__main__":
