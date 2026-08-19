@@ -1,6 +1,6 @@
 """Integration-level smoke tests for the P2.5 decision path."""
 
-import pytest
+from types import SimpleNamespace
 
 from features import FeatureVector
 from models import (
@@ -98,13 +98,33 @@ def test_p25_engine_model_decision_path(monkeypatch, tmp_path):
     cfg = Settings()
     cfg.enforce_phase_lock()
 
-    model = DirectionModel(per_combo_min=999, min_markets_predict=MIN_MARKETS_PREDICT)
+    model = DirectionModel(
+        per_combo_min=999,
+        min_markets_predict=MIN_MARKETS_PREDICT,
+    )
     for _ in range(MIN_MARKETS_PREDICT + 3):
         model.learn_with_label(COMBO.key, [_fv(1.0)], 1)
         model.learn_with_label(COMBO.key, [_fv(-1.0)], 0)
 
     recorder = P25Recorder(str(tmp_path / "smoke.sqlite"))
-    engine = P25Engine(cfg, None, recorder, model, CalibrationBook(min_n=10))
-    bundle = engine.decide(None, _snapshot(), _quality(), _fv(1.0))
-    # replace missing ref-dependent trace via a tiny ref-like object
-    recorder.close()
+    try:
+        engine = P25Engine(
+            cfg,
+            None,
+            recorder,
+            model,
+            CalibrationBook(min_n=10),
+        )
+        ref = SimpleNamespace(combo=COMBO)
+        bundle = engine.decide(ref, _snapshot(), _quality(), _fv(1.0))
+        assert bundle.model_output is not None
+        assert bundle.model_output.ready
+        assert bundle.trace["p_up_raw"] is not None
+        assert bundle.trace["p_up_raw"] > 0.5
+        assert bundle.prediction.abstain_reason != AbstainReason.MODEL_NOT_TRAINED
+        assert bundle.prediction.decision in (
+            Decision.UP,
+            Decision.ABSTAIN,
+        )
+    finally:
+        recorder.close()
