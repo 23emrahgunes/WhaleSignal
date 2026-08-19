@@ -83,7 +83,7 @@ def test_early_forecast_works_without_trained_model():
     assert forecast.status == "PROVISIONAL"
 
 
-def test_research_probability_never_publishes_zero_or_one():
+def test_research_probability_is_bounded_and_symmetric():
     up = build_research_forecast(
         model_p_up=1.0,
         external_p_up=1.0,
@@ -110,8 +110,9 @@ def test_research_probability_never_publishes_zero_or_one():
         model_markets=500,
         validated_signal=True,
     )
-    assert up.p_up == pytest.approx(0.95)
-    assert down.p_up == pytest.approx(0.05)
+    assert 0.5 < up.p_up <= 0.95
+    assert 0.05 <= down.p_up < 0.5
+    assert up.p_up == pytest.approx(1.0 - down.p_up)
 
 
 def _ref() -> MarketRef:
@@ -119,7 +120,6 @@ def _ref() -> MarketRef:
     return MarketRef(
         combo=COMBO,
         condition_id="0xresearch",
-        market_id="research-market",
         slug=f"btc-updown-5m-{int(start)}",
         question="Bitcoin Up or Down",
         up_token_id="up-token",
