@@ -58,16 +58,17 @@ _HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Direction Engine P2.5 — SHADOW</title>
 <style>
-:root{--bg:#080d17;--panel:#10192a;--line:#22314a;--tx:#eef3fb;--mut:#91a6c6;--blue:#57a2ff;--green:#18cb8d;--red:#ef5d62;--amber:#efb44c}
+:root{--bg:#080d17;--panel:#10192a;--line:#22314a;--tx:#eef3fb;--mut:#91a6c6;--blue:#57a2ff;--green:#18cb8d;--red:#ef5d62;--amber:#efb44c;--purple:#b18cff}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px Inter,Segoe UI,Arial,sans-serif}
 header{position:sticky;top:0;z-index:2;background:#0a101c;border-bottom:1px solid var(--line);padding:12px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:4px 9px;border-radius:6px;background:#17345d;color:#c9deff;font-weight:800}.mut{color:var(--mut)}
-.wrap{max-width:1650px;margin:auto;padding:14px}.banner{padding:9px 12px;border:1px solid #695019;background:#291f08;color:#ffe0a1;border-radius:8px;margin-bottom:12px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:11px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}.dead{opacity:.45}
-.card h2{font-size:15px;color:var(--blue);margin:0 0 8px;display:flex;justify-content:space-between}.tag{padding:2px 7px;border-radius:5px;font-size:11px}.UP{background:#09684c;color:#a8f7dc}.DOWN{background:#7d2428;color:#ffd0d1}.ABSTAIN{background:#354158;color:#dfe7f4}
-.row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #1b2740;padding:3px 0}.row span{color:var(--mut)}.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.wrap{max-width:1750px;margin:auto;padding:14px}.banner{padding:10px 12px;border:1px solid #695019;background:#291f08;color:#ffe0a1;border-radius:8px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:11px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}.dead{opacity:.45}
+.card h2{font-size:15px;color:var(--blue);margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:center}.tags{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.tag{padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;white-space:nowrap}.UP{background:#09684c;color:#a8f7dc}.DOWN{background:#7d2428;color:#ffd0d1}.ABSTAIN,.NEUTRAL{background:#354158;color:#dfe7f4}.VALIDATED{outline:1px solid var(--green)}.PROVISIONAL{outline:1px solid var(--amber)}.CONFLICTED,.LIMITED{outline:1px solid var(--red)}
+.row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #1b2740;padding:3px 0}.row span{color:var(--mut)}.row b{text-align:right}.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.forecast{border:1px solid #315888;background:#0d1b31;border-radius:8px;padding:8px;margin:7px 0}.forecast .hero{display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:800}.forecast .prob{font-size:18px;color:#fff}.forecast small{color:#9db1d0}
 .qs{display:flex;gap:3px;flex-wrap:wrap;margin:5px 0}.q{padding:2px 5px;border-radius:4px;font-size:10px;font-weight:700}.q-OK{background:#0b5a3e;color:#a1f2d4}.q-WARN{background:#5b4907;color:#ffe8a6}.q-FAIL{background:#711c21;color:#ffc8ca}.q-WAITING{background:#29364f;color:#a9bddb}
-.good{color:var(--green)}.bad{color:var(--red)}.amb{color:var(--amber)}.why{color:#9db1d0;font-size:11px;margin-top:7px;min-height:26px}
+.good{color:var(--green)}.bad{color:var(--red)}.amb{color:var(--amber)}.purple{color:var(--purple)}.why{color:#9db1d0;font-size:11px;margin-top:7px;min-height:26px}
 .foot{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px;margin-top:12px}.metric{background:#0d1524;border:1px solid var(--line);border-radius:7px;padding:7px}.metric b{display:block;font-size:15px;color:#ddebff}
 </style>
 </head>
@@ -79,7 +80,7 @@ h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:4px 9px;border-radius
 <span class="mut" id="up"></span>
 </header>
 <div class="wrap">
-<div class="banner" id="banner">P2.5 yalnız SHADOW tahmin üretir. Emir, imza ve private key yoktur.</div>
+<div class="banner"><b>TAHMİN</b> her market için çalışan research ensemble’dır. <b>SİNYAL</b> ise yalnız istatistiksel doğrulama geçince UP/DOWN olur. Emir, imza ve private key yoktur.</div>
 <div class="grid" id="grid"></div>
 <div class="foot" id="foot"></div>
 </div>
@@ -93,11 +94,21 @@ function card(c){
  const q=c.quality||{};
  const qs=[['T',q.time],['M',q.market],['Tk',q.tokens],['C',q.clob],['R',q.reference],['Ck',q.clock],['Md',q.model]].map(x=>qchip(x[0],x[1])).join('');
  const f=c.feature||{};
- const dec=c.decision||'ABSTAIN';
- const p=c.p_up==null?'—':pc(c.p_up);
+ const signal=c.signal_decision||c.decision||'ABSTAIN';
+ const forecast=c.forecast_direction||'NEUTRAL';
+ const status=c.forecast_status||'NO_DATA';
+ const grade=c.forecast_grade||'LOW';
+ const fp=c.forecast_p_up==null?'—':pc(c.forecast_p_up);
+ const components=(c.forecast_components||[]).sort((a,b)=>Math.abs(b.contribution||0)-Math.abs(a.contribution||0)).slice(0,4).map(x=>`${x.name}:${Number(x.contribution||0)>=0?'+':''}${n(x.contribution,3)}`).join(' · ');
  return `<div class="card">
- <h2>${c.combo}<span class="tag ${dec}">${dec}</span></h2>
+ <h2>${c.combo}<span class="tags"><span class="tag ${forecast} ${status}">TAHMİN ${forecast}</span><span class="tag ${signal}">SİNYAL ${signal}</span></span></h2>
  <div class="qs">${qs}</div>
+ <div class="forecast">
+   <div class="hero"><span>Research tahmini</span><span class="prob ${forecast==='UP'?'good':forecast==='DOWN'?'bad':'amb'}">${forecast} · P(UP) ${fp}</span></div>
+   <div class="row"><span>güven / sınıf / durum</span><b>${pc(c.forecast_confidence)} · ${grade} · ${status}</b></div>
+   <div class="row"><span>uzlaşma / model olgunluğu</span><b>${pc(c.forecast_agreement)} / ${pc(c.forecast_model_maturity)}</b></div>
+   <small>${components||'bileşen bekleniyor'}</small>
+ </div>
  <div class="row mono"><span>market / TTE</span><b>${c.market_id} · ${n(c.tte_sec,0)}s</b></div>
  <div class="row"><span>PTB / distance</span><b>${n(c.official_reference_open,4)} · ${n(c.distance_bps,2)}bps</b></div>
  <div class="row"><span>UP / DOWN mid</span><b>${n(c.up_mid)} / ${n(c.down_mid)}</b></div>
@@ -107,11 +118,11 @@ function card(c){
  <div class="row"><span>OBI / OFI / PTB z</span><b>${n(f.obi20,2)} / ${n(f.ofi,2)} / ${n(f.ptb_z,2)}</b></div>
  <div class="row"><span>regime / predictability</span><b>${c.regime||'—'} · ${pc(c.predictability)}</b></div>
  <div class="row"><span>conflict / consensus</span><b>${n(c.conflict_score,2)} / ${n(c.directional_consensus,2)}</b></div>
- <div class="row"><span>P(UP) B2 raw→cal</span><b>${pc(c.p_up_raw)} → <span class="good">${p}</span></b></div>
+ <div class="row"><span>P(UP) B2 raw→cal</span><b>${pc(c.p_up_raw)} → ${pc(c.p_up)}</b></div>
  <div class="row"><span>B1 / PTB / market</span><b>${pc(c.p_up_external)} / ${pc(c.p_up_ptb)} / ${pc(c.p_up_market)}</b></div>
+ <div class="row"><span>validated signal / gate</span><b class="${signal==='ABSTAIN'?'amb':signal==='UP'?'good':'bad'}">${signal} · ${c.decision_gate||c.abstain_reason||'—'}</b></div>
  <div class="row"><span>threshold / calibration</span><b>${pc(c.threshold)} · ${c.threshold_source||'—'} · ${c.calibration_source||'—'}</b></div>
- <div class="row"><span>reason</span><b>${c.abstain_reason||'NONE'}</b></div>
- <div class="why">${(c.why||[]).join(' · ')}</div>
+ <div class="why">${(c.forecast_reasons||[]).join(' · ')}</div>
  </div>`;
 }
 async function tick(){
@@ -121,15 +132,14 @@ async function tick(){
  $('conn').innerHTML='Binance '+(d.binance_connected?'<span class="good">bağlı</span>':'<span class="bad">yok</span>')+' · clock '+(d.clock_synced?'<span class="good">sync</span>':'<span class="bad">UNSYNC</span>');
  $('up').textContent='uptime '+Math.round(d.uptime_sec||0)+'s';
  $('grid').innerHTML=(d.cards||[]).map(card).join('');
- const f=d.footer||{},s=d.safety||{},a=(d.forecast_analytics||{}).overall||{};
+ const f=d.footer||{},s=d.safety||{},a=(d.forecast_analytics||{}).overall||{},rf=a.research_forecast||{};
  const items=[
- ['active',f.markets_active],['PTB',f.ptb_states_healthy],['CLOB',f.clob_quote_healthy],
- ['features ready',f.features_ready],['model ready',f.model_ready_cards],
- ['snapshots',f.snapshots_total],['forecasts',f.forecasts],['labeled forecasts',f.labeled_forecasts],
- ['resolved',f.resolved_total],['coverage',a.coverage==null?'—':pc(a.coverage)],
- ['accuracy',a.accuracy==null?'—':pc(a.accuracy)],['Brier B2',a.brier_b2],
- ['training',s.model_training_enabled?'ON':'OFF'],['calibration',s.calibration_enabled?'ON':'OFF'],
- ['orders',s.live_orders],['execution',s.execution_enabled?'ON':'OFF']
+ ['active',f.markets_active],['PTB',f.ptb_states_healthy],['CLOB',f.clob_quote_healthy],['features ready',f.features_ready],
+ ['tahmin UP',f.forecast_up_cards],['tahmin DOWN',f.forecast_down_cards],['HIGH tahmin',f.forecast_high_grade_cards],['provisional',f.forecast_provisional_cards],
+ ['validated signals',f.validated_decision_cards],['model ready',f.model_ready_cards],['snapshots',f.snapshots_total],['forecasts',f.forecasts],
+ ['resolved',f.resolved_total],['tahmin accuracy',rf.accuracy==null?'—':pc(rf.accuracy)],['tahmin Brier',rf.brier],['tahmin N',rf.n],
+ ['signal coverage',a.coverage==null?'—':pc(a.coverage)],['signal accuracy',a.accuracy==null?'—':pc(a.accuracy)],
+ ['training',s.model_training_enabled?'ON':'OFF'],['calibration',s.calibration_enabled?'ON':'OFF'],['orders',s.live_orders],['execution',s.execution_enabled?'ON':'OFF']
  ];
  $('foot').innerHTML=items.map(x=>`<div class="metric"><b>${x[1]==null?'—':x[1]}</b>${x[0]}</div>`).join('');
 }

@@ -24,7 +24,7 @@ from p25_calibration import CalibrationBook
 from p25_config import Settings
 from p25_discovery import P25MarketDiscovery
 from p25_model import DirectionModel
-from p25_recorder import P25Recorder
+from p25_research_recorder import P25ResearchRecorder
 from p25_safety_engine import P25Engine
 from p25_web import run_web
 from reference import ReferenceRouter
@@ -55,7 +55,7 @@ async def run() -> None:
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
 
-    recorder = P25Recorder(cfg.db_path)
+    recorder = P25ResearchRecorder(cfg.db_path)
     if cfg.model_inference_active:
         model = DirectionModel.load(cfg.model_path) or DirectionModel(
             cfg.per_combo_model_min_markets,
