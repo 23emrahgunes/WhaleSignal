@@ -13,7 +13,6 @@ import aiohttp
 from binance_feed import BinanceFeed
 from chainlink_feed import ChainlinkFeed
 from clob_feed import ClobQuoteStore, ClobSupervisor
-from discovery import MarketDiscovery
 from hub import DataHub
 from main import (
     _install_signal_handlers,
@@ -23,6 +22,7 @@ from main import (
 )
 from p25_calibration import CalibrationBook
 from p25_config import Settings
+from p25_discovery import P25MarketDiscovery
 from p25_engine import P25Engine
 from p25_model import DirectionModel
 from p25_recorder import P25Recorder
@@ -76,7 +76,7 @@ async def run() -> None:
     )
 
     async with aiohttp.ClientSession() as session:
-        discovery = MarketDiscovery(cfg, session, combos)
+        discovery = P25MarketDiscovery(cfg, session, combos)
         binance = BinanceFeed(cfg, symbols, session)
         clob_store = ClobQuoteStore()
         chainlink = (
