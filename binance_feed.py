@@ -1,20 +1,9 @@
-"""Direct Binance WS feed — hizli kaynak (~124ms), 4 varlik.
+"""Direct Binance WS feed — fast source for P2.1 feature generation.
 
-Her sembol icin:
-  - `<sym>@trade`      -> agresif islem akisi (signed flow, ring buffer)
-  - `<sym>@depth@100ms`-> **diff-depth** olaylari -> REST snapshot ile senkronize
-                          **LOCAL ORDER BOOK** (gercek OFI icin; partial depth20 DEGIL)
-
-Diff-depth senkronizasyonu (Binance resmi algoritma):
-  1. depth akisini dinle, olaylari tamponla
-  2. REST `/depth?limit=1000` snapshot al -> lastUpdateId
-  3. u < lastUpdateId+1 olan tampon olaylarini at
-  4. ilk uygulanan olay: U <= lastUpdateId+1 <= u
-  5. sonraki her olay U == onceki_u + 1 olmali (degilse yeniden senkron)
-  6. miktar 0 -> seviye sil; degilse ata
-
-Tek birlesik WS (`/stream?streams=...`) ile tum semboller dinlenir; mesajlar
-`{"stream": "...", "data": {...}}` sarmalindadir.
+Maintains trade flow, a synchronized diff-depth local book and a bounded 100ms
+mark-price series. The canonical ``prices`` buffer used by features is this mark
+series, not an unbounded-rate trade stream, so 100ms..30m windows have stable
+coverage across BTC/ETH/SOL/XRP.
 """
 from __future__ import annotations
 
@@ -35,20 +24,37 @@ log = logging.getLogger("direction_engine.binance")
 
 
 class SymbolFeed:
-    """Tek sembolun yerel defteri + islem/fiyat ring buffer'lari."""
-
-    def __init__(self, symbol: str, ring_max: int) -> None:
+    def __init__(self, symbol: str, ring_max: int, feature_ring_max: Optional[int] = None) -> None:
         self.symbol = symbol.upper()
         self.book = LocalBook(symbol=self.symbol)
         self.trades: deque[Trade] = deque(maxlen=ring_max)
-        self.prices: deque[tuple[int, float]] = deque(maxlen=ring_max)  # (ts_ms, price)
-        self.last_trade_ts_ms: int = 0  # source event time (trade T)
-        self.last_depth_ts_ms: int = 0  # source event time (depth E)
-        self.last_frame_recv_ms: float = 0.0  # WS TRANSPORT: son frame varis (wall)
-        self._pending: deque[dict] = deque()  # senkron oncesi tamponlanan diff olaylari
+        self.feature_prices: deque[tuple[int, float]] = deque(maxlen=feature_ring_max or max(ring_max, 24000))
+        # Backward-compatible name consumed by FeatureEngine/main.
+        self.prices = self.feature_prices
+        self.last_trade_ts_ms: int = 0
+        self.last_depth_ts_ms: int = 0
+        self.last_frame_recv_ms: float = 0.0
+        self._pending: deque[dict] = deque()
         self._prev_u: int = 0
 
-    # ---- trade akisi ----
+    def _append_feature_price(self, ts_ms: int, price: Optional[float]) -> None:
+        if not ts_ms or price is None or price <= 0:
+            return
+        # Normalize to 100ms buckets. Multiple trades/depth updates in the same
+        # bucket replace the last mark rather than consuming long-history capacity.
+        bucket = (int(ts_ms) // 100) * 100
+        if self.feature_prices:
+            last_ts, _ = self.feature_prices[-1]
+            if bucket < last_ts:
+                return
+            if bucket == last_ts:
+                self.feature_prices[-1] = (bucket, float(price))
+                return
+        self.feature_prices.append((bucket, float(price)))
+
+    def feature_series(self) -> list[tuple[int, float]]:
+        return list(self.feature_prices)
+
     def on_trade(self, data: dict) -> None:
         self.last_frame_recv_ms = time.time() * 1000
         try:
@@ -59,10 +65,9 @@ class SymbolFeed:
         except (KeyError, TypeError, ValueError):
             return
         self.trades.append(Trade(price, qty, ts_ms, is_buyer_maker))
-        self.prices.append((ts_ms, price))
+        self._append_feature_price(ts_ms, price)
         self.last_trade_ts_ms = ts_ms
 
-    # ---- diff-depth akisi ----
     def on_depth(self, data: dict) -> None:
         self.last_frame_recv_ms = time.time() * 1000
         self.last_depth_ts_ms = int(data.get("E") or 0)
@@ -71,15 +76,12 @@ class SymbolFeed:
             return
         self._apply_diff(data)
 
-    # ---- ayrisik tazelik olculeri (feed health != last-trade-age) ----
     def transport_age_ms(self) -> Optional[float]:
-        """Son WS frame'inin varisindan bu yana (transport sagligi)."""
         if self.last_frame_recv_ms <= 0:
             return None
         return max(0.0, time.time() * 1000 - self.last_frame_recv_ms)
 
     def source_event_age_ms(self) -> Optional[float]:
-        """En yeni SOURCE event (trade T veya depth E) yasi."""
         newest = max(self.last_trade_ts_ms, self.last_depth_ts_ms)
         if newest <= 0:
             return None
@@ -91,7 +93,6 @@ class SymbolFeed:
         return max(0.0, time.time() * 1000 - self.last_trade_ts_ms)
 
     def apply_snapshot(self, snap: dict) -> None:
-        """REST snapshot uygula + tamponlanan diff'leri oynat (senkron kur)."""
         try:
             last_id = int(snap["lastUpdateId"])
         except (KeyError, TypeError, ValueError):
@@ -110,7 +111,6 @@ class SymbolFeed:
         self.book.asks = asks
         self.book.last_update_id = last_id
         self.book.ts = time.time()
-        # tamponu oynat: u < last_id+1 at; kalanini uygula
         replay = [ev for ev in self._pending if int(ev.get("u", 0)) >= last_id + 1]
         self._pending.clear()
         self._prev_u = last_id
@@ -119,16 +119,17 @@ class SymbolFeed:
             U, u = int(ev.get("U", 0)), int(ev.get("u", 0))
             if first:
                 if not (U <= last_id + 1 <= u):
-                    continue  # bosluk: bu olayi atla, senkron bir sonraki uygun olayda
+                    continue
                 first = False
             self._apply_diff(ev, mark_synced=False)
         self.book.synced = True
+        if self.last_depth_ts_ms:
+            self._append_feature_price(self.last_depth_ts_ms, self.book.mid)
 
     def _apply_diff(self, data: dict, mark_synced: bool = True) -> None:
         U, u = int(data.get("U", 0)), int(data.get("u", 0))
-        # sureklilik kontrolu: kopukluk varsa yeniden senkron gerek
         if self.book.synced and self._prev_u and U > self._prev_u + 1:
-            log.warning("%s: depth bosluk (U=%d prev_u=%d) -> yeniden senkron", self.symbol, U, self._prev_u)
+            log.warning("%s: depth gap (U=%d prev_u=%d) -> resync", self.symbol, U, self._prev_u)
             self.book.synced = False
             self._pending.clear()
             self._pending.append(data)
@@ -148,25 +149,19 @@ class SymbolFeed:
         self._prev_u = u
         self.book.last_update_id = u
         self.book.ts = time.time()
+        self._append_feature_price(int(data.get("E") or self.last_depth_ts_ms or 0), self.book.mid)
 
-    # ---- okuyucular ----
     def spot_price(self) -> tuple[Optional[float], Optional[float]]:
-        """(son_fiyat, yas_ms). Son trade ile book-mid'den DAHA TAZE olani sec.
-
-        Dusuk hacimli varliklarda (SOL/XRP) trade'ler seyrek gelir; book diff-depth
-        ile ~100ms'de guncellendiginden book-mid genelde daha tazedir -> spot bayat
-        sanilmaz. Fiyat ring'i yine trade-tabanli (returns/vol icin)."""
         now_ms = time.time() * 1000
-        candidates: list[tuple[float, float]] = []  # (price, age_ms)
-        if self.prices:
-            ts_ms, price = self.prices[-1]
+        candidates: list[tuple[float, float]] = []
+        if self.feature_prices:
+            ts_ms, price = self.feature_prices[-1]
             candidates.append((price, max(0.0, now_ms - ts_ms)))
         if self.book.synced and self.book.mid is not None and self.last_depth_ts_ms:
             candidates.append((self.book.mid, max(0.0, now_ms - self.last_depth_ts_ms)))
         if not candidates:
             return None, None
-        price, age = min(candidates, key=lambda c: c[1])  # en taze
-        return price, age
+        return min(candidates, key=lambda c: c[1])
 
     def book_age_ms(self) -> Optional[float]:
         if not self.book.synced or self.last_depth_ts_ms == 0:
@@ -175,47 +170,30 @@ class SymbolFeed:
 
 
 class BinanceFeed(ReconnectingWSClient):
-    """Tum semboller icin tek birlesik WS + REST snapshot senkronizasyonu."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        symbols: list[str],
-        session: aiohttp.ClientSession,
-    ) -> None:
-        depth_ms = settings.binance_depth_ms
+    def __init__(self, settings: Settings, symbols: list[str], session: aiohttp.ClientSession) -> None:
         streams: list[str] = []
         for sym in symbols:
             s = sym.lower()
-            streams.append(f"{s}@trade")
-            streams.append(f"{s}@depth@{depth_ms}ms")
+            streams.extend([f"{s}@trade", f"{s}@depth@{settings.binance_depth_ms}ms"])
         url = f"{settings.binance_ws_base}?streams={'/'.join(streams)}"
         super().__init__(
-            url,
-            "Binance",
-            session,
+            url, "Binance", session,
             backoff_base=settings.backoff_base_sec,
             backoff_factor=settings.backoff_factor,
             backoff_cap=settings.backoff_cap_sec,
             recv_timeout=settings.ws_recv_timeout_sec,
         )
         self.settings = settings
-        self.feeds: dict[str, SymbolFeed] = {
-            sym.upper(): SymbolFeed(sym, settings.ring_buffer_max) for sym in symbols
-        }
-        # clock: Binance serverTime ile offset (yerel saat kaymis mi)
+        feature_ring_max = int(getattr(settings, "feature_price_ring_max", 24000))
+        self.feeds = {sym.upper(): SymbolFeed(sym, settings.ring_buffer_max, feature_ring_max) for sym in symbols}
         self.clock_offset_ms: Optional[float] = None
         self.clock_checked_at: float = 0.0
 
     @property
     def clock_synced(self) -> bool:
-        """Offset olculdu ve esigin altinda mi (olculemedi -> True, engelleme yapma)."""
-        if self.clock_offset_ms is None:
-            return True
-        return abs(self.clock_offset_ms) <= self.settings.max_clock_skew_ms
+        return self.clock_offset_ms is None or abs(self.clock_offset_ms) <= self.settings.max_clock_skew_ms
 
     async def refresh_clock(self) -> None:
-        """Binance /time ile yerel saat offsetini olc (RTT/2 duzeltmeli)."""
         url = f"{self.settings.binance_rest_base}/api/v3/time"
         try:
             t0 = time.time() * 1000
@@ -226,15 +204,12 @@ class BinanceFeed(ReconnectingWSClient):
             t1 = time.time() * 1000
             server = float(payload.get("serverTime", 0))
             if server > 0:
-                # yerel orta an vs server; RTT/2 duzeltme
-                local_mid = (t0 + t1) / 2.0
-                self.clock_offset_ms = local_mid - server
+                self.clock_offset_ms = (t0 + t1) / 2.0 - server
                 self.clock_checked_at = time.time()
         except Exception as exc:  # noqa: BLE001
-            log.warning("clock offset olculemedi: %s", exc)
+            log.warning("clock offset unavailable: %s", exc)
 
     async def _on_connect(self) -> None:
-        # yeni baglantida her sembol icin snapshot'i yeniden al (senkron sifirla)
         for feed in self.feeds.values():
             feed.book.synced = False
             feed._pending.clear()
@@ -243,10 +218,8 @@ class BinanceFeed(ReconnectingWSClient):
         asyncio.create_task(self.refresh_clock())
 
     async def _snapshot(self, symbol: str) -> None:
-        """REST snapshot al ve local book'u senkronize et."""
         url = f"{self.settings.binance_rest_base}/api/v3/depth"
         params = {"symbol": symbol, "limit": str(self.settings.binance_book_snapshot_limit)}
-        # diff akisinin birkac olay tamponlamasi icin minik gecikme
         await asyncio.sleep(0.5)
         try:
             async with self._session.get(url, params=params, timeout=12) as resp:
@@ -255,12 +228,12 @@ class BinanceFeed(ReconnectingWSClient):
                     return
                 snap = await resp.json()
         except Exception as exc:  # noqa: BLE001
-            log.warning("%s snapshot alinamadi: %s", symbol, exc)
+            log.warning("%s snapshot unavailable: %s", symbol, exc)
             return
         feed = self.feeds.get(symbol)
         if feed is not None and isinstance(snap, dict):
             feed.apply_snapshot(snap)
-            log.info("%s local book senkron (lastUpdateId=%s)", symbol, snap.get("lastUpdateId"))
+            log.info("%s local book synced (lastUpdateId=%s)", symbol, snap.get("lastUpdateId"))
 
     async def _handle(self, raw: str) -> None:
         msg = json.loads(raw)
@@ -268,7 +241,6 @@ class BinanceFeed(ReconnectingWSClient):
         data = msg.get("data") if isinstance(msg, dict) else None
         if not stream or not isinstance(data, dict):
             return
-        # stream: "btcusdt@trade" | "btcusdt@depth@100ms"
         sym_part, _, kind = stream.partition("@")
         feed = self.feeds.get(sym_part.upper())
         if feed is None:
