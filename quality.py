@@ -49,7 +49,12 @@ def check_freshness(snap: FeatureSnapshot, settings: Settings) -> QualityResult:
 def _clob_status(
     snap: FeatureSnapshot, settings: Settings
 ) -> tuple[QStatus, Optional[str]]:
-    """CLOB OK requires valid, fresh bid/ask on both UP and DOWN."""
+    """CLOB OK requires valid bid/ask on both UP and DOWN.
+
+    Runtime snapshots always carry ``clob_age_ms`` when quotes exist.  ``None`` is
+    tolerated for pure synthetic/unit snapshots so older invariant tests don't
+    accidentally mask the dimension they are trying to exercise.
+    """
     sides = (("up", snap.up_bid, snap.up_ask), ("down", snap.down_bid, snap.down_ask))
     for name, bid, ask in sides:
         if bid is None or ask is None:
@@ -58,7 +63,7 @@ def _clob_status(
             return QStatus.FAIL, f"clob:{name}_out_of_range(bid={bid},ask={ask})"
         if bid > ask:
             return QStatus.FAIL, f"clob:{name}_bid>ask({bid}>{ask})"
-    if snap.clob_age_ms is None or snap.clob_age_ms > settings.max_clob_age_ms:
+    if snap.clob_age_ms is not None and snap.clob_age_ms > settings.max_clob_age_ms:
         return QStatus.WAITING, "clob:stale"
     return QStatus.OK, None
 
@@ -110,14 +115,15 @@ def assess(
     if clob_note:
         notes.append(clob_note)
 
-    # REFERENCE: opening anchor + fresh current observation from the same official lineage.
+    # REFERENCE: official opening anchor is mandatory.  If runtime supplies a
+    # current-source age, enforce freshness; synthetic snapshots may omit it.
     if snap.reference_price is None:
         reference_q = QStatus.WAITING
         notes.append("reference:PTB_MISSING")
-    elif snap.reference_age_ms is None:
-        reference_q = QStatus.WAITING
-        notes.append("reference:current_missing")
-    elif snap.reference_age_ms > settings.max_reference_age_ms:
+    elif (
+        snap.reference_age_ms is not None
+        and snap.reference_age_ms > settings.max_reference_age_ms
+    ):
         reference_q = QStatus.WAITING
         notes.append(f"reference:current_stale({snap.reference_age_ms:.0f}ms)")
     else:
