@@ -1,0 +1,92 @@
+name: Resolution Diagnostic
+
+on:
+  push:
+    branches:
+      - runtime-probe-20260819
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Inspect previous rolling markets
+        shell: bash
+        env:
+          STATE_URL: http://13.63.157.215:8091/api/state
+          GAMMA: https://gamma-api.polymarket.com
+          CLOB: https://clob.polymarket.com
+        run: |
+          set -Eeuo pipefail
+          curl --connect-timeout 5 --max-time 15 -fsS "$STATE_URL" -o /tmp/state.json
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from urllib.request import urlopen, Request
+          from urllib.parse import urlencode
+
+          state=json.loads(Path('/tmp/state.json').read_text())
+          cards=state.get('cards') or []
+          targets=[]
+          for c in cards:
+              combo=c.get('combo') or ''
+              slug=c.get('slug') or ''
+              if combo not in {'BTC:5m','ETH:5m','SOL:5m','XRP:5m','BTC:15m'}:
+                  continue
+              parts=slug.rsplit('-',1)
+              try:
+                  current=int(parts[-1])
+              except Exception:
+                  continue
+              horizon=300 if combo.endswith(':5m') else 900
+              targets.append((combo, f"{parts[0]}-{current-horizon}"))
+
+          def get_json(url):
+              req=Request(url,headers={'User-Agent':'direction-engine-resolution-diagnostic/1.0'})
+              try:
+                  with urlopen(req,timeout=20) as r:
+                      return r.status, json.loads(r.read().decode())
+              except Exception as e:
+                  return None, {'error':repr(e)}
+
+          wanted=['id','conditionId','slug','question','closed','active','archived','closedTime','updatedAt',
+                  'outcomes','outcomePrices','clobTokenIds','umaResolutionStatus','umaResolutionStatuses',
+                  'resolutionStatus','resolved','resolvedBy','automaticallyResolved','winning_outcome',
+                  'winningOutcome','winner','winning_asset_id','winningTokenId','winning_token_id','resolvedTokenId']
+
+          for combo,slug in targets:
+              print(f'=== {combo} previous_slug={slug} ===')
+              status,event=get_json(f"{os.environ['GAMMA']}/events/slug/{slug}")
+              print('event_http=',status)
+              if not isinstance(event,dict):
+                  print('event=',json.dumps(event,ensure_ascii=False)[:1500]); continue
+              markets=event.get('markets') or []
+              market=markets[0] if markets else {}
+              print('EVENT_KEYS=',sorted(event.keys()))
+              print('EVENT_SELECTED=',json.dumps({k:event.get(k) for k in wanted if k in event},ensure_ascii=False,sort_keys=True))
+              print('MARKET_KEYS=',sorted(market.keys()) if isinstance(market,dict) else type(market).__name__)
+              if isinstance(market,dict):
+                  print('EVENT_MARKET_SELECTED=',json.dumps({k:market.get(k) for k in wanted if k in market},ensure_ascii=False,sort_keys=True))
+                  cid=str(market.get('conditionId') or '')
+                  mid=str(market.get('id') or '')
+                  if cid:
+                      qs=urlencode({'condition_ids':cid})
+                      s2,gamma_market=get_json(f"{os.environ['GAMMA']}/markets?{qs}")
+                      gm=gamma_market[0] if isinstance(gamma_market,list) and gamma_market else gamma_market
+                      print('GAMMA_CONDITION_HTTP=',s2)
+                      print('GAMMA_CONDITION_KEYS=',sorted(gm.keys()) if isinstance(gm,dict) else type(gm).__name__)
+                      if isinstance(gm,dict):
+                          print('GAMMA_CONDITION_SELECTED=',json.dumps({k:gm.get(k) for k in wanted if k in gm},ensure_ascii=False,sort_keys=True))
+                      s3,clob=get_json(f"{os.environ['CLOB']}/clob-markets/{cid}")
+                      print('CLOB_MARKET_HTTP=',s3)
+                      print('CLOB_MARKET=',json.dumps(clob,ensure_ascii=False,sort_keys=True)[:3000])
+                  if mid:
+                      s4,byid=get_json(f"{os.environ['GAMMA']}/markets/{mid}")
+                      print('GAMMA_ID_HTTP=',s4)
+                      if isinstance(byid,dict):
+                          print('GAMMA_ID_SELECTED=',json.dumps({k:byid.get(k) for k in wanted if k in byid},ensure_ascii=False,sort_keys=True))
+              print()
+          PY
