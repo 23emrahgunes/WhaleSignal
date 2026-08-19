@@ -68,7 +68,9 @@ def test_ptb_baseline_is_bounded_and_monotonic():
     p_flat = ptb_diffusion_probability(flat)
     p_down = ptb_diffusion_probability(down)
     assert p_up is not None and p_flat is not None and p_down is not None
-    assert 0.0 < p_down < p_flat == pytest.approx(0.5) < p_up < 1.0
+    assert p_flat == pytest.approx(0.5)
+    assert 0.0 < p_down < p_flat
+    assert p_flat < p_up < 1.0
 
 
 def test_baselines_are_available_before_model_readiness():
@@ -108,7 +110,6 @@ def test_hierarchical_model_learns_direction_and_market_weights_once():
     assert up.source == "per_combo"
 
     shared = model.stats()["with_clob"]["shared"]
-    # Four/seven checkpoints still contribute one aggregate market weight each.
     assert shared["effective_weight"] == pytest.approx(shared["markets"], abs=1e-3)
     assert shared["samples"] > shared["markets"]
 
