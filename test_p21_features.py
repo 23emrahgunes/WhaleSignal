@@ -64,7 +64,7 @@ def test_symbol_feed_retains_book_mid_feature_history():
         "a": [],
     })
     assert feed.feature_prices
-    assert feed.feature_prices[-1][0] == event_ts
+    assert feed.feature_prices[-1][0] == (event_ts // 100) * 100
     assert feed.feature_prices[-1][1] == pytest.approx(100.5)
 
 
