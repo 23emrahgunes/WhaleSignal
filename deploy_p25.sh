@@ -24,6 +24,23 @@ wanted = {
     'MODEL_PATH': 'models/direction_model.pkl',
     'CALIBRATION_PATH': 'models/calibration_book.pkl',
     'FEATURE_PRICE_RING_MAX': '24000',
+    'PAPER_TRADING_ENABLED': 'true',
+    'PAPER_STRATEGY_VERSION': 'RESEARCH_PAPER_V1',
+    'PAPER_STARTING_BANKROLL_USDC': '1000',
+    'PAPER_STAKE_USDC': '2.50',
+    'PAPER_ENTRY_CHECKPOINT_5M': '60',
+    'PAPER_ENTRY_CHECKPOINT_15M': '240',
+    'PAPER_ENTRY_CHECKPOINT_1H': '600',
+    'PAPER_MIN_CONFIDENCE': '0.05',
+    'PAPER_MIN_AGREEMENT': '0.50',
+    'PAPER_MIN_EDGE': '0.00',
+    'PAPER_MIN_PRICE': '0.05',
+    'PAPER_MAX_PRICE': '0.95',
+    'PAPER_SLIPPAGE': '0.005',
+    'PAPER_FEE_BPS': '0',
+    'PAPER_ALLOWED_STATUSES': 'PROVISIONAL,VALIDATED',
+    'PAPER_ALLOWED_GRADES': 'LOW,MEDIUM,HIGH',
+    'PAPER_RECENT_LIMIT': '50',
 }
 lines = text.splitlines()
 seen = set()
@@ -55,6 +72,7 @@ echo "=== TESTS (deterministic P1 env; P25 tests override their phase) ==="
 PHASE=P1 \
 MODEL_TRAINING_ENABLED=false \
 CALIBRATION_ENABLED=false \
+PAPER_TRADING_ENABLED=false \
 ./.venv/bin/pytest -q
 
 echo "=== STOP OLD PROCESS ==="
@@ -62,7 +80,7 @@ pkill -f 'python.*p25_main.py' 2>/dev/null || true
 pkill -f 'python.*main.py' 2>/dev/null || true
 sleep 2
 
-echo "=== START P2.5 SHADOW ==="
+echo "=== START P2.5 SHADOW + PAPER ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
@@ -87,18 +105,28 @@ from pathlib import Path
 
 state = json.loads(Path('/tmp/direction-p25-state.json').read_text(encoding='utf-8'))
 safety = state.get('safety', {})
+paper = state.get('paper_trading', {})
+policy = paper.get('policy', {})
 print('phase=', state.get('phase'))
 print('mode=', state.get('mode'))
 print('markets_active=', state.get('footer', {}).get('markets_active'))
 print('training=', safety.get('model_training_enabled'))
 print('calibration=', safety.get('calibration_enabled'))
 print('forecast_recording=', safety.get('forecast_recording_enabled'))
+print('paper_trading=', safety.get('paper_trading_enabled'))
+print('paper_strategy=', policy.get('strategy_version'))
+print('paper_stake=', policy.get('stake_usdc'))
 print('execution=', safety.get('execution_enabled'))
 print('orders=', safety.get('live_orders'))
+print('paper_order_submissions=', safety.get('paper_order_submissions'))
 assert state.get('phase') == 'P2.5'
 assert state.get('mode') == 'SHADOW'
+assert safety.get('paper_trading_enabled') is True
+assert safety.get('paper_only') is True
+assert int(safety.get('paper_order_submissions') or 0) == 0
 assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
+assert paper.get('enabled') is True
 PY
 
-echo "P2.5 SHADOW DEPLOY PASS | pid=$new_pid | http=200"
+echo "P2.5 SHADOW + PAPER DEPLOY PASS | pid=$new_pid | http=200"
