@@ -1,21 +1,14 @@
-"""Yon modeli — ONLINE logistic baseline (aciklanabilir, kalibre-edilebilir).
+"""Direction model scaffold.
 
-Tasarim (plan geregi):
-  - **Logistic baseline** (sklearn SGDClassifier, log_loss) — online partial_fit ile
-    RESMI resolved market'lerden ogrenir; **hard-code agirlik YOK**.
-  - **Ilk donem: tek SHARED model + per-combo calibration** (calibration.py'de).
-    Bir combo yeterli market biriktirince (`per_combo_min`) o combo icin **AYRI model**
-    devreye girer (registry). 12 ayri modele boyle gecilir.
-  - **Iki varyant paralel: CLOB'lu vs CLOB'suz** — CLOB'un katkisini olcmek ve modelin
-    Polymarket'in kendi olasiligini taklit etmesini onlemek icin.
-  - Yeterli etiketli market yoksa **ready=False -> ABSTAIN** (uydurma tahmin yok).
-
-Ozellik olcekleme online (Welford running mean/std). Durum pickle ile kalici.
+P2.1 is feature-only SHADOW. This module may remain importable, but inference,
+learning and persistence are hard-disabled while PHASE is P1/P2.1. Later phases
+can explicitly enable the existing online logistic baseline.
 """
 from __future__ import annotations
 
 import logging
 import math
+import os
 import pickle
 from dataclasses import dataclass, field
 from typing import Optional
@@ -25,13 +18,15 @@ from sklearn.linear_model import SGDClassifier
 from models import AssetHorizon
 
 log = logging.getLogger("direction_engine.model")
+MIN_MARKETS_PREDICT = 20
 
-MIN_MARKETS_PREDICT = 20  # bir model tahmin uretmeden once gereken resolved market
+
+def _feature_only_phase() -> bool:
+    phase = os.getenv("PHASE", "P2.1").strip().upper()
+    return phase in {"P1", "P2.1", "P2_1", "P21"}
 
 
 class RunningNormalizer:
-    """Welford ile online ozellik standardizasyonu (lazy boyutlandirma)."""
-
     def __init__(self) -> None:
         self.n = 0
         self.mean: list[float] = []
@@ -63,8 +58,6 @@ class RunningNormalizer:
 
 @dataclass
 class _Model:
-    """Tek logistic model: normalizer + SGD + sayaclar."""
-
     normalizer: RunningNormalizer = field(default_factory=RunningNormalizer)
     clf: SGDClassifier = field(
         default_factory=lambda: SGDClassifier(
@@ -105,8 +98,6 @@ class _Model:
 
 
 class _VariantBank:
-    """Bir varyant (CLOB'lu/suz): shared model + per-combo registry."""
-
     def __init__(self, include_clob: bool, per_combo_min: int) -> None:
         self.include_clob = include_clob
         self.per_combo_min = per_combo_min
@@ -127,7 +118,6 @@ class _VariantBank:
         cm.learn_market(rows, label)
 
     def predict(self, combo_key: str, x: list[float]) -> tuple[Optional[float], str]:
-        """Per-combo model yeterince olgunsa onu, yoksa shared'i kullan."""
         cm = self.per_combo.get(combo_key)
         if cm is not None and cm.n_markets >= self.per_combo_min and cm.ready:
             return cm.predict_p_up(x), "per_combo"
@@ -146,32 +136,30 @@ class ModelOutput:
     p_up: Optional[float]
     confidence: float
     ready: bool
-    source: str  # "per_combo" | "shared" | "none"
-    p_up_no_clob: Optional[float] = None  # ablation kiyasi
+    source: str
+    p_up_no_clob: Optional[float] = None
 
 
 class DirectionModel:
-    """CLOB'lu (birincil) + CLOB'suz (ablation) varyantlari yonetir."""
-
     def __init__(self, per_combo_min: int = 200) -> None:
         self.with_clob = _VariantBank(include_clob=True, per_combo_min=per_combo_min)
         self.no_clob = _VariantBank(include_clob=False, per_combo_min=per_combo_min)
 
     def learn_market(self, combo: AssetHorizon, fv_list: list) -> None:
-        """Bir RESMI resolved market'in tum snapshot feature'lariyla ogren.
-
-        fv_list: FeatureVector listesi. label combo'nun resolved_outcome'undan gelir;
-        cagiran (engine) label'i verir -> asagidaki learn_with_label kullanilir.
-        """
         raise NotImplementedError("engine learn_with_label kullanir")
 
     def learn_with_label(self, combo_key: str, fv_list: list, label_up: int) -> None:
+        if _feature_only_phase():
+            log.warning("feature-only phase: model learn blocked")
+            return
         rows_clob = [fv.model_features(True)[1] for fv in fv_list]
         rows_noclob = [fv.model_features(False)[1] for fv in fv_list]
         self.with_clob.learn(combo_key, rows_clob, label_up)
         self.no_clob.learn(combo_key, rows_noclob, label_up)
 
     def predict(self, combo_key: str, fv) -> ModelOutput:  # noqa: ANN001
+        if _feature_only_phase():
+            return ModelOutput(None, 0.0, False, "feature_only", None)
         _, x_clob = fv.model_features(True)
         _, x_noclob = fv.model_features(False)
         p_clob, source = self.with_clob.predict(combo_key, x_clob)
@@ -182,7 +170,8 @@ class DirectionModel:
         return ModelOutput(p_clob, confidence, True, source, p_noclob)
 
     def ready_for(self, combo_key: str) -> bool:
-        """fv olmadan: bu combo icin (per-combo veya shared) CLOB'lu model hazir mi."""
+        if _feature_only_phase():
+            return False
         cm = self.with_clob.per_combo.get(combo_key)
         if cm is not None and cm.n_markets >= self.with_clob.per_combo_min and cm.ready:
             return True
@@ -193,10 +182,13 @@ class DirectionModel:
             "with_clob": self.with_clob.stats(),
             "no_clob": self.no_clob.stats(),
             "min_markets_predict": MIN_MARKETS_PREDICT,
+            "feature_only_lock": _feature_only_phase(),
         }
 
-    # --- kalicilik ---
     def save(self, path: str) -> None:
+        if _feature_only_phase():
+            log.warning("feature-only phase: model save blocked")
+            return
         try:
             with open(path, "wb") as f:
                 pickle.dump(self, f)
@@ -205,6 +197,10 @@ class DirectionModel:
 
     @staticmethod
     def load(path: str) -> Optional["DirectionModel"]:
+        # Loading a stale artifact is unnecessary in feature-only P2.1 and can
+        # confuse readiness displays, so fail closed.
+        if _feature_only_phase():
+            return None
         try:
             with open(path, "rb") as f:
                 obj = pickle.load(f)
