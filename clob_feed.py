@@ -108,6 +108,12 @@ class ClobSupervisor:
         self._session = session
         self._token_provider = token_provider
         self.last_change_ts: float = 0.0
+        self._stream: Optional[ClobOrderbookStream] = None  # aktif WS (transport health)
+
+    @property
+    def transport_healthy(self) -> bool:
+        """CLOB WS bagli mi (transport). Usable-quote health'ten AYRI kavram."""
+        return self._stream is not None and self._stream.connected
 
     async def run(self, stop: asyncio.Event) -> None:
         current: Optional[list[str]] = None
@@ -126,6 +132,7 @@ class ClobSupervisor:
                 current = ids
                 child_stop = asyncio.Event()
                 stream = ClobOrderbookStream(self.settings, self.store, ids, self._session)
+                self._stream = stream
                 child_task = asyncio.create_task(stream.run(child_stop))
                 self.last_change_ts = time.time()
                 log.info("CLOB abone (yeni token kumesi): %d token", len(ids))

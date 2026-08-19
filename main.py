@@ -109,6 +109,10 @@ class ShadowEngine:
         self.started_at = time.time()
         self._resolve_count = 0
         self._data_quality_errors = 0
+        self._clob = None  # ClobSupervisor (transport health)
+
+    def attach_clob(self, clob) -> None:  # noqa: ANN001
+        self._clob = clob
 
     def _event(self, kind: str, detail: str) -> None:
         self.events.appendleft({"ts": time.time(), "kind": kind, "detail": detail})
@@ -328,8 +332,12 @@ class ShadowEngine:
         self._acc.pop(ref.market_id, None)
 
     def _compute_result(self, ref) -> Optional[Decision]:  # noqa: ANN001
-        """Yerel audit: kapanis spot vs reference_open (official DEGIL, yalniz kiyas)."""
-        if ref.reference_open is None:
+        """Yerel audit: kapanis spot vs official_reference_open (official DEGIL, kiyas).
+
+        1h icin official_reference_open = candle open; spot(kapanisa yakin) >= open -> UP.
+        """
+        anchor = ref.official_reference_open
+        if anchor is None:
             return None
         feed = self.hub.binance.get_feed(ref.combo.binance_symbol)
         spot = None
@@ -337,7 +345,7 @@ class ShadowEngine:
             spot, _ = feed.spot_price()
         if spot is None:
             return None
-        return Decision.UP if spot >= ref.reference_open else Decision.DOWN
+        return Decision.UP if spot >= anchor else Decision.DOWN
 
     def _prune_acc(self) -> None:
         if len(self._acc) <= 600:
@@ -360,12 +368,17 @@ class ShadowEngine:
             # --- zaman ---
             "tte_sec": r(snap.tte_sec, 1),
             "time_status": ref.time_status.value,
-            # --- reference / PTB ---
+            # --- reference / PTB (OFFICIAL = PTB; PROXY = analytics) ---
             "resolution_type": ref.resolution_type.value,
+            "resolution_symbol": ref.resolution_symbol,
             "resolution_meta_ok": ref.has_resolution_meta,
-            "reference_open": r(ref.reference_open, 2),
+            "official_reference_open": r(snap.official_reference_open, 2),
+            "official_reference_source": snap.official_reference_source,
+            "proxy_reference_open": r(snap.proxy_reference_open, 2),
+            "reference_current": r(snap.reference_current, 2),
             "spot_price": r(snap.spot_price, 2),
-            "distance_bps": r(snap.distance_bps, 2),
+            "distance_bps": r(snap.official_distance_bps, 2),  # official PTB distance
+            "proxy_distance_bps": r(snap.proxy_distance_bps, 2),
             # --- CLOB (up/down bid/ask/mid; 0.505 YOK) ---
             "up_bid": r(snap.up_bid), "up_ask": r(snap.up_ask), "up_mid": r(snap.up_mid),
             "down_bid": r(snap.down_bid), "down_ask": r(snap.down_ask), "down_mid": r(snap.down_mid),
@@ -393,7 +406,7 @@ class ShadowEngine:
         status = self.hub.discovery.snapshot_status()
         cards = []
         up_mids: list[float] = []
-        clob_healthy = ptb_healthy = 0
+        clob_quote_healthy = ptb_healthy = 0
         for combo in combos:
             card = self.latest.get(combo.key)
             if card is None or not card.get("active"):
@@ -406,12 +419,17 @@ class ShadowEngine:
                 }
             else:
                 card["discovery_status"] = status.get(combo.key, "FOUND")
-                if card.get("up_mid") is not None:
+                # usable CLOB quote = hem up hem down mid var
+                if card.get("up_mid") is not None and card.get("down_mid") is not None:
                     up_mids.append(card["up_mid"])
-                    clob_healthy += 1
-                if card.get("reference_open") is not None:
+                    clob_quote_healthy += 1
+                # PTB healthy = OFFICIAL reference var (proxy DEGIL)
+                if card.get("official_reference_open") is not None:
                     ptb_healthy += 1
             cards.append(card)
+        active_count = sum(1 for c in cards if c.get("active"))
+        clob_transport = bool(self._clob and self._clob.transport_healthy)
+        clob_transport_healthy = active_count if clob_transport else 0
 
         # SUSPICIOUS_IDENTICAL_QUOTES: >=3 aktif markette ayni up_mid
         suspicious = False
@@ -439,14 +457,15 @@ class ShadowEngine:
             "clock_offset_ms": self.hub.binance.clock_offset_ms,
             # --- footer metrikleri ---
             "footer": {
-                "markets_active": sum(1 for c in cards if c.get("active")),
+                "markets_active": active_count,
                 "markets_discovered_total": rec["markets"],
                 "snapshots_total": rec["snapshots"],
                 "snapshots_labeled": rec["labeled_snapshots"],
                 "resolved_total": rec["resolved_markets"],
                 "label_mismatch": rec["label_mismatch"],
-                "clob_states_healthy": clob_healthy,
-                "ptb_states_healthy": ptb_healthy,
+                "clob_transport_healthy": clob_transport_healthy,  # WS bagli market
+                "clob_quote_healthy": clob_quote_healthy,  # usable up+down quote
+                "ptb_states_healthy": ptb_healthy,  # OFFICIAL reference (proxy DEGIL)
                 "discovery_errors": self.hub.discovery.discovery_errors,
                 "data_quality_errors": self._data_quality_errors,
                 "suspicious_identical_quotes": suspicious,
@@ -520,6 +539,7 @@ async def run() -> None:
         engine = ShadowEngine(cfg, hub, recorder, model, calib)
         discovery.on_resolved(engine.on_market_resolved)  # settle + ogren + kalibrasyon
         clob = ClobSupervisor(cfg, clob_store, session, hub.active_token_ids)
+        engine.attach_clob(clob)  # CLOB transport health (quote health'ten ayri)
 
         # P1 backfill: resolved market + resolution + label pipeline testi (snapshot URETMEZ)
         if cfg.backfill_resolved_markets > 0:

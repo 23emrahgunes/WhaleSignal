@@ -171,13 +171,11 @@ def test_local_book_gap_triggers_resync():
 # --------------------------------------------------------------------------
 
 
-def test_reference_router_picks_adapter_by_horizon():
+def test_reference_router_constructs():
     from reference import ReferenceRouter
 
-    r = ReferenceRouter(Settings())
-    assert r.adapter_for(Horizon.H5M) is r.chainlink
-    assert r.adapter_for(Horizon.H15M) is r.chainlink
-    assert r.adapter_for(Horizon.H1H) is r.binance
+    r = ReferenceRouter(Settings())  # official/proxy mimarisi (adapter_for kaldirildi)
+    assert hasattr(r, "reference_for")
 
 
 def test_pick_candle_open():
@@ -681,13 +679,16 @@ def test_canonical_time_horizon_bounds():
         c = AssetHorizon(Asset.BTC, Horizon(tf))
         s, e, ts = canonical_time(c, f"btc-updown-{tf}-1787175000", 0, 0)
         assert e - s == secs and ts == TimeStatus.OK
-    # 1h metadata
+    # 1h: ET-slot slug (metadata DEGIL)
     c1 = AssetHorizon(Asset.BTC, Horizon.H1H)
-    s, e, ts = canonical_time(c1, "", 1000.0, 1000.0 + 3600)
+    s, e, ts = canonical_time(c1, "bitcoin-up-or-down-august-18-2026-7pm-et", 0, 0)
     assert e - s == 3600 and ts == TimeStatus.OK
     # 5m no slug -> UNSAFE
     _, _, ts2 = canonical_time(AssetHorizon(Asset.BTC, Horizon.H5M), "", 1000, 1300)
     assert ts2 == TimeStatus.UNSAFE_TIME_METADATA
+    # 1h ET-slot parse edilemezse -> UNSAFE
+    _, _, ts3 = canonical_time(c1, "", 1000, 1000 + 3600)
+    assert ts3 == TimeStatus.UNSAFE_TIME_METADATA
 
 
 def test_tte_never_exceeds_horizon():
@@ -887,3 +888,123 @@ def test_freshness_transport_vs_trade_age_separate():
     assert feed.transport_age_ms() < 500  # transport taze
     assert feed.last_trade_age_ms() > 8000  # trade eski
     # -> seyrek trade transport'u bayat yapmaz (ayrisik)
+
+
+# ==========================================================================
+# P1 v2: 1h insan-okunur slug + official/proxy reference + CLOB health
+# ==========================================================================
+
+from datetime import datetime as _dt  # noqa: E402
+from zoneinfo import ZoneInfo as _ZI  # noqa: E402
+
+
+def test_hourly_fixtures_parse():
+    from discovery import parse_hourly_slug
+
+    fixtures = {
+        "bitcoin-up-or-down-august-18-2026-7pm-et": (Asset.BTC, 2026, 8, 18, 19),
+        "ethereum-up-or-down-august-18-2026-8pm-et": (Asset.ETH, 2026, 8, 18, 20),
+        "solana-up-or-down-august-18-2026-8pm-et": (Asset.SOL, 2026, 8, 18, 20),
+        "xrp-up-or-down-august-18-2026-8pm-et": (Asset.XRP, 2026, 8, 18, 20),
+    }
+    for slug, (asset, y, mo, d, h) in fixtures.items():
+        parsed = parse_hourly_slug(slug)
+        assert parsed is not None, slug
+        a, start, end = parsed
+        assert a == asset
+        assert end - start == 3600.0  # duration
+        et = _dt.fromtimestamp(start, _ZI("America/New_York"))
+        assert (et.year, et.month, et.day, et.hour) == (y, mo, d, h)
+
+
+def test_hourly_symbol_mapping():
+    from models import HOURLY_ASSET_MAP
+
+    assert HOURLY_ASSET_MAP["BTC"]["binance_symbol"] == "BTCUSDT"
+    assert HOURLY_ASSET_MAP["XRP"]["slug_asset"] == "xrp"
+
+
+def test_hourly_slug_roundtrip_and_candidates():
+    from discovery import hourly_slug, hourly_candidates
+
+    et = _dt(2026, 8, 18, 19, 0, tzinfo=_ZI("America/New_York"))
+    assert hourly_slug("bitcoin", et) == "bitcoin-up-or-down-august-18-2026-7pm-et"
+    cands = hourly_candidates()
+    assert len(cands) == 3
+    assert (cands[1] - cands[0]).total_seconds() == 3600
+    assert (cands[2] - cands[1]).total_seconds() == 3600
+
+
+def test_match_combo_hourly_human_slug():
+    from discovery import match_combo
+
+    assert match_combo("bitcoin-up-or-down-august-18-2026-7pm-et") == AssetHorizon(Asset.BTC, Horizon.H1H)
+    assert match_combo("xrp-up-or-down-august-18-2026-8pm-et") == AssetHorizon(Asset.XRP, Horizon.H1H)
+
+
+def test_hourly_resolution_binance_candle():
+    from discovery import parse_event_markets
+    import json as _j
+
+    ev = {
+        "slug": "bitcoin-up-or-down-august-18-2026-7pm-et", "title": "Bitcoin Up or Down",
+        "markets": [{
+            "conditionId": "0xh", "question": "BTC 7pm",
+            "clobTokenIds": _j.dumps(["u", "d"]), "outcomes": _j.dumps(["Up", "Down"]),
+            "endDate": "2026-08-18T23:00:00Z", "closed": False,
+        }],
+    }
+    ref = parse_event_markets(ev, AssetHorizon(Asset.BTC, Horizon.H1H))
+    assert ref.resolution_type == ResolutionType.BINANCE_1H_CANDLE
+    assert ref.resolution_symbol == "BTCUSDT"
+    assert ref.market_end_ts - ref.market_start_ts == 3600.0
+
+
+def test_official_reference_extraction_5m():
+    from discovery import extract_official_reference
+
+    # metadata alani
+    v, src = extract_official_reference({"startPrice": "64500.5"})
+    assert v == pytest.approx(64500.5) and src.startswith("metadata")
+    # yok -> None (PTB_MISSING)
+    v2, reason = extract_official_reference({"foo": "bar"})
+    assert v2 is None and reason == "NO_OFFICIAL_REFERENCE"
+
+
+def test_reference_proxy_never_promoted_to_official():
+    """official yoksa PTB_MISSING; Binance proxy VAR OLSA BILE reference OK olmaz."""
+    from quality import assess
+
+    ref = _ref5m()
+    # proxy dolu ama official None -> reference_price None
+    snap = _full_snap(ref, reference_price=None, official_reference_open=None,
+                      proxy_reference_open=64000.0, proxy_distance_bps=3.0)
+    q = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q.reference == QStatus.WAITING
+    assert q.abstain_reason == AbstainReason.PTB_MISSING
+    # official gelince -> OK
+    snap2 = _full_snap(ref, reference_price=64000.0, official_reference_open=64000.0)
+    q2 = assess(ref, snap2, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q2.reference == QStatus.OK
+
+
+def test_candle_open_alignment_returns_open_time():
+    from reference.ref_binance import find_candle_open
+
+    ws_ms = 1787097600000
+    rows = [[ws_ms, "64592.5", "x", "x", "x", "x", ws_ms + 3600000]]
+    px, ot = find_candle_open(rows, ws_ms)
+    assert px == pytest.approx(64592.5) and ot == ws_ms  # openTime == market_start (hizali)
+
+
+def test_clob_transport_vs_quote_health():
+    from clob_feed import ClobQuoteStore, ClobSupervisor
+
+    sup = ClobSupervisor(Settings(), ClobQuoteStore(), None, lambda: [])
+    assert sup.transport_healthy is False  # aktif stream yok
+    store = ClobQuoteStore()
+    store.update("u", 0.54, 0.56)
+    store.update("d", 0.44, 0.46)
+    # usable quote = up + down mid var
+    assert store.get("u").mid == pytest.approx(0.55)
+    assert store.get("d").mid == pytest.approx(0.45)

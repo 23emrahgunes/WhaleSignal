@@ -3,6 +3,7 @@ aiohttp>=3.9
 pydantic>=2.5
 pydantic-settings>=2.1
 numpy>=1.26
+tzdata>=2024.1  # 1h ET-slot canonical zaman (ZoneInfo America/New_York) icin
 pytest>=8.0
 pytest-asyncio>=0.23
 

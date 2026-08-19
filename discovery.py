@@ -22,7 +22,9 @@ import logging
 import re
 import time
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -32,18 +34,77 @@ from models import (
     AssetHorizon,
     Decision,
     DiscoveryStatus,
+    HOURLY_ASSET_MAP,
     Horizon,
     LabelStatus,
     MarketRef,
     ResolutionType,
     TimeStatus,
+    _SLUG_ASSET_TO_ENUM,
 )
 
 log = logging.getLogger("direction_engine.discovery")
 
-# slug: btc-updown-5m-1699999999  (asset-updown-tf-windowunix)
+# 5m/15m slug: btc-updown-5m-1699999999  (asset-updown-tf-windowunix)
 _SLUG_RE = re.compile(r"(btc|eth|sol|xrp)-updown-(5m|15m|1h|60m|hourly)-(\d{6,})")
 _HORIZON_ALIAS = {"5m": "5m", "15m": "15m", "1h": "1h", "60m": "1h", "hourly": "1h"}
+
+# 1h insan-okunur slug: bitcoin-up-or-down-august-18-2026-7pm-et
+_HOURLY_SLUG_RE = re.compile(
+    r"(bitcoin|ethereum|solana|xrp)-up-or-down-([a-z]+)-(\d{1,2})-(\d{4})-(\d{1,2})(am|pm)-et"
+)
+_ET = ZoneInfo("America/New_York")
+_MONTHS = {
+    m.lower(): i
+    for i, m in enumerate(
+        ["", "January", "February", "March", "April", "May", "June", "July",
+         "August", "September", "October", "November", "December"]
+    ) if m
+}
+
+
+def hourly_slug(slug_asset: str, dt_et: datetime) -> str:
+    """ET saat datetime'indan insan-okunur hourly slug uret.
+
+    Ornek: (bitcoin, 2026-08-18 19:00 ET) -> bitcoin-up-or-down-august-18-2026-7pm-et
+    """
+    month = dt_et.strftime("%B").lower()
+    hour12 = dt_et.strftime("%I").lstrip("0") or "12"
+    ampm = dt_et.strftime("%p").lower()
+    return f"{slug_asset}-up-or-down-{month}-{dt_et.day}-{dt_et.year}-{hour12}{ampm}-et"
+
+
+def parse_hourly_slug(slug: str) -> Optional[tuple[Asset, float, float]]:
+    """Hourly slug -> (Asset, start_utc, end_utc). ET slot -> UTC; duration=3600."""
+    if not slug:
+        return None
+    m = _HOURLY_SLUG_RE.search(slug.lower())
+    if not m:
+        return None
+    slug_asset, month_name, day, year, hour12, ampm = m.groups()
+    asset_val = _SLUG_ASSET_TO_ENUM.get(slug_asset)
+    month = _MONTHS.get(month_name)
+    if asset_val is None or month is None:
+        return None
+    h12 = int(hour12)
+    if ampm == "am":
+        h24 = 0 if h12 == 12 else h12
+    else:
+        h24 = 12 if h12 == 12 else h12 + 12
+    try:
+        start_local = datetime(int(year), month, int(day), h24, 0, 0, tzinfo=_ET)
+    except ValueError:
+        return None
+    start_utc = start_local.astimezone(timezone.utc).timestamp()
+    return Asset(asset_val), start_utc, start_utc + 3600.0
+
+
+def hourly_candidates(now: Optional[float] = None) -> list[datetime]:
+    """Su anki ET saatine gore prev/current/next saat baslangic datetime'lari."""
+    now = time.time() if now is None else now
+    et_now = datetime.fromtimestamp(now, _ET)
+    cur = et_now.replace(minute=0, second=0, microsecond=0)
+    return [cur - timedelta(hours=1), cur, cur + timedelta(hours=1)]
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +144,26 @@ def canonical_time(
 
     5m/15m: slug-unix OTORİTER (market_start=unix, market_end=unix+horizon). Generic
     endDate yalnız cross-check (buyuk sapma -> WARNING, UNSAFE DEGIL). slug-unix yoksa
-    5m/15m icin UNSAFE_TIME_METADATA. 1h: slug-unix varsa o, yoksa metadata; canonical
-    sure horizon'a uymuyorsa UNSAFE.
+    5m/15m icin UNSAFE_TIME_METADATA. 1h: insan-okunur ET-slot slug'indan (unix/metadata
+    DEGIL); duration==3600 invariant; parse edilemezse UNSAFE.
     """
     horizon_sec = combo.horizon.seconds
+    # 1h: canonical zaman ET-slot slug'indan (metadata prediction window DEGIL)
+    if combo.horizon == Horizon.H1H:
+        parsed = parse_hourly_slug(slug)
+        if parsed is not None:
+            _asset, start, end = parsed
+            if abs((end - start) - 3600.0) > 1.0:
+                return start, end, TimeStatus.UNSAFE_TIME_METADATA
+            if meta_end > 0 and abs(meta_end - end) > 300:
+                log.warning(
+                    "%s 1h canonical/endDate sapma (canon_end=%.0f meta_end=%.0f) -> canonical (ET-slot)",
+                    slug, end, meta_end,
+                )
+            return start, end, TimeStatus.OK
+        # ET-slot parse edilemedi -> guvenli degil
+        return (meta_start or None), (meta_end or None), TimeStatus.UNSAFE_TIME_METADATA
+    # 5m/15m: slug-unix OTORİTER
     slug_unix = parse_slug_unix(slug)
     if slug_unix:
         start = float(slug_unix)
@@ -97,25 +174,19 @@ def canonical_time(
                 slug, end, meta_end,
             )
         return start, end, TimeStatus.OK
-    # slug-unix yok
-    if combo.horizon in (Horizon.H5M, Horizon.H15M):
-        # 5m/15m'de slug-unix sart; yoksa metadata guvenilmez
-        return (meta_start or None), (meta_end or None), TimeStatus.UNSAFE_TIME_METADATA
-    # 1h: metadata start/end
-    if meta_end <= 0:
-        return None, None, TimeStatus.UNSAFE_TIME_METADATA
-    start = meta_start if meta_start > 0 else (meta_end - horizon_sec)
-    end = meta_end
-    # canonical sure horizon'a makul uymali
-    if abs((end - start) - horizon_sec) > max(120, 0.25 * horizon_sec):
-        return start, end, TimeStatus.UNSAFE_TIME_METADATA
-    return start, end, TimeStatus.OK
+    # 5m/15m'de slug-unix sart; yoksa metadata guvenilmez
+    return (meta_start or None), (meta_end or None), TimeStatus.UNSAFE_TIME_METADATA
 
 
 def match_combo(text: str) -> Optional[AssetHorizon]:
-    """slug/title icinden AssetHorizon cikar. Eslesme yoksa None."""
+    """slug/title icinden AssetHorizon cikar (5m/15m unix VE 1h insan-okunur). Yoksa None."""
     if not text:
         return None
+    # 1h insan-okunur slug (bitcoin-up-or-down-...-7pm-et)
+    parsed = parse_hourly_slug(text)
+    if parsed is not None:
+        return AssetHorizon(parsed[0], Horizon.H1H)
+    # 5m/15m unix slug
     m = _SLUG_RE.search(text.lower())
     if not m:
         return None
@@ -206,6 +277,53 @@ def parse_official_result(
         if oc is not None:
             return oc, "resolved_status+outcomePrices"
     return None, "none"
+
+
+# 5m/15m official reference (Chainlink "price to beat") aranacak alan adlari
+_OFFICIAL_REF_FIELDS = (
+    "startPrice", "start_price", "referencePrice", "reference_price",
+    "strikePrice", "strike_price", "strike", "openingPrice", "opening_price",
+    "initialPrice", "initial_price", "resolutionPrice", "line",
+)
+_PRICE_NEAR_RE = re.compile(
+    r"(?:starting price|reference price|price to beat|strike|opening price|resolves .* above)\D{0,40}\$?\s*([0-9][0-9,]*\.?[0-9]*)",
+    re.IGNORECASE,
+)
+
+
+def extract_official_reference(
+    market: dict, event: Optional[dict] = None
+) -> tuple[Optional[float], str]:
+    """5m/15m official reference (Chainlink price-to-beat) — market metadata/rules'tan.
+
+    Yalnizca ACIK isaretli alan/ifadeler; generic 'price' alanlarini KORLEMESINE alma.
+    Bulunamazsa (None, reason) -> PTB_MISSING. Binance proxy BURADA KULLANILMAZ.
+    """
+    if not isinstance(market, dict):
+        return None, "NO_OFFICIAL_RULE_SOURCE"
+    for k in _OFFICIAL_REF_FIELDS:
+        v = market.get(k)
+        if v is None:
+            continue
+        try:
+            fv = float(str(v).replace(",", "").lstrip("$").strip())
+        except (ValueError, TypeError):
+            continue
+        if fv > 0:
+            return fv, f"metadata:{k}"
+    # rules/description icinde acik ifade
+    for src in (market.get("description"), market.get("rules"),
+                (event or {}).get("description")):
+        if isinstance(src, str) and src.strip():
+            m = _PRICE_NEAR_RE.search(src)
+            if m:
+                try:
+                    fv = float(m.group(1).replace(",", ""))
+                    if fv > 0:
+                        return fv, "rules_text"
+                except (ValueError, TypeError):
+                    pass
+    return None, "NO_OFFICIAL_REFERENCE"
 
 
 def extract_resolution_source(market: dict, event: Optional[dict] = None) -> str:
@@ -314,7 +432,25 @@ def parse_event_markets(
         return None
 
     source = extract_resolution_source(gm, event)
-    rtype = classify_resolution(source, combo.horizon)
+    resolution_symbol: Optional[str] = None
+    official_open: Optional[float] = None
+    official_open_src: Optional[str] = None
+    if combo.horizon == Horizon.H1H:
+        # 1h up/down: Binance saatlik mum baziyla resolve (spec 16)
+        rtype = ResolutionType.BINANCE_1H_CANDLE
+        resolution_symbol = HOURLY_ASSET_MAP[combo.asset.value]["binance_symbol"]
+        if not source:
+            source = "BINANCE 1h candle (hourly up/down)"
+        # official reference 1h'te runtime'da Binance candle-open ile doldurulur (ref adaptor)
+    else:
+        rtype = classify_resolution(source, combo.horizon)
+        # 5m/15m official reference (Chainlink) metadata'dan; yoksa None -> PTB_MISSING
+        official_open, official_open_src = extract_official_reference(gm, event)
+        if official_open is not None:
+            src_label = (
+                "CHAINLINK_TWAP" if rtype == ResolutionType.CHAINLINK_TWAP else "CHAINLINK"
+            )
+            official_open_src = f"{src_label}:{official_open_src}"
 
     return MarketRef(
         combo=combo,
@@ -330,6 +466,10 @@ def parse_event_markets(
         time_status=time_status,
         resolution_source=source,
         resolution_type=rtype,
+        resolution_symbol=resolution_symbol,
+        official_reference_open=official_open,
+        official_reference_open_time=(market_start if official_open is not None else None),
+        official_reference_source=official_open_src,
     )
 
 
@@ -421,6 +561,55 @@ class MarketDiscovery:
             return None
         return parse_event_markets(ev, combo)
 
+    async def _fast_path_hourly(self, combo: AssetHorizon) -> Optional[MarketRef]:
+        """1h: insan-okunur ET-slot slug'larini (prev/current/next) probe et.
+
+        `bitcoin-up-or-down-<month>-<day>-<year>-<hour><am|pm>-et`. O AN acik olan
+        (canonical start<=now<end) ilk aktif marketi dondurur; diagnostic loglar.
+        """
+        slug_asset = HOURLY_ASSET_MAP[combo.asset.value]["slug_asset"]
+        now = time.time()
+        probed: list[str] = []
+        candidates: list[MarketRef] = []
+        for dt_et in hourly_candidates(now):
+            slug = hourly_slug(slug_asset, dt_et)
+            probed.append(slug)
+            url = f"{self.settings.gamma_host}/events/slug/{slug}"
+            try:
+                ev = await self._fetch_json(url)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(ev, dict) or ev.get("closed"):
+                continue
+            ref = parse_event_markets(ev, combo)
+            if ref is not None and ref.remaining_sec(now) > 0:
+                candidates.append(ref)
+        # o an acik (start<=now<end) olani sec; yoksa en yakin baslayacak
+        selected: Optional[MarketRef] = None
+        for ref in candidates:
+            if (ref.market_start_ts or 0) <= now < (ref.market_end_ts or 0):
+                selected = ref
+                break
+        if selected is None and candidates:
+            selected = min(candidates, key=lambda r: r.remaining_sec(now))
+        # diagnostic (spec 15)
+        if selected is not None:
+            log.info(
+                "%s 1h DISCOVERY fast-path FOUND slug=%s market_id=%s TTE=%.0fs "
+                "resolution=%s/%s probed=%d",
+                combo.key, selected.slug, (selected.market_id or "")[-8:],
+                selected.remaining_sec(now), selected.resolution_type.value,
+                selected.resolution_symbol, len(probed),
+            )
+        else:
+            log.info(
+                "%s 1h DISCOVERY fast-path NOT_FOUND (probed %d ET-slot slug) reason=NO_VALID_HOURLY_CANDIDATE",
+                combo.key, len(probed),
+            )
+        return selected
+
     async def _active_event_discovery(self) -> dict[str, MarketRef]:
         """ASIL yol: Gamma active-event listeleme -> combo eslesmesi (1h dahil)."""
         found: dict[str, MarketRef] = {}
@@ -458,20 +647,24 @@ class MarketDiscovery:
         found: dict[str, MarketRef] = {}
         errored: set[str] = set()
         now = time.time()
-        # 1) 5m/15m: fast path ONCE — deterministik O ANKI pencere (guvenilir)
+        # 1) fast path ONCE — 5m/15m unix pencere, 1h insan-okunur ET-slot
         for combo in self.combos:
-            if combo.horizon in (Horizon.H5M, Horizon.H15M):
-                try:
-                    ref = await self._fast_path_slug(combo)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    self.discovery_errors += 1
-                    errored.add(combo.key)
-                    ref = None
-                if ref is not None and ref.remaining_sec(now) > 0:
-                    found[combo.key] = ref
-        # 2) active-event discovery: 1h + fast path'in bulamadigi combo'lar
+            fp = None
+            try:
+                if combo.horizon in (Horizon.H5M, Horizon.H15M):
+                    fp = self._fast_path_slug
+                elif combo.horizon == Horizon.H1H:
+                    fp = self._fast_path_hourly
+                if fp is not None:
+                    ref = await fp(combo)
+                    if ref is not None and ref.remaining_sec(now) > 0:
+                        found[combo.key] = ref
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                self.discovery_errors += 1
+                errored.add(combo.key)
+        # 2) active-event discovery: fast path'in bulamadigi combo'lar (1h fallback dahil)
         try:
             ae = await self._active_event_discovery()
         except asyncio.CancelledError:
@@ -547,6 +740,8 @@ class MarketDiscovery:
                 ref.label_status = LabelStatus.MATCH
             ref.resolved = True
             ref.official_result = official
+            ref.official_result_source = note
+            ref.official_resolved_at = now
             ref.resolved_outcome = official  # geriye uyum
             self._resolved_seen.add(ref.condition_id)
             self.resolved_log.appendleft(ref)

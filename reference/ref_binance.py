@@ -19,12 +19,17 @@ _INTERVAL = {"5m": "5m", "15m": "15m", "1h": "1h"}
 
 
 def pick_candle_open(rows: list, window_start_ms: int) -> Optional[float]:
-    """Klines satirlarindan openTime == window_start olan mumun open fiyati.
+    """Klines satirlarindan openTime == window_start olan mumun open fiyati."""
+    px, _ = find_candle_open(rows, window_start_ms)
+    return px
 
-    rows: Binance /klines ciktisi [[openTime, open, high, low, close, ...], ...].
-    Tam eslesme yoksa window_start'i iceren mum (openTime <= ws < closeTime).
-    """
-    best: Optional[float] = None
+
+def find_candle_open(
+    rows: list, window_start_ms: int
+) -> tuple[Optional[float], Optional[int]]:
+    """(open_px, open_time_ms). openTime == window_start tam eslesme tercih; yoksa
+    window_start'i iceren mum (openTime <= ws < closeTime). Bulunamazsa (None, None)."""
+    best: tuple[Optional[float], Optional[int]] = (None, None)
     for r in rows:
         try:
             open_time = int(r[0])
@@ -33,9 +38,9 @@ def pick_candle_open(rows: list, window_start_ms: int) -> Optional[float]:
         except (IndexError, TypeError, ValueError):
             continue
         if open_time == window_start_ms:
-            return open_px
+            return open_px, open_time
         if open_time <= window_start_ms < close_time:
-            best = open_px
+            best = (open_px, open_time)
     return best
 
 

@@ -7,6 +7,7 @@ capa oldugundan `reference_cache`'te tutulur ve ayri bir gorevle tazelenir.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from typing import Optional
 
@@ -71,15 +72,22 @@ class DataHub:
             transport_age = feed.transport_age_ms()
             source_age = feed.source_event_age_ms()
 
-        # PTB = market'e sabitlenen reference_open (resolution-tipine gore). Sabit capa.
-        reference_price = ref.reference_open
-        reference_age = 0.0 if reference_price is not None else None
+        # PTB = OFFICIAL reference (resolution kaynagi). Proxy ASLA PTB degil.
+        official = ref.official_reference_open
+        reference_price = official  # PTB yalniz official
+        reference_age = 0.0 if official is not None else None
+        current = ref.reference_current if ref.reference_current is not None else spot
 
+        # official_distance_bps = 10000*ln(current/official) (spec 17)
+        official_distance_bps = None
         distance_usd = None
-        distance_bps = None
-        if spot is not None and reference_price:
-            distance_usd = spot - reference_price
-            distance_bps = (distance_usd / reference_price) * 10000.0
+        if current is not None and official:
+            official_distance_bps = 10000.0 * math.log(current / official)
+            distance_usd = current - official
+        # proxy_distance_bps (analytics-only)
+        proxy_distance_bps = None
+        if current is not None and ref.proxy_reference_open:
+            proxy_distance_bps = 10000.0 * math.log(current / ref.proxy_reference_open)
 
         # CLOB: up VE down token'in gercek bid/ask/mid. **0.505 fallback YOK** —
         # bid/ask yoksa None. token_id -> market_id reverse index (store token-anahtarli).
@@ -107,9 +115,20 @@ class DataHub:
             market_end=ref.market_end_ts,
             tte_sec=tte,
             spot_price=spot,
-            reference_price=reference_price,
+            reference_price=reference_price,  # = official (PTB)
             distance_usd=distance_usd,
-            distance_bps=distance_bps,
+            distance_bps=official_distance_bps,  # PTB distance = official
+            official_reference_open=official,
+            official_reference_open_time=ref.official_reference_open_time,
+            official_reference_source=ref.official_reference_source,
+            proxy_reference_open=ref.proxy_reference_open,
+            proxy_reference_open_time=ref.proxy_reference_open_time,
+            proxy_reference_source=ref.proxy_reference_source,
+            official_distance_bps=official_distance_bps,
+            proxy_distance_bps=proxy_distance_bps,
+            reference_current=current,
+            reference_current_time=ref.reference_current_time,
+            resolution_symbol=ref.resolution_symbol,
             up_bid=up_bid,
             up_ask=up_ask,
             up_mid=up_mid,

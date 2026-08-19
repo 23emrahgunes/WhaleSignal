@@ -113,6 +113,8 @@ class Recorder:
                 ("time_status", "TEXT"), ("official_result", "TEXT"),
                 ("computed_result", "TEXT"), ("label_status", "TEXT"),
                 ("source", "TEXT DEFAULT 'live'"),
+                ("resolution_symbol", "TEXT"), ("official_result_source", "TEXT"),
+                ("official_resolved_at", "REAL"),
             ],
             "snapshots": [
                 ("market_start", "REAL"), ("market_end", "REAL"), ("tte_sec", "REAL"),
@@ -120,6 +122,13 @@ class Recorder:
                 ("down_bid", "REAL"), ("down_ask", "REAL"), ("transport_age_ms", "REAL"),
                 ("source_age_ms", "REAL"), ("quality_status", "TEXT"),
                 ("source", "TEXT DEFAULT 'live'"),
+                ("resolution_symbol", "TEXT"),
+                ("official_reference_open", "REAL"), ("official_reference_open_time", "REAL"),
+                ("official_reference_source", "TEXT"),
+                ("proxy_reference_open", "REAL"), ("proxy_reference_open_time", "REAL"),
+                ("proxy_reference_source", "TEXT"),
+                ("official_distance_bps", "REAL"), ("proxy_distance_bps", "REAL"),
+                ("reference_current", "REAL"), ("reference_current_time", "REAL"),
             ],
         }
         cur = self.conn.cursor()
@@ -143,8 +152,8 @@ class Recorder:
             INSERT INTO markets (condition_id, market_id, combo_key, asset, horizon, slug,
                                  question, market_start, market_end, time_status,
                                  start_ts, end_ts, resolution_source, resolution_type,
-                                 meta_ok, source, discovered_ts)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 resolution_symbol, meta_ok, source, discovered_ts)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(condition_id) DO UPDATE SET
                 slug=excluded.slug, question=excluded.question,
                 market_start=excluded.market_start, market_end=excluded.market_end,
@@ -152,6 +161,7 @@ class Recorder:
                 start_ts=excluded.start_ts, end_ts=excluded.end_ts,
                 resolution_source=excluded.resolution_source,
                 resolution_type=excluded.resolution_type,
+                resolution_symbol=excluded.resolution_symbol,
                 meta_ok=excluded.meta_ok
             """,
             (
@@ -169,6 +179,7 @@ class Recorder:
                 ref.end_ts,
                 ref.resolution_source,
                 ref.resolution_type.value,
+                ref.resolution_symbol,
                 meta_ok,
                 source,
                 ref.discovered_ts,
@@ -196,8 +207,13 @@ class Recorder:
                  tte_sec, seconds_remaining, spot_price, reference_price, distance_usd,
                  distance_bps, up_bid, up_ask, up_mid, down_bid, down_ask, down_mid,
                  clob_spread, spot_age_ms, book_age_ms, transport_age_ms, source_age_ms,
-                 clob_age_ms, reference_age_ms, quality_status, source, extra_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 clob_age_ms, reference_age_ms, quality_status, source, resolution_symbol,
+                 official_reference_open, official_reference_open_time, official_reference_source,
+                 proxy_reference_open, proxy_reference_open_time, proxy_reference_source,
+                 official_distance_bps, proxy_distance_bps, reference_current,
+                 reference_current_time, extra_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                    ?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 ref.condition_id, snap.combo.key, checkpoint, snap.ts,
@@ -206,7 +222,12 @@ class Recorder:
                 snap.up_bid, snap.up_ask, snap.up_mid, snap.down_bid, snap.down_ask, snap.down_mid,
                 snap.clob_spread, snap.spot_age_ms, snap.book_age_ms, snap.transport_age_ms,
                 snap.source_age_ms, snap.clob_age_ms, snap.reference_age_ms,
-                snap.quality_status, "live", extra_json,
+                snap.quality_status, "live", snap.resolution_symbol,
+                snap.official_reference_open, snap.official_reference_open_time,
+                snap.official_reference_source, snap.proxy_reference_open,
+                snap.proxy_reference_open_time, snap.proxy_reference_source,
+                snap.official_distance_bps, snap.proxy_distance_bps, snap.reference_current,
+                snap.reference_current_time, extra_json,
             ),
         )
         self.conn.commit()
@@ -228,8 +249,10 @@ class Recorder:
         label_status = ref.label_status.value if ref.label_status else "UNKNOWN"
         self.conn.execute(
             """UPDATE markets SET resolved=1, resolved_outcome=?, official_result=?,
+                   official_result_source=?, official_resolved_at=?,
                    computed_result=?, label_status=? WHERE condition_id=?""",
-            (off, off, computed, label_status, ref.condition_id),
+            (off, off, ref.official_result_source, ref.official_resolved_at,
+             computed, label_status, ref.condition_id),
         )
         # training label yalniz MISMATCH DEGILSE yazilir (MISMATCH -> training-disi)
         if label_status != "MISMATCH":

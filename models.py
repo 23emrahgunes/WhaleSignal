@@ -82,8 +82,20 @@ class ResolutionType(str, Enum):
     CHAINLINK = "CHAINLINK"  # Chainlink referans (window/anlik)
     CHAINLINK_TWAP = "CHAINLINK_TWAP"  # Chainlink TWAP (pencere+gozlem ani)
     BINANCE_CANDLE = "BINANCE_CANDLE"
+    BINANCE_1H_CANDLE = "BINANCE_1H_CANDLE"  # 1h up/down: Binance saatlik mum open/close
     UMA = "UMA"
     UNKNOWN = "UNKNOWN"
+
+
+# Hourly (1h) insan-okunur slug/title varlik eslesmesi.
+# slug: "<slug_asset>-up-or-down-<month>-<day>-<year>-<hour><am|pm>-et"
+HOURLY_ASSET_MAP = {
+    "BTC": {"slug_asset": "bitcoin", "title_asset": "Bitcoin", "binance_symbol": "BTCUSDT"},
+    "ETH": {"slug_asset": "ethereum", "title_asset": "Ethereum", "binance_symbol": "ETHUSDT"},
+    "SOL": {"slug_asset": "solana", "title_asset": "Solana", "binance_symbol": "SOLUSDT"},
+    "XRP": {"slug_asset": "xrp", "title_asset": "XRP", "binance_symbol": "XRPUSDT"},
+}
+_SLUG_ASSET_TO_ENUM = {v["slug_asset"]: k for k, v in HOURLY_ASSET_MAP.items()}
 
 
 class TimeStatus(str, Enum):
@@ -167,17 +179,32 @@ class MarketRef:
     market_start_ts: Optional[float] = None
     market_end_ts: Optional[float] = None
     time_status: TimeStatus = TimeStatus.OK
-    # --- reference/PTB (resolution-tipine gore; generic openPrice DEGIL) ---
-    reference_open: Optional[float] = None
+    # --- reference/PTB: OFFICIAL (resolution path) vs PROXY (analytics) AYRI ---
+    # official: PTB SADECE bu doluysa healthy. 5m/15m=CHAINLINK path, 1h=BINANCE_1H_CANDLE.
+    official_reference_open: Optional[float] = None
+    official_reference_open_time: Optional[float] = None
+    official_reference_source: Optional[str] = None  # CHAINLINK|CHAINLINK_TWAP|BINANCE_1H_CANDLE
+    # proxy: yalnizca analytics/feature; ASLA official PTB yerine gecmez.
+    proxy_reference_open: Optional[float] = None
+    proxy_reference_open_time: Optional[float] = None
+    proxy_reference_source: Optional[str] = None  # BINANCE
+    # ortak canli referans
     reference_current: Optional[float] = None
-    reference_updated_at: Optional[float] = None
+    reference_current_time: Optional[float] = None
+    reference_symbol: Optional[str] = None
     twap_window_sec: Optional[int] = None  # Chainlink TWAP ise
     twap_observation_ts: Optional[float] = None
+    # geriye uyum (deprecated; hub artik official_reference_open kullanir)
+    reference_open: Optional[float] = None
+    reference_updated_at: Optional[float] = None
+    resolution_symbol: Optional[str] = None
     # --- discovery + settlement ---
     discovery_status: DiscoveryStatus = DiscoveryStatus.FOUND
     resolved: bool = False
     resolved_outcome: Optional[Decision] = None  # official (explicit metadata)
     official_result: Optional[Decision] = None  # explicit official (birincil label)
+    official_result_source: Optional[str] = None  # winning_outcome|winning_asset_id|...
+    official_resolved_at: Optional[float] = None
     computed_result: Optional[Decision] = None  # yerel audit (spot vs reference)
     label_status: LabelStatus = LabelStatus.UNKNOWN
     discovered_ts: float = field(default_factory=time.time)
@@ -305,11 +332,22 @@ class FeatureSnapshot:
     market_start: Optional[float] = None
     market_end: Optional[float] = None
     tte_sec: Optional[float] = None
-    # fiyat / referans
+    # fiyat / referans (OFFICIAL = PTB; PROXY = analytics-only)
     spot_price: Optional[float] = None  # direct Binance current
-    reference_price: Optional[float] = None  # PTB (resolution-tipine gore)
+    reference_price: Optional[float] = None  # = official_reference_open (PTB)
     distance_usd: Optional[float] = None
-    distance_bps: Optional[float] = None
+    distance_bps: Optional[float] = None  # = official_distance_bps
+    official_reference_open: Optional[float] = None
+    official_reference_open_time: Optional[float] = None
+    official_reference_source: Optional[str] = None
+    proxy_reference_open: Optional[float] = None
+    proxy_reference_open_time: Optional[float] = None
+    proxy_reference_source: Optional[str] = None
+    official_distance_bps: Optional[float] = None
+    proxy_distance_bps: Optional[float] = None
+    reference_current: Optional[float] = None
+    reference_current_time: Optional[float] = None
+    resolution_symbol: Optional[str] = None
     # CLOB (up + down, bid/ask/mid; 0.505 fallback YOK)
     up_bid: Optional[float] = None
     up_ask: Optional[float] = None
