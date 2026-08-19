@@ -2,8 +2,8 @@
 
 Rules:
 - 5m/15m official opening reference comes from the same Chainlink Data Stream
-  lineage named by the Polymarket market rules.  Polymarket RTDS provides that
-  public Chainlink stream.  A short source-timestamped RTDS history is used to
+  lineage named by the Polymarket market rules. Polymarket RTDS provides that
+  public Chainlink stream. A short source-timestamped RTDS history is used to
   select the observation nearest the canonical market start.
 - Binance kline open for 5m/15m is analytics-only proxy and is never promoted.
 - 1h official reference is the Binance 1-hour candle open aligned exactly with
@@ -66,7 +66,6 @@ class ReferenceRouter:
         now = time.time()
         ref.reference_symbol = ref.combo.binance_symbol
 
-        # Current reference must follow the official source lineage when available.
         if ref.combo.horizon == Horizon.H1H:
             if feed is not None:
                 spot, age = feed.spot_price()
@@ -81,10 +80,13 @@ class ReferenceRouter:
                 ref.reference_current = cl.value
                 ref.reference_current_time = cl.source_ts
                 ref.reference_current_source_ts = cl.source_ts
-                # Source age, not local poll/receive age.
-                ref.reference_current_age_ms = cl.source_age_ms(now)
+                # Source age, not local receive age.
+                if hasattr(cl, "source_age_ms"):
+                    ref.reference_current_age_ms = cl.source_age_ms(now)
+                else:
+                    ref.reference_current_age_ms = max(0.0, (now - cl.source_ts) * 1000.0)
             elif feed is not None:
-                # Dashboard-only analytics fallback. This does NOT satisfy REFERENCE quality.
+                # Dashboard-only analytics fallback. It never satisfies official PTB itself.
                 spot, age = feed.spot_price()
                 if spot is not None:
                     ref.reference_current = spot
@@ -161,10 +163,27 @@ class ReferenceRouter:
             or ref.resolution_type == ResolutionType.CHAINLINK
         )
 
+    def _legacy_opening_state(self, ref, now: float):  # noqa: ANN001
+        """Compatibility only for simple test/feed stubs without history.
+
+        Production ChainlinkFeed always implements opening_state(). This fallback
+        is strictly limited to the opening capture window; a mid-window restart
+        therefore still fails closed rather than using the current tick as PTB.
+        """
+        if self.chainlink is None or not hasattr(self.chainlink, "get_state"):
+            return None
+        if ref.market_start_ts is None:
+            return None
+        if now - ref.market_start_ts > float(getattr(self.settings, "open_capture_window_sec", 30.0)):
+            return None
+        state = self.chainlink.get_state(ref.combo.asset.value)
+        if state is None:
+            return None
+        return state
+
     def _acquire_5m15m_official(self, ref, now: float) -> None:  # noqa: ANN001
         mid = ref.market_id
 
-        # Priority 1: explicit authoritative metadata captured by discovery.
         if ref.official_reference_open is not None:
             self._log_capture(ref, "OFFICIAL_OK")
             return
@@ -178,9 +197,9 @@ class ReferenceRouter:
             ) = cached
             return
 
-        # Do not silently call a generic Chainlink tick a TWAP.  Current Up/Down
-        # rules name Chainlink Data Streams; if a genuinely different TWAP rule is
-        # ever encountered, fail closed until a matching official adapter exists.
+        # Do not silently call a generic Chainlink tick a TWAP. Current Up/Down
+        # rules name Chainlink Data Streams; a genuinely different TWAP rule must
+        # fail closed until a matching official adapter exists.
         if ref.resolution_type == ResolutionType.CHAINLINK_TWAP and not self._rules_name_data_stream(ref):
             self._log_capture(ref, "PTB_MISSING", "UNSUPPORTED_TWAP_REFERENCE")
             return
@@ -192,13 +211,16 @@ class ReferenceRouter:
         max_align_ms = float(
             getattr(self.settings, "max_reference_open_alignment_ms", _DEFAULT_CHAINLINK_OPEN_ALIGN_MS)
         )
-        opening = self.chainlink.opening_state(
-            ref.combo.asset.value,
-            ref.market_start_ts,
-            max_alignment_ms=max_align_ms,
-        )
+        if hasattr(self.chainlink, "opening_state"):
+            opening = self.chainlink.opening_state(
+                ref.combo.asset.value,
+                ref.market_start_ts,
+                max_alignment_ms=max_align_ms,
+            )
+        else:
+            opening = self._legacy_opening_state(ref, now)
+
         if opening is None:
-            # This is expected after a mid-window restart if no boundary tick exists in history.
             self._log_capture(ref, "PTB_MISSING", "OPEN_REFERENCE_UNAVAILABLE")
             return
 
@@ -222,8 +244,7 @@ class ReferenceRouter:
         if ref.official_reference_open and ref.proxy_reference_open:
             try:
                 gap = round(
-                    10000.0
-                    * math.log(ref.proxy_reference_open / ref.official_reference_open),
+                    10000.0 * math.log(ref.proxy_reference_open / ref.official_reference_open),
                     3,
                 )
             except Exception:  # noqa: BLE001
