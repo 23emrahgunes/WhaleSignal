@@ -101,10 +101,12 @@ class DataHub:
         down_mid = down_q.mid if down_q else None
         clob_spread = None
         clob_age = None
-        if up_q is not None:
-            if up_bid is not None and up_ask is not None:
-                clob_spread = up_ask - up_bid
-            clob_age = max(0.0, now * 1000 - up_q.ts * 1000)
+        if up_q is not None and up_bid is not None and up_ask is not None:
+            clob_spread = up_ask - up_bid
+        # clob_age = UP ve DOWN'un EN BAYAT olani (ikisi de taze olmali)
+        ages = [max(0.0, now * 1000 - q.ts * 1000) for q in (up_q, down_q) if q is not None]
+        if ages:
+            clob_age = max(ages)
 
         tte = ref.remaining_sec(now)
         return FeatureSnapshot(
@@ -128,6 +130,7 @@ class DataHub:
             proxy_distance_bps=proxy_distance_bps,
             reference_current=current,
             reference_current_time=ref.reference_current_time,
+            reference_current_age_ms=ref.reference_current_age_ms,
             resolution_symbol=ref.resolution_symbol,
             up_bid=up_bid,
             up_ask=up_ask,

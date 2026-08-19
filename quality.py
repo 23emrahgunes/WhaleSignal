@@ -63,16 +63,17 @@ def check_freshness(snap: FeatureSnapshot, settings: Settings) -> QualityResult:
 
 
 def _clob_status(snap: FeatureSnapshot, settings: Settings) -> tuple[QStatus, Optional[str]]:
-    """UP tarafi kotasi: gercek bid/ask var mi + invariant (bid<=ask, 0..1) + tazelik."""
-    b, a = snap.up_bid, snap.up_ask
-    if b is None or a is None:
-        return QStatus.WAITING, "clob:waiting(no_quote)"  # 0.505 fallback YOK
-    if not (0.0 <= b <= 1.0) or not (0.0 <= a <= 1.0):
-        return QStatus.FAIL, f"clob:out_of_range(bid={b},ask={a})"
-    if b > a:
-        return QStatus.FAIL, f"clob:bid>ask({b}>{a})"
+    """CLOB=OK icin **UP ve DOWN ikisi de** gerekli: bid+ask var, bid<=ask, [0,1], fresh."""
+    sides = (("up", snap.up_bid, snap.up_ask), ("down", snap.down_bid, snap.down_ask))
+    for name, b, a in sides:
+        if b is None or a is None:
+            return QStatus.WAITING, f"clob:waiting(no_{name}_quote)"  # 0.505 fallback YOK
+        if not (0.0 <= b <= 1.0) or not (0.0 <= a <= 1.0):
+            return QStatus.FAIL, f"clob:{name}_out_of_range(bid={b},ask={a})"
+        if b > a:
+            return QStatus.FAIL, f"clob:{name}_bid>ask({b}>{a})"
     if snap.clob_age_ms is not None and snap.clob_age_ms > settings.max_clob_age_ms:
-        return QStatus.WARN, "clob:stale"
+        return QStatus.WAITING, "clob:stale"  # bayat -> usable degil -> ABSTAIN(CLOB_MISSING)
     return QStatus.OK, None
 
 

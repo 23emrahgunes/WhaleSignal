@@ -249,9 +249,11 @@ def test_recorder_records_and_settles_with_official_label(tmp_path):
     assert st["markets"] == 1 and st["meta_ok_markets"] == 1
     assert st["snapshots"] == 2 and st["labeled_snapshots"] == 0
 
-    # resmi resolve -> etiket backfill
+    # resmi resolve -> etiket backfill (label = official vs computed; MATCH -> labeled)
     ref.resolved = True
     ref.resolved_outcome = Decision.UP
+    ref.official_result = Decision.UP
+    ref.computed_result = Decision.UP  # official==computed -> MATCH
     rec.settle(ref)
     st2 = rec.stats()
     assert st2["resolved_markets"] == 1
@@ -553,7 +555,10 @@ def _build_synth_db(path, n_markets=40):
             snap.extra = feats(sign)
             rec.record_snapshot(ref, snap, cp)
         ref.resolved = True
-        ref.resolved_outcome = Decision.UP if sign > 0 else Decision.DOWN
+        outcome = Decision.UP if sign > 0 else Decision.DOWN
+        ref.resolved_outcome = outcome
+        ref.official_result = outcome
+        ref.computed_result = outcome  # MATCH -> final_result yazilir
         rec.settle(ref)
     rec.close()
 
@@ -840,19 +845,18 @@ def test_settlement_explicit_official_and_mismatch(tmp_path):
     rec.record_snapshot(ref, _full_snap(ref, tte=30.0), 30)
     ref.resolved = True
     ref.official_result = Decision.UP
-    ref.computed_result = Decision.UP
-    ref.label_status = LabelStatus.MATCH
+    ref.computed_result = Decision.UP  # official==computed -> MATCH
     rec.settle(ref)
     s = rec.stats()
     assert s["resolved_markets"] == 1 and s["labeled_snapshots"] == 1
 
-    # MISMATCH -> training-disi (labeled artmaz)
+    # MISMATCH (official != computed) -> training-disi (labeled artmaz)
     ref2 = _ref5m("cidX")
     rec.record_market(ref2)
     rec.record_snapshot(ref2, _full_snap(ref2, tte=30.0), 30)
     ref2.resolved = True
     ref2.official_result = Decision.DOWN
-    ref2.label_status = LabelStatus.MISMATCH
+    ref2.computed_result = Decision.UP  # farkli -> MISMATCH
     rec.settle(ref2)
     s2 = rec.stats()
     assert s2["label_mismatch"] == 1 and s2["labeled_snapshots"] == 1  # mismatch etiketlenmedi
@@ -1008,3 +1012,260 @@ def test_clob_transport_vs_quote_health():
     # usable quote = up + down mid var
     assert store.get("u").mid == pytest.approx(0.55)
     assert store.get("d").mid == pytest.approx(0.45)
+
+
+# ==========================================================================
+# P1 FINAL CLOSURE (spec 38): chainlink capture, CLOB incremental, P1 lock,
+# computed settlement, label integrity
+# ==========================================================================
+
+
+class _StubCL:
+    """ChainlinkFeed stub: sabit veya degistirilebilir deger."""
+    def __init__(self, value):
+        from chainlink_feed import ChainlinkState
+        self._v = value
+        self._State = ChainlinkState
+
+    def set(self, value):
+        self._v = value
+
+    def get_state(self, asset):
+        if self._v is None:
+            return None
+        return self._State(self._v, _time.time(), _time.time())
+
+
+# --- Chainlink official PTB ---
+
+
+def test_chainlink_official_open_capture():
+    from reference import ReferenceRouter
+
+    r = ReferenceRouter(Settings(), chainlink=_StubCL(64357.42))
+    ref = _ref5m("clA", start=_time.time() - 5)  # 5s once acildi (open window)
+    r._acquire_5m15m_official(ref, _time.time())
+    assert ref.official_reference_open == pytest.approx(64357.42)
+    assert "CHAINLINK" in (ref.official_reference_source or "")
+
+
+def test_midwindow_no_fake_ptb():
+    from reference import ReferenceRouter
+
+    r = ReferenceRouter(Settings(), chainlink=_StubCL(64357.0))
+    ref = _ref5m("clB", start=_time.time() - 200)  # 200s once -> open window disi
+    r._acquire_5m15m_official(ref, _time.time())
+    assert ref.official_reference_open is None  # mid-window -> UYDURMA YOK
+
+
+def test_proxy_never_promoted_chainlink():
+    from reference import ReferenceRouter
+
+    r = ReferenceRouter(Settings(), chainlink=_StubCL(None))  # chainlink yok
+    ref = _ref5m("clC", start=_time.time() - 5)
+    ref.proxy_reference_open = 64000.0  # Binance proxy VAR
+    r._acquire_5m15m_official(ref, _time.time())
+    assert ref.official_reference_open is None  # proxy official'a TERFI ETMEZ
+
+
+def test_chainlink_market_isolation():
+    from reference import ReferenceRouter
+
+    cl = _StubCL(100.0)
+    r = ReferenceRouter(Settings(), chainlink=cl)
+    a = _ref5m("mA", start=_time.time() - 5)
+    r._acquire_5m15m_official(a, _time.time())
+    cl.set(200.0)  # feed degisti
+    b = _ref5m("mB", start=_time.time() - 5)
+    r._acquire_5m15m_official(b, _time.time())
+    assert a.official_reference_open == pytest.approx(100.0)  # A kendi capture'i
+    assert b.official_reference_open == pytest.approx(200.0)  # B ayri
+
+
+def test_reference_source_matches_resolution():
+    # 5m/15m -> CHAINLINK*, 1h -> BINANCE (parse_event_markets resolution_type)
+    from discovery import parse_event_markets
+    import json as _j
+    ev5 = {"slug": "btc-updown-5m-1787175300", "markets": [{
+        "conditionId": "c5", "clobTokenIds": _j.dumps(["u", "d"]),
+        "outcomes": _j.dumps(["Up", "Down"]), "endDate": "2026-08-18T00:05:00Z",
+        "resolutionSource": "Chainlink", "closed": False}]}
+    ref5 = parse_event_markets(ev5, AssetHorizon(Asset.BTC, Horizon.H5M))
+    assert ref5.resolution_type == ResolutionType.CHAINLINK
+    ev1 = {"slug": "bitcoin-up-or-down-august-18-2026-7pm-et", "markets": [{
+        "conditionId": "c1", "clobTokenIds": _j.dumps(["u", "d"]),
+        "outcomes": _j.dumps(["Up", "Down"]), "endDate": "2026-08-18T23:00:00Z",
+        "closed": False}]}
+    ref1 = parse_event_markets(ev1, AssetHorizon(Asset.BTC, Horizon.H1H))
+    assert ref1.resolution_type == ResolutionType.BINANCE_1H_CANDLE
+
+
+# --- CLOB incremental events ---
+
+
+def test_clob_book_event():
+    from clob_feed import ClobQuoteStore
+    s = ClobQuoteStore()
+    s.apply_book("t", [{"price": "0.54", "size": "10"}], [{"price": "0.56", "size": "8"}])
+    assert s.get("t").best_bid == 0.54 and s.get("t").best_ask == 0.56
+    assert s.counters["clob_book_events"] == 1
+
+
+def test_clob_price_change_event():
+    from clob_feed import ClobQuoteStore
+    s = ClobQuoteStore()
+    s.apply_book("t", [{"price": "0.54", "size": "10"}], [{"price": "0.56", "size": "8"}])
+    s.apply_price_change("t", [{"price": "0.55", "side": "BUY", "size": "5"}])
+    assert s.get("t").best_bid == 0.55  # incremental bid guncellendi
+    s.apply_price_change("t", [{"price": "0.55", "side": "BUY", "size": "0"}])  # sil
+    assert s.get("t").best_bid == 0.54
+    assert s.counters["clob_price_change_events"] == 2
+
+
+def test_clob_best_bid_ask_event():
+    from clob_feed import ClobQuoteStore
+    s = ClobQuoteStore()
+    s.apply_best("t", 0.58, 0.59)
+    assert s.get("t").best_bid == 0.58 and s.get("t").best_ask == 0.59
+    assert s.counters["clob_best_bid_ask_events"] == 1
+
+
+def test_clob_timestamp_refresh():
+    from clob_feed import ClobQuoteStore
+    s = ClobQuoteStore()
+    s.apply_book("t", [{"price": "0.5", "size": "1"}], [{"price": "0.6", "size": "1"}])
+    t0 = s.get("t").ts
+    _time.sleep(0.01)
+    s.apply_price_change("t", [{"price": "0.51", "side": "BUY", "size": "1"}])
+    assert s.get("t").ts > t0  # LOCAL RECEIVE TIME yenilendi
+
+
+def test_clob_both_sides_required():
+    from quality import assess
+    ref = _ref5m()
+    # DOWN eksik -> WAITING
+    snap = _full_snap(ref, down_bid=None, down_ask=None)
+    q = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q.clob == QStatus.WAITING and q.abstain_reason == AbstainReason.CLOB_MISSING
+
+
+def test_clob_stale_quote_waiting():
+    from quality import assess
+    ref = _ref5m()
+    snap = _full_snap(ref, clob_age_ms=999999.0)  # bayat
+    q = assess(ref, snap, Settings(), _time.time(), clock_synced=True, model_ready=True)
+    assert q.clob == QStatus.WAITING
+
+
+# --- P1 TRAINING HARD LOCK ---
+
+
+def test_p1_training_disabled():
+    s = Settings()
+    s.enforce_phase_lock()  # P1 default -> FATAL yok
+    assert s.training_active is False and s.calibration_active is False
+
+
+def test_p1_fatal_if_training_enabled():
+    s = Settings(PHASE="P1", MODEL_TRAINING_ENABLED=True)
+    with pytest.raises(SystemExit):
+        s.enforce_phase_lock()
+
+
+async def test_p1_no_model_save_no_calibration(tmp_path):
+    from main import ShadowEngine
+    from recorder import Recorder
+    from direction_model import DirectionModel
+    from calibration import CalibrationBook
+
+    rec = Recorder(str(tmp_path / "p1.sqlite"))
+    eng = ShadowEngine(Settings(), None, rec, DirectionModel(999), CalibrationBook(5))
+    ref = _ref5m("cidP1")
+    ref.resolved = True
+    ref.official_result = Decision.UP
+    await eng.on_market_resolved(ref)  # P1: learn/save/calib CALISMAZ
+    assert eng._model_learn_calls == 0
+    assert eng._model_save_calls == 0
+    assert eng._calibration_writes == 0
+    rec.close()
+
+
+# --- computed settlement ---
+
+
+def test_1h_computed_uses_finalized_candle():
+    from main import decide_1h_from_klines
+    from models import Decision as D
+
+    ws = 1787097600000
+    finalized = [[ws, "100.0", "x", "x", "105.0", "v", ws + 3600000]]  # close>open, closed
+    dec, src = decide_1h_from_klines(finalized, ws, ws + 3600001)
+    assert dec == D.UP and src == "BINANCE_FINALIZED_1H_CANDLE"
+    down = [[ws, "100.0", "x", "x", "95.0", "v", ws + 3600000]]
+    assert decide_1h_from_klines(down, ws, ws + 3600001)[0] == D.DOWN
+
+
+def test_1h_computed_not_finalized_returns_none():
+    from main import decide_1h_from_klines
+
+    ws = 1787097600000
+    not_final = [[ws, "100.0", "x", "x", "105.0", "v", ws + 3600000]]
+    # now < close_time -> henuz finalize olmadi
+    dec, src = decide_1h_from_klines(not_final, ws, ws + 100)
+    assert dec is None  # poll-spot kullanmaz; finalized degilse None
+
+
+async def test_5m15m_computed_no_poll_spot(tmp_path):
+    from main import ShadowEngine
+    from recorder import Recorder
+    from direction_model import DirectionModel
+    from calibration import CalibrationBook
+
+    eng = ShadowEngine(Settings(), None, Recorder(str(tmp_path / "c.sqlite")),
+                       DirectionModel(999), CalibrationBook(5))
+    ref = _ref5m("cid5c")
+    dec, src = await eng._compute_result(ref)
+    assert dec is None and src is None  # 5m/15m closing Chainlink yok -> UNKNOWN (uydurma yok)
+
+
+# --- label integrity ---
+
+
+def test_unknown_does_not_write_final_result(tmp_path):
+    from recorder import Recorder
+    rec = Recorder(str(tmp_path / "u.sqlite"))
+    ref = _ref5m("cidU")
+    rec.record_market(ref)
+    rec.record_snapshot(ref, _full_snap(ref, tte=30.0), 30)
+    ref.resolved = True
+    ref.official_result = Decision.UP
+    ref.computed_result = None  # computed yok -> UNKNOWN
+    rec.settle(ref)
+    assert rec.stats()["labeled_snapshots"] == 0  # UNKNOWN -> final_result yazilmaz
+    rec.close()
+
+
+def test_final_result_implies_match(tmp_path):
+    import sqlite3
+    from recorder import Recorder
+    rec = Recorder(str(tmp_path / "inv.sqlite"))
+    # MATCH
+    m = _ref5m("cidMM")
+    rec.record_market(m); rec.record_snapshot(m, _full_snap(m, tte=30.0), 30)
+    m.resolved = True; m.official_result = Decision.UP; m.computed_result = Decision.UP
+    rec.settle(m)
+    # UNKNOWN
+    u = _ref5m("cidUU")
+    rec.record_market(u); rec.record_snapshot(u, _full_snap(u, tte=30.0), 30)
+    u.resolved = True; u.official_result = Decision.UP; u.computed_result = None
+    rec.settle(u)
+    rec.close()
+    conn = sqlite3.connect(str(tmp_path / "inv.sqlite"))
+    rows = conn.execute(
+        """SELECT s.condition_id, m.label_status FROM snapshots s
+           JOIN markets m ON s.condition_id=m.condition_id
+           WHERE s.final_result IS NOT NULL"""
+    ).fetchall()
+    conn.close()
+    # invariant: final_result NOT NULL => parent label_status == 'MATCH'
+    assert rows and all(ls == "MATCH" for _, ls in rows)

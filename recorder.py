@@ -115,6 +115,7 @@ class Recorder:
                 ("source", "TEXT DEFAULT 'live'"),
                 ("resolution_symbol", "TEXT"), ("official_result_source", "TEXT"),
                 ("official_resolved_at", "REAL"),
+                ("computed_result_source", "TEXT"), ("computed_result_time", "REAL"),
             ],
             "snapshots": [
                 ("market_start", "REAL"), ("market_end", "REAL"), ("tte_sec", "REAL"),
@@ -246,24 +247,33 @@ class Recorder:
             return  # explicit official yok -> labeled sayma
         off = official.value
         computed = ref.computed_result.value if ref.computed_result else None
-        label_status = ref.label_status.value if ref.label_status else "UNKNOWN"
+        # label_status = OFFICIAL vs COMPUTED (spec 30): ikisi de var ve ayni -> MATCH
+        if computed is None:
+            label_status = "UNKNOWN"  # authoritative computed audit yok
+        elif computed == off:
+            label_status = "MATCH"
+        else:
+            label_status = "MISMATCH"
         self.conn.execute(
             """UPDATE markets SET resolved=1, resolved_outcome=?, official_result=?,
                    official_result_source=?, official_resolved_at=?,
-                   computed_result=?, label_status=? WHERE condition_id=?""",
+                   computed_result=?, computed_result_source=?, computed_result_time=?,
+                   label_status=? WHERE condition_id=?""",
             (off, off, ref.official_result_source, ref.official_resolved_at,
-             computed, label_status, ref.condition_id),
+             computed, ref.computed_result_source, ref.computed_result_time,
+             label_status, ref.condition_id),
         )
-        # training label yalniz MISMATCH DEGILSE yazilir (MISMATCH -> training-disi)
-        if label_status != "MISMATCH":
+        # final_result (training label) YALNIZ label_status == 'MATCH' iken yazilir
+        if label_status == "MATCH":
             self.conn.execute(
                 "UPDATE snapshots SET final_result=? WHERE condition_id=?",
                 (off, ref.condition_id),
             )
         self.conn.commit()
         log.info(
-            "recorder etiketledi: %s official=%s computed=%s label=%s",
-            ref.combo.key, off, computed, label_status,
+            "recorder etiketledi: %s official=%s(%s) computed=%s(%s) label=%s",
+            ref.combo.key, off, ref.official_result_source, computed,
+            ref.computed_result_source, label_status,
         )
 
     def stats(self) -> dict:

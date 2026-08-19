@@ -112,8 +112,9 @@ function card(c){
     <div class="row mono"><span>UP tok / DOWN tok</span><b>${c.up_token} / ${c.down_token}</b></div>
     <div class="row"><span>TTE</span><b>${n(c.tte_sec,0)} sn</b></div>
     <div class="row"><span>resolution</span><b>${c.resolution_type||'?'}${c.resolution_symbol?(' · '+c.resolution_symbol):''}</b></div>
-    <div class="row"><span>OFFICIAL PTB</span><b>${c.official_reference_open==null?'<span class="neg">— (PTB_MISSING)</span>':n(c.official_reference_open,2)}</b></div>
+    <div class="row"><span>OFFICIAL PTB</span><b>${c.official_reference_open==null?'<span class="neg">— (PTB_MISSING)</span>':n(c.official_reference_open,2)+' <span class="neu" style="font-size:10px">'+(c.official_reference_source||'')+'</span>'}</b></div>
     <div class="row"><span>proxy (Binance)</span><b class="neu">${n(c.proxy_reference_open,2)}</b></div>
+    <div class="row"><span>current / ref age</span><b>${n(c.reference_current,2)} · ${c.reference_current_age_ms!=null?n(c.reference_current_age_ms,0)+'ms':'—'}</b></div>
     <div class="row"><span>spot / distance</span><b>${n(c.spot_price,2)} / <span class="${cls(c.distance_bps)}">${n(c.distance_bps,1)}bps</span></b></div>
     <div class="row"><span>UP  bid/ask/mid</span><b>${n(c.up_bid,3)} / ${n(c.up_ask,3)} / <b>${n(c.up_mid,3)}</b></b></div>
     <div class="row"><span>DOWN bid/ask/mid</span><b>${n(c.down_bid,3)} / ${n(c.down_ask,3)} / ${n(c.down_mid,3)}</b></div>
@@ -138,6 +139,9 @@ async function tick(){
     ['CLOB transport',f.clob_transport_healthy],['CLOB quote',f.clob_quote_healthy],
     ['PTB (official)',f.ptb_states_healthy],
     ['discovery_err',f.discovery_errors],['dq_err',f.data_quality_errors]];
+  items.push(['book_ev',f.clob_book_events],['pchg_ev',f.clob_price_change_events],['bba_ev',f.clob_best_bid_ask_events],['quote_upd',f.clob_quote_updates]);
+  const sf=d.safety||{};
+  items.push(['phase',sf.phase],['training',sf.model_training_enabled?'ON':'OFF'],['model_save',sf.model_save_calls],['calib_writes',sf.calibration_writes],['orders',sf.live_orders]);
   $('foot').innerHTML=items.map(x=>`<div><b>${x[1]==null?'—':x[1]}</b> ${x[0]}</div>`).join('');
   if(f.suspicious_identical_quotes){$('sus').style.display='block';$('sus').innerHTML='⚠ <b>SUSPICIOUS_IDENTICAL_QUOTES</b>: birden fazla markette ayni up_mid — CLOB/token mapping supheli.';}
   else{$('sus').style.display='none';}

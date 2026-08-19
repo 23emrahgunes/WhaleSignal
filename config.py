@@ -27,6 +27,42 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     db_path: str = Field(default="data/direction_engine.sqlite", alias="DB_PATH")
 
+    # ----- FAZ KILIDI (P1: yalniz veri; TRAINING/CALIBRATION YASAK) -----
+    phase: str = Field(default="P1", alias="PHASE")
+    model_training_enabled: bool = Field(default=False, alias="MODEL_TRAINING_ENABLED")
+    calibration_enabled: bool = Field(default=False, alias="CALIBRATION_ENABLED")
+
+    def enforce_phase_lock(self) -> None:
+        """PHASE=P1 iken training/calibration TRUE ise FATAL (SystemExit)."""
+        if self.phase.strip().upper() == "P1" and (
+            self.model_training_enabled or self.calibration_enabled
+        ):
+            raise SystemExit(
+                "FATAL CONFIG ERROR: PHASE=P1 iken MODEL_TRAINING_ENABLED / "
+                "CALIBRATION_ENABLED true olamaz (P1 = yalniz veri, training YOK)."
+            )
+
+    @property
+    def training_active(self) -> bool:
+        return self.phase.strip().upper() != "P1" and self.model_training_enabled
+
+    @property
+    def calibration_active(self) -> bool:
+        return self.phase.strip().upper() != "P1" and self.calibration_enabled
+
+    # ----- Chainlink RTDS (5m/15m official reference kaynagi) -----
+    rtds_ws_url: str = Field(
+        default="wss://ws-live-data.polymarket.com", alias="RTDS_WS_URL"
+    )
+    rtds_enabled: bool = Field(default=True, alias="RTDS_ENABLED")
+    rtds_debug_raw: bool = Field(default=True, alias="RTDS_DEBUG_RAW")  # ham mesaj logu
+    rtds_subscribe_json: str = Field(default="", alias="RTDS_SUBSCRIBE_JSON")  # AWS'te ayarlanabilir
+    # yeni 5m/15m market bu kadar saniyeden gencse acilis referansi RTDS'ten yakalanir
+    open_capture_window_sec: float = Field(default=30.0, alias="OPEN_CAPTURE_WINDOW_SEC")
+    max_reference_source_age_ms: float = Field(
+        default=5000, alias="MAX_REFERENCE_SOURCE_AGE_MS"
+    )
+
     # ----- Web dashboard -----
     web_enabled: bool = Field(default=True, alias="WEB_ENABLED")
     web_host: str = Field(default="0.0.0.0", alias="WEB_HOST")

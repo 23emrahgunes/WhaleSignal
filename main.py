@@ -24,6 +24,7 @@ import aiohttp
 
 from binance_feed import BinanceFeed
 from calibration import CalibrationBook, CalSample
+from chainlink_feed import ChainlinkFeed
 from clob_feed import ClobQuoteStore, ClobSupervisor
 from config import Settings, get_settings
 from direction_model import DirectionModel
@@ -33,6 +34,7 @@ from hub import DataHub
 from models import (
     AssetHorizon,
     Decision,
+    Horizon,
     LabelStatus,
     Prediction,
     Regime,
@@ -50,6 +52,28 @@ DECISION_MARGIN = 0.05
 MODEL_PATH = "models/direction_model.pkl"
 
 log = logging.getLogger("direction_engine.main")
+
+
+def decide_1h_from_klines(rows, ws_ms: int, now_ms: float):  # noqa: ANN001
+    """FINALIZED 1h mumdan computed_result (poll-spot DEGIL).
+
+    market_start (ws_ms) ile openTime eslesen mum FINALIZE olduysa (closeTime<=now):
+    close>=open -> UP, else DOWN. Aksi (None, None). Doner: (Decision|None, source|None).
+    """
+    if not isinstance(rows, list):
+        return None, None
+    for r in rows:
+        try:
+            open_time, open_px = int(r[0]), float(r[1])
+            close_px, close_time = float(r[4]), int(r[6])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if open_time != ws_ms:
+            continue
+        if close_time > now_ms:
+            return None, None  # mum henuz FINALIZE olmadi
+        return (Decision.UP if close_px >= open_px else Decision.DOWN), "BINANCE_FINALIZED_1H_CANDLE"
+    return None, None
 
 
 def build_combos(settings: Settings) -> list[AssetHorizon]:
@@ -110,9 +134,17 @@ class ShadowEngine:
         self._resolve_count = 0
         self._data_quality_errors = 0
         self._clob = None  # ClobSupervisor (transport health)
+        self._session = None  # aiohttp session (computed_result candle fetch)
+        # P1 safety sayaclari (kanit: hepsi 0 kalmali)
+        self._model_learn_calls = 0
+        self._model_save_calls = 0
+        self._calibration_writes = 0
 
     def attach_clob(self, clob) -> None:  # noqa: ANN001
         self._clob = clob
+
+    def attach_session(self, session) -> None:  # noqa: ANN001
+        self._session = session
 
     def _event(self, kind: str, detail: str) -> None:
         self.events.appendleft({"ts": time.time(), "kind": kind, "detail": detail})
@@ -291,61 +323,84 @@ class ShadowEngine:
                 self.latest[key]["active"] = False
         self._prune_acc()
 
-    def on_market_resolved(self, ref) -> None:  # noqa: ANN001
-        """discovery callback: EXPLICIT official resolve -> computed audit + etiket +
-        (etiket MISMATCH degilse) model ogrenimi + kalibrasyon."""
+    async def on_market_resolved(self, ref) -> None:  # noqa: ANN001
+        """discovery async callback (P1): EXPLICIT official resolve -> computed audit -> settle.
+
+        **P1 HARD-LOCK:** model.learn / calibration.record / model.save YALNIZ
+        training/calibration flag'leri (PHASE != P1) aktifse cagrilir. P1'de HICBIRI calismaz.
+        """
         official = ref.official_result or ref.resolved_outcome
         if official is None:
             return
-        # computed_result (yerel audit): son snapshot spot vs reference_open
-        ref.computed_result = self._compute_result(ref)
+        # computed_result (DOGRU source: 1h finalized candle; 5m/15m closing Chainlink) + settle
+        ref.computed_result, ref.computed_result_source = await self._compute_result(ref)
+        ref.computed_result_time = time.time()
         self.recorder.settle(ref)
-        label_up = 1 if official == Decision.UP else 0
-        acc = self._acc.get(ref.market_id)
-        # MISMATCH -> training-disi (model ogrenmez)
-        trainable = ref.label_status != LabelStatus.MISMATCH
-        if trainable and acc is not None and acc.fvs:
-            self.model.learn_with_label(ref.combo.key, acc.fvs, label_up)
-        # kalibrasyon ornegi
-        lp = acc.last_pred if acc else None
-        if lp is not None:
-            self.calib.record(ref.combo.key, CalSample(
-                decided=True, outcome_up=(label_up == 1), p_up=lp["p_up"],
-                decision_up=lp["decision_up"], confidence=lp["confidence"],
-                market_implied_up=lp["mkt"],
-            ))
-        else:
-            self.calib.record(ref.combo.key, CalSample(
-                decided=False, outcome_up=(label_up == 1)))
         self._resolve_count += 1
         self._event(
             "RESOLVED",
             f"{ref.combo.key} official={official.value} label={ref.label_status.value}",
         )
-        # modeli kalici yap
-        try:
-            os.makedirs(os.path.dirname(MODEL_PATH) or ".", exist_ok=True)
-            self.model.save(MODEL_PATH)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("model kaydedilemedi: %s", exc)
+
+        # --- P1 KILIDI: asagidakiler yalniz PHASE!=P1 + flag aktifse ---
+        label_up = 1 if official == Decision.UP else 0
+        acc = self._acc.get(ref.market_id)
+        if self.cfg.training_active:
+            trainable = ref.label_status == LabelStatus.MATCH  # yalniz MATCH ogrenilir
+            if trainable and acc is not None and acc.fvs:
+                self.model.learn_with_label(ref.combo.key, acc.fvs, label_up)
+                self._model_learn_calls += 1
+            try:
+                os.makedirs(os.path.dirname(MODEL_PATH) or ".", exist_ok=True)
+                self.model.save(MODEL_PATH)
+                self._model_save_calls += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("model kaydedilemedi: %s", exc)
+        if self.cfg.calibration_active:
+            lp = acc.last_pred if acc else None
+            if lp is not None:
+                self.calib.record(ref.combo.key, CalSample(
+                    decided=True, outcome_up=(label_up == 1), p_up=lp["p_up"],
+                    decision_up=lp["decision_up"], confidence=lp["confidence"],
+                    market_implied_up=lp["mkt"],
+                ))
+            else:
+                self.calib.record(ref.combo.key, CalSample(
+                    decided=False, outcome_up=(label_up == 1)))
+            self._calibration_writes += 1
         # accumulator temizle
         self._acc.pop(ref.market_id, None)
 
-    def _compute_result(self, ref) -> Optional[Decision]:  # noqa: ANN001
-        """Yerel audit: kapanis spot vs official_reference_open (official DEGIL, kiyas).
+    async def _compute_result(self, ref):  # noqa: ANN001
+        """Computed audit — DOGRU settlement source ile (poll-spot DEGIL).
 
-        1h icin official_reference_open = candle open; spot(kapanisa yakin) >= open -> UP.
+        1h: canonical market_start ile baslayan FINALIZED Binance 1h mumu (close>=open->UP).
+        5m/15m: authoritative closing Chainlink referansi yoksa None (label UNKNOWN — uydurma yok).
+        Doner: (Decision|None, source_str|None).
         """
-        anchor = ref.official_reference_open
-        if anchor is None:
-            return None
-        feed = self.hub.binance.get_feed(ref.combo.binance_symbol)
-        spot = None
-        if feed is not None:
-            spot, _ = feed.spot_price()
-        if spot is None:
-            return None
-        return Decision.UP if spot >= anchor else Decision.DOWN
+        if ref.combo.horizon == Horizon.H1H:
+            return await self._compute_1h_finalized_candle(ref)
+        # 5m/15m: official closing Chainlink henuz yok -> UNKNOWN (uydurma yapma)
+        return None, None
+
+    async def _compute_1h_finalized_candle(self, ref):  # noqa: ANN001
+        """1h: market_start'a hizali FINALIZED Binance 1h mumu open/close."""
+        if self._session is None or ref.market_start_ts is None:
+            return None, None
+        ws_ms = int(ref.market_start_ts * 1000)
+        symbol = ref.resolution_symbol or ref.combo.binance_symbol
+        url = f"{self.cfg.binance_rest_base}/api/v3/klines"
+        params = {"symbol": symbol, "interval": "1h",
+                  "startTime": str(ws_ms - 3600000), "limit": "3"}
+        try:
+            async with self._session.get(url, params=params, timeout=12) as resp:
+                if resp.status != 200:
+                    return None, None
+                rows = await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("%s 1h computed candle alinamadi: %s", ref.combo.key, exc)
+            return None, None
+        return decide_1h_from_klines(rows, ws_ms, time.time() * 1000)
 
     def _prune_acc(self) -> None:
         if len(self._acc) <= 600:
@@ -376,6 +431,7 @@ class ShadowEngine:
             "official_reference_source": snap.official_reference_source,
             "proxy_reference_open": r(snap.proxy_reference_open, 2),
             "reference_current": r(snap.reference_current, 2),
+            "reference_current_age_ms": r(snap.reference_current_age_ms, 0),
             "spot_price": r(snap.spot_price, 2),
             "distance_bps": r(snap.official_distance_bps, 2),  # official PTB distance
             "proxy_distance_bps": r(snap.proxy_distance_bps, 2),
@@ -455,6 +511,18 @@ class ShadowEngine:
             "binance_connected": self.hub.binance.connected,
             "clock_synced": self.hub.binance.clock_synced,
             "clock_offset_ms": self.hub.binance.clock_offset_ms,
+            "chainlink": (self.hub.reference.chainlink.status()
+                          if getattr(self.hub.reference, "chainlink", None) else {}),
+            # --- P1 GUVENLIK KANITI (hepsi 0 / OFF olmali) ---
+            "safety": {
+                "phase": self.cfg.phase,
+                "model_training_enabled": self.cfg.training_active,
+                "calibration_enabled": self.cfg.calibration_active,
+                "model_learn_calls": self._model_learn_calls,
+                "model_save_calls": self._model_save_calls,
+                "calibration_writes": self._calibration_writes,
+                "live_orders": 0,  # SHADOW: canli emir kodu YOK
+            },
             # --- footer metrikleri ---
             "footer": {
                 "markets_active": active_count,
@@ -469,6 +537,8 @@ class ShadowEngine:
                 "discovery_errors": self.hub.discovery.discovery_errors,
                 "data_quality_errors": self._data_quality_errors,
                 "suspicious_identical_quotes": suspicious,
+                # CLOB incremental event kanitlari
+                **self.hub.clob_store.counters,
             },
         }
 
@@ -520,9 +590,13 @@ async def run() -> None:
         level=getattr(logging, cfg.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
+    cfg.enforce_phase_lock()  # PHASE=P1 iken training/calibration true ise FATAL
     combos = build_combos(cfg)
     symbols = sorted({c.binance_symbol for c in combos})
-    log.info("kapsam: %d combo, semboller=%s (SHADOW)", len(combos), symbols)
+    log.info(
+        "kapsam: %d combo, semboller=%s (SHADOW, phase=%s, training=%s, calib=%s)",
+        len(combos), symbols, cfg.phase, cfg.training_active, cfg.calibration_active,
+    )
 
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
@@ -534,10 +608,12 @@ async def run() -> None:
         discovery = MarketDiscovery(cfg, session, combos)
         binance = BinanceFeed(cfg, symbols, session)
         clob_store = ClobQuoteStore()
-        reference = ReferenceRouter(cfg)
+        chainlink = ChainlinkFeed(cfg, session) if cfg.rtds_enabled else None
+        reference = ReferenceRouter(cfg, chainlink=chainlink)
         hub = DataHub(cfg, discovery, binance, clob_store, reference)
         engine = ShadowEngine(cfg, hub, recorder, model, calib)
-        discovery.on_resolved(engine.on_market_resolved)  # settle + ogren + kalibrasyon
+        engine.attach_session(session)  # computed_result 1h candle fetch
+        discovery.on_resolved(engine.on_market_resolved)  # async: computed + settle (P1 kilitli)
         clob = ClobSupervisor(cfg, clob_store, session, hub.active_token_ids)
         engine.attach_clob(clob)  # CLOB transport health (quote health'ten ayri)
 
@@ -555,6 +631,8 @@ async def run() -> None:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(discovery.run(stop), name="discovery")
                 tg.create_task(binance.run(stop), name="binance")
+                if chainlink is not None:
+                    tg.create_task(chainlink.run(stop), name="chainlink")
                 tg.create_task(clob.run(stop), name="clob")
                 tg.create_task(_reference_refresher(hub, session, stop), name="reference")
                 tg.create_task(engine.run(stop), name="engine")

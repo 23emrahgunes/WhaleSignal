@@ -188,9 +188,12 @@ class MarketRef:
     proxy_reference_open: Optional[float] = None
     proxy_reference_open_time: Optional[float] = None
     proxy_reference_source: Optional[str] = None  # BINANCE
-    # ortak canli referans
+    official_reference_capture_time: Optional[float] = None  # statik anchor yakalama ani
+    # ortak canli referans (5m/15m=Chainlink current, 1h=Binance spot)
     reference_current: Optional[float] = None
     reference_current_time: Optional[float] = None
+    reference_current_source_ts: Optional[float] = None  # kaynagin (feed) source zamani
+    reference_current_age_ms: Optional[float] = None
     reference_symbol: Optional[str] = None
     twap_window_sec: Optional[int] = None  # Chainlink TWAP ise
     twap_observation_ts: Optional[float] = None
@@ -205,7 +208,9 @@ class MarketRef:
     official_result: Optional[Decision] = None  # explicit official (birincil label)
     official_result_source: Optional[str] = None  # winning_outcome|winning_asset_id|...
     official_resolved_at: Optional[float] = None
-    computed_result: Optional[Decision] = None  # yerel audit (spot vs reference)
+    computed_result: Optional[Decision] = None  # yerel audit (dogru source ile)
+    computed_result_source: Optional[str] = None  # BINANCE_FINALIZED_1H_CANDLE|CHAINLINK_CLOSING_REFERENCE
+    computed_result_time: Optional[float] = None
     label_status: LabelStatus = LabelStatus.UNKNOWN
     discovered_ts: float = field(default_factory=time.time)
 
@@ -347,6 +352,7 @@ class FeatureSnapshot:
     proxy_distance_bps: Optional[float] = None
     reference_current: Optional[float] = None
     reference_current_time: Optional[float] = None
+    reference_current_age_ms: Optional[float] = None  # canli reference feed yasi (statik anchor DEGIL)
     resolution_symbol: Optional[str] = None
     # CLOB (up + down, bid/ask/mid; 0.505 fallback YOK)
     up_bid: Optional[float] = None

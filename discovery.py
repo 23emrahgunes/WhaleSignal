@@ -746,12 +746,14 @@ class MarketDiscovery:
             self._resolved_seen.add(ref.condition_id)
             self.resolved_log.appendleft(ref)
             log.info(
-                "RESOLVED %s -> %s (official via %s, label=%s)",
-                ref.combo.key, official.value, note, ref.label_status.value,
+                "RESOLVED %s -> %s (official via %s)",
+                ref.combo.key, official.value, note,
             )
             for cb in self._on_resolved:
                 try:
-                    cb(ref)
+                    res = cb(ref)
+                    if asyncio.iscoroutine(res):
+                        await res  # async callback (computed_result candle fetch)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("on_resolved callback hatasi: %s", exc)
 
