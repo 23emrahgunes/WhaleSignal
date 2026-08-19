@@ -329,3 +329,11 @@ class ChainlinkFeed:
                 for asset, state in self.state.items()
             },
         }
+
+    def status(self) -> dict:
+        """Backward-compatible API status view used by ``/api/state``.
+
+        Keep this as an alias to :meth:`snapshot` so refactors of the collector do
+        not take the web dashboard down with an AttributeError.
+        """
+        return self.snapshot()
