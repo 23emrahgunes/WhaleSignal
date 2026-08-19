@@ -39,6 +39,7 @@ jobs:
           safety=state.get('safety') or {}
           cards=state.get('cards') or []
           chainlink=state.get('chainlink') or {}
+          resolution=state.get('resolution') or {}
           analytics=(state.get('forecast_analytics') or {}).get('overall') or {}
           summary={
             'health':health,
@@ -51,9 +52,11 @@ jobs:
             'coverage':analytics.get('coverage'),'accuracy':analytics.get('accuracy'),
             'binance_connected':state.get('binance_connected'),'clock_synced':state.get('clock_synced'),
             'chainlink_connection':chainlink.get('connection'),'chainlink_messages':chainlink.get('messages'),
+            'resolution':resolution,
             'safety':safety,'cards_count':len(cards),
           }
           print('RUNTIME_SUMMARY='+json.dumps(summary,ensure_ascii=False,sort_keys=True))
+          print('RESOLUTION_SUMMARY='+json.dumps(resolution,ensure_ascii=False,sort_keys=True))
           print('CARD_SUMMARY_BEGIN')
           for c in cards:
             f=c.get('feature') or {}
