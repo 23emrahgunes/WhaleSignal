@@ -73,6 +73,51 @@ async def test_chainlink_documented_update_wire_format_is_parsed():
 
 
 @pytest.mark.asyncio
+async def test_chainlink_full_accuracy_value_never_leaks_fixed_point_scale():
+    """RTDS may include both decimal value and 18-decimal full_accuracy_value."""
+    feed = ChainlinkFeed(Settings(), None)
+    ts_ms = int(time.time() * 1000)
+    raw = json.dumps(
+        {
+            "topic": "crypto_prices_chainlink",
+            "type": "update",
+            "payload": {
+                "symbol": "btc/usd",
+                "timestamp": ts_ms,
+                "value": "64332.108538296714",
+                "full_accuracy_value": "64332108538296714000000",
+            },
+        }
+    )
+    assert await feed._handle_text(raw) == 1
+    state = feed.get_state("BTC")
+    assert state is not None
+    assert state.value == pytest.approx(64332.108538296714)
+    assert state.value < 1_000_000.0  # guard against the previous ~6.4e22 bug
+
+
+@pytest.mark.asyncio
+async def test_chainlink_full_accuracy_fallback_is_scaled_by_1e18():
+    feed = ChainlinkFeed(Settings(), None)
+    ts_ms = int(time.time() * 1000)
+    raw = json.dumps(
+        {
+            "topic": "crypto_prices_chainlink",
+            "type": "update",
+            "payload": {
+                "symbol": "eth/usd",
+                "timestamp": ts_ms,
+                "full_accuracy_value": "1911558224865000000000",
+            },
+        }
+    )
+    assert await feed._handle_text(raw) == 1
+    state = feed.get_state("ETH")
+    assert state is not None
+    assert state.value == pytest.approx(1911.558224865)
+
+
+@pytest.mark.asyncio
 async def test_chainlink_subscribe_snapshot_data_array_is_buffered():
     feed = ChainlinkFeed(Settings(), None)
     base = int(time.time() * 1000)
