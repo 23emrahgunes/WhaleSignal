@@ -93,7 +93,7 @@ async def test_chainlink_full_accuracy_value_never_leaks_fixed_point_scale():
     state = feed.get_state("BTC")
     assert state is not None
     assert state.value == pytest.approx(64332.108538296714)
-    assert state.value < 1_000_000.0  # guard against the previous ~6.4e22 bug
+    assert state.value < 1_000_000.0
 
 
 @pytest.mark.asyncio
@@ -152,8 +152,21 @@ def test_chainlink_opening_state_is_source_timestamp_aligned():
     assert opening.value == pytest.approx(100.0)
     assert opening.source_ts == pytest.approx(start + 0.8)
 
-    # Mid-window restart with no boundary observation fails closed.
     assert feed.opening_state("BTC", start - 100.0, max_alignment_ms=5000) is None
+
+
+def test_chainlink_status_alias_matches_snapshot_for_dashboard_api():
+    feed = ChainlinkFeed(Settings(), None)
+    now = time.time()
+    feed.connected = True
+    feed.messages_handled = 7
+    feed._record("BTC", ChainlinkState(64321.5, now, now))
+
+    status = feed.status()
+    assert status["connection"] == "connected"
+    assert status["messages"] == 7
+    assert status["feeds"]["BTC"]["value"] == pytest.approx(64321.5)
+    assert status.keys() == feed.snapshot().keys()
 
 
 def test_reference_router_uses_chainlink_data_stream_not_polygon_or_binance():
