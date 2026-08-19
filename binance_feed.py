@@ -1,8 +1,9 @@
 """Direct Binance WS feed — fast source for P2.1 feature generation.
 
-Maintains trade flow, a synchronized diff-depth local book and a bounded mark-price
-series. The mark series samples trade prices and book mids at source timestamps so
-100ms..30m feature windows can warm up without fabricating history.
+Maintains trade flow, a synchronized diff-depth local book and a bounded 100ms
+mark-price series. The canonical ``prices`` buffer used by features is this mark
+series, not an unbounded-rate trade stream, so 100ms..30m windows have stable
+coverage across BTC/ETH/SOL/XRP.
 """
 from __future__ import annotations
 
@@ -23,14 +24,13 @@ log = logging.getLogger("direction_engine.binance")
 
 
 class SymbolFeed:
-    """Single symbol local book + trade and feature-price buffers."""
-
     def __init__(self, symbol: str, ring_max: int, feature_ring_max: Optional[int] = None) -> None:
         self.symbol = symbol.upper()
         self.book = LocalBook(symbol=self.symbol)
         self.trades: deque[Trade] = deque(maxlen=ring_max)
-        self.prices: deque[tuple[int, float]] = deque(maxlen=ring_max)  # trade-only compatibility
         self.feature_prices: deque[tuple[int, float]] = deque(maxlen=feature_ring_max or max(ring_max, 24000))
+        # Backward-compatible name consumed by FeatureEngine/main.
+        self.prices = self.feature_prices
         self.last_trade_ts_ms: int = 0
         self.last_depth_ts_ms: int = 0
         self.last_frame_recv_ms: float = 0.0
@@ -40,17 +40,20 @@ class SymbolFeed:
     def _append_feature_price(self, ts_ms: int, price: Optional[float]) -> None:
         if not ts_ms or price is None or price <= 0:
             return
+        # Normalize to 100ms buckets. Multiple trades/depth updates in the same
+        # bucket replace the last mark rather than consuming long-history capacity.
+        bucket = (int(ts_ms) // 100) * 100
         if self.feature_prices:
             last_ts, _ = self.feature_prices[-1]
-            if ts_ms < last_ts:
+            if bucket < last_ts:
                 return
-            if ts_ms == last_ts:
-                self.feature_prices[-1] = (ts_ms, float(price))
+            if bucket == last_ts:
+                self.feature_prices[-1] = (bucket, float(price))
                 return
-        self.feature_prices.append((ts_ms, float(price)))
+        self.feature_prices.append((bucket, float(price)))
 
     def feature_series(self) -> list[tuple[int, float]]:
-        return list(self.feature_prices) if self.feature_prices else list(self.prices)
+        return list(self.feature_prices)
 
     def on_trade(self, data: dict) -> None:
         self.last_frame_recv_ms = time.time() * 1000
@@ -62,7 +65,6 @@ class SymbolFeed:
         except (KeyError, TypeError, ValueError):
             return
         self.trades.append(Trade(price, qty, ts_ms, is_buyer_maker))
-        self.prices.append((ts_ms, price))
         self._append_feature_price(ts_ms, price)
         self.last_trade_ts_ms = ts_ms
 
@@ -121,7 +123,8 @@ class SymbolFeed:
                 first = False
             self._apply_diff(ev, mark_synced=False)
         self.book.synced = True
-        self._append_feature_price(self.last_depth_ts_ms or int(time.time() * 1000), self.book.mid)
+        if self.last_depth_ts_ms:
+            self._append_feature_price(self.last_depth_ts_ms, self.book.mid)
 
     def _apply_diff(self, data: dict, mark_synced: bool = True) -> None:
         U, u = int(data.get("U", 0)), int(data.get("u", 0))
@@ -151,8 +154,8 @@ class SymbolFeed:
     def spot_price(self) -> tuple[Optional[float], Optional[float]]:
         now_ms = time.time() * 1000
         candidates: list[tuple[float, float]] = []
-        if self.prices:
-            ts_ms, price = self.prices[-1]
+        if self.feature_prices:
+            ts_ms, price = self.feature_prices[-1]
             candidates.append((price, max(0.0, now_ms - ts_ms)))
         if self.book.synced and self.book.mid is not None and self.last_depth_ts_ms:
             candidates.append((self.book.mid, max(0.0, now_ms - self.last_depth_ts_ms)))
