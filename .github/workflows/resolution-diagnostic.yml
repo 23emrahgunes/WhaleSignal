@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - runtime-probe-20260819
+  pull_request:
+    branches:
+      - direction-engine
 
 permissions:
   contents: read
@@ -23,7 +26,7 @@ jobs:
           set -Eeuo pipefail
           curl --connect-timeout 5 --max-time 15 -fsS "$STATE_URL" -o /tmp/state.json
           python3 - <<'PY'
-          import json, os, subprocess
+          import json, os
           from pathlib import Path
           from urllib.request import urlopen, Request
           from urllib.parse import urlencode
