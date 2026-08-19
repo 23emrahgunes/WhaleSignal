@@ -1,2 +1,3 @@
-trigger=2026-08-19T21:36:00Z
+trigger=2026-08-19T22:02:00Z
 expected_head=f74f61838846784e193ecdeabcfc48adb65b53da
+check=settlement-after-boundary
