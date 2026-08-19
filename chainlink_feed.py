@@ -2,13 +2,13 @@
 
 Polymarket's short-duration crypto Up/Down markets resolve from Chainlink Data
 Streams (for example BTC/USD), not from a Polygon push-feed aggregator and not
-from Binance.  This collector therefore consumes Polymarket's public RTDS
+from Binance. This collector consumes Polymarket's public RTDS
 `crypto_prices_chainlink` topic and keeps both the latest point and a short
 source-timestamped history per asset.
 
 Important invariants:
 - subscription follows the documented RTDS wire format;
-- application-level text ``PING`` is sent every 5 seconds;
+- application-level text ``PING`` is sent every 5 seconds (configurable);
 - opening references are selected from RTDS source timestamps near the canonical
   market start, never from the current price after a mid-window restart;
 - Binance remains a separate analytics/proxy source elsewhere in the service.
@@ -30,8 +30,6 @@ from wsbase import backoff_delay
 
 log = logging.getLogger("direction_engine.chainlink")
 
-RTDS_URL = "wss://ws-live-data.polymarket.com"
-RTDS_PING_SEC = 5.0
 _HISTORY_MAX = 4096
 
 _SYMBOL_MAP = {
@@ -57,7 +55,6 @@ def _to_ts_seconds(raw: object, fallback: float) -> float:
 
 
 def _to_price(payload: dict) -> Optional[float]:
-    # Prefer the full-accuracy value when RTDS supplies it.
     for key in ("full_accuracy_value", "value", "price", "p", "px", "answer", "last"):
         value = payload.get(key)
         if value is None:
@@ -74,22 +71,21 @@ def _to_price(payload: dict) -> Optional[float]:
 @dataclass(frozen=True)
 class ChainlinkState:
     value: float
-    source_ts: float  # Chainlink/RTDS observation timestamp, seconds
-    recv_ts: float  # local receipt timestamp, seconds
+    source_ts: float
+    recv_ts: float
 
     def age_ms(self, now: Optional[float] = None) -> float:
-        """Local receive age; useful for transport diagnostics."""
         now = time.time() if now is None else now
         return max(0.0, (now - self.recv_ts) * 1000.0)
 
     def source_age_ms(self, now: Optional[float] = None) -> float:
-        """Age of the actual source observation."""
         now = time.time() if now is None else now
         return max(0.0, (now - self.source_ts) * 1000.0)
 
 
-def parse_chainlink_payload(payload: dict, recv_ts: Optional[float] = None) -> Optional[tuple[str, ChainlinkState]]:
-    """Parse a documented ``crypto_prices_chainlink`` payload."""
+def parse_chainlink_payload(
+    payload: dict, recv_ts: Optional[float] = None
+) -> Optional[tuple[str, ChainlinkState]]:
     if not isinstance(payload, dict):
         return None
     asset = map_symbol(payload.get("symbol") or payload.get("asset") or payload.get("pair"))
@@ -100,7 +96,8 @@ def parse_chainlink_payload(payload: dict, recv_ts: Optional[float] = None) -> O
         return None
     recv_ts = time.time() if recv_ts is None else recv_ts
     source_ts = _to_ts_seconds(
-        payload.get("timestamp") or payload.get("source_ts") or payload.get("time"), recv_ts
+        payload.get("timestamp") or payload.get("source_ts") or payload.get("time"),
+        recv_ts,
     )
     return asset, ChainlinkState(value=value, source_ts=source_ts, recv_ts=recv_ts)
 
@@ -111,7 +108,7 @@ class ChainlinkFeed:
     def __init__(self, settings: Settings, session: aiohttp.ClientSession) -> None:
         self.settings = settings
         self._session = session
-        self.url = RTDS_URL
+        self.url = settings.rtds_ws_url
         self.connected = False
         self.reconnects = 0
         self.messages_handled = 0
@@ -123,7 +120,6 @@ class ChainlinkFeed:
 
     @staticmethod
     def subscribe_message() -> dict:
-        """Official documented subscription: all Chainlink crypto symbols."""
         return {
             "action": "subscribe",
             "subscriptions": [
@@ -133,7 +129,6 @@ class ChainlinkFeed:
 
     def _record(self, asset: str, point: ChainlinkState) -> None:
         current = self.state.get(asset)
-        # Ignore an exact duplicate replay, but keep out-of-order points in history if useful.
         if current is None or point.source_ts >= current.source_ts:
             self.state[asset] = point
         hist = self.history.setdefault(asset, deque(maxlen=_HISTORY_MAX))
@@ -150,7 +145,6 @@ class ChainlinkFeed:
         payload = obj.get("payload", obj)
         parsed_count = 0
         if isinstance(payload, dict):
-            # Some subscribe snapshots use a shared symbol plus data[] points.
             data = payload.get("data")
             if isinstance(data, list):
                 shared_symbol = payload.get("symbol")
@@ -188,19 +182,18 @@ class ChainlinkFeed:
         return self._parse_message(data, recv_ts)
 
     async def _ping_loop(self, ws: aiohttp.ClientWebSocketResponse, stop: asyncio.Event) -> None:
-        """RTDS requires an application-level text PING every 5 seconds."""
         while not stop.is_set() and not ws.closed:
             try:
                 await ws.send_str("PING")
             except Exception:  # noqa: BLE001
                 return
             try:
-                await asyncio.wait_for(stop.wait(), timeout=RTDS_PING_SEC)
+                await asyncio.wait_for(stop.wait(), timeout=self.settings.rtds_ping_sec)
             except asyncio.TimeoutError:
                 pass
 
     async def run(self, stop: asyncio.Event) -> None:
-        if not getattr(self.settings, "chainlink_enabled", True):
+        if not self.settings.chainlink_enabled:
             log.info("Chainlink RTDS disabled")
             return
 
@@ -229,7 +222,7 @@ class ChainlinkFeed:
                                 continue
                             if raw == "PONG":
                                 continue
-                            if self._raw_logged < 4:
+                            if self.settings.rtds_debug_raw and self._raw_logged < 4:
                                 self._raw_logged += 1
                                 log.info("CHAINLINK RTDS RAW[%d]: %s", self._raw_logged, raw[:500])
                             parsed = await self._handle_text(raw)
@@ -274,16 +267,16 @@ class ChainlinkFeed:
         self,
         asset: str,
         market_start_ts: float,
-        max_alignment_ms: float = 5000.0,
+        max_alignment_ms: Optional[float] = None,
     ) -> Optional[ChainlinkState]:
-        """Return the RTDS observation nearest the canonical market start.
-
-        Only source timestamps within ``max_alignment_ms`` are accepted.  This
-        makes a mid-window process restart fail closed instead of inventing a PTB.
-        """
         hist = self.history.get(asset)
         if not hist:
             return None
+        max_alignment_ms = (
+            self.settings.max_reference_open_alignment_ms
+            if max_alignment_ms is None
+            else max_alignment_ms
+        )
         best = min(hist, key=lambda point: abs(point.source_ts - market_start_ts))
         if abs(best.source_ts - market_start_ts) * 1000.0 > max_alignment_ms:
             return None
