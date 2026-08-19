@@ -28,7 +28,6 @@ def windows_for(horizon: Horizon) -> list[int]:
 
 
 def _anchor_tolerance_ms(window_ms: int) -> int:
-    """Maximum allowed gap between requested anchor and observed price."""
     return max(100, min(1500, window_ms // 3))
 
 
@@ -54,7 +53,6 @@ def pct_return(prices: list[tuple[int, float]], window_ms: int, now_ms: int) -> 
 
 
 def realized_vol(prices: list[tuple[int, float]], window_ms: int, now_ms: int) -> Optional[float]:
-    """Realized log-volatility over the requested window (sqrt sum r^2)."""
     anchor = price_at(prices, now_ms - window_ms, max_age_ms=_anchor_tolerance_ms(window_ms))
     if anchor is None:
         return None
@@ -74,7 +72,6 @@ def realized_vol(prices: list[tuple[int, float]], window_ms: int, now_ms: int) -
 
 
 def momentum_persistence(prices: list[tuple[int, float]], window_ms: int, now_ms: int, step_ms: int = 1000) -> dict:
-    """Directional persistence from non-overlapping sub-window returns."""
     n_steps = max(2, window_ms // step_ms)
     sub: list[float] = []
     start = now_ms - n_steps * step_ms
@@ -152,7 +149,6 @@ class FeatureVector:
     combo: AssetHorizon
     ts: float
     seconds_remaining: float
-    # legacy aliases retained for downstream compatibility
     ret_fast: float = 0.0
     ret_mid: float = 0.0
     ret_slow: float = 0.0
@@ -211,13 +207,15 @@ class FeatureVector:
         "distance_bps", "distance_slope", "ptb_z", "tte_fraction", "elapsed_fraction",
         "obi_5", "obi_20", "ofi", "book_flow_agree",
     ]
+    # Existing P2 baseline interface intentionally stays +4 for backwards compatibility.
+    _MODEL_CLOB_FIELDS = ["clob_spread", "up_mid_vel", "up_mid_accel", "clob_spot_agree"]
     _CLOB_FIELDS = [
         "up_spread", "down_spread", "clob_spread", "clob_complement_residual",
         "clob_up_obi", "clob_down_obi", "up_mid_vel", "up_mid_accel", "clob_spot_agree",
     ]
 
     def model_features(self, include_clob: bool) -> tuple[list[str], list[float]]:
-        names = list(self._BASE_FIELDS) + (list(self._CLOB_FIELDS) if include_clob else [])
+        names = list(self._BASE_FIELDS) + (list(self._MODEL_CLOB_FIELDS) if include_clob else [])
         return names, [float(getattr(self, n) or 0.0) for n in names]
 
     def to_dict(self) -> dict:
@@ -301,7 +299,6 @@ class FeatureEngine:
         if up_mid is None:
             return 0.0, 0.0
         self._up_mid_hist.append((now, up_mid))
-        # Prefer a ~1s baseline rather than adjacent 500ms samples only.
         prev = None
         for t, m in reversed(self._up_mid_hist):
             if now - t >= 0.8:
@@ -350,9 +347,7 @@ class FeatureEngine:
         mom = {w: momentum_persistence(prices, w, now_ms, step_ms=1000) for w in MOMENTUM_WINDOWS_MS}
         fv.momentum_multi = {str(w): {k: round(float(v), 8) for k, v in x.items()} for w, x in mom.items()}
         m60 = mom[60000]
-        fv.sign_persistence, fv.flip_rate, fv.run_len, fv.mom_accel = (
-            m60["sign_persistence"], m60["flip_rate"], m60["run_len"], m60["accel"]
-        )
+        fv.sign_persistence, fv.flip_rate, fv.run_len, fv.mom_accel = m60["sign_persistence"], m60["flip_rate"], m60["run_len"], m60["accel"]
 
         flows = {w: flow_stats(trades, w, now_ms) for w in FLOW_WINDOWS_MS}
         fv.flow_multi = {str(w): {k: (round(v, 8) if isinstance(v, float) else v) for k, v in x.items()} for w, x in flows.items()}
@@ -362,8 +357,7 @@ class FeatureEngine:
         valid_flows = [flows[w]["imbalance"] for w in FLOW_WINDOWS_MS if flows[w]["imbalance"] is not None]
         if valid_flows:
             net = sum(valid_flows)
-            same = sum(1 for x in valid_flows if (x > 0) == (net > 0))
-            fv.flow_persistence = same / len(valid_flows)
+            fv.flow_persistence = sum(1 for x in valid_flows if (x > 0) == (net > 0)) / len(valid_flows)
         fv.flow_accel = fv.flow_fast - fv.flow_slow
         fv.flow_notional_5s = flows[5000]["notional_imbalance"] or 0.0
         fv.trade_rate_5s = float(flows[5000]["trade_rate"])
@@ -414,21 +408,15 @@ class FeatureEngine:
         fv.clob_up_obi = clob_up_obi or 0.0
         fv.clob_down_obi = clob_down_obi or 0.0
 
-        # P2.1 coverage: missing history remains visible instead of zero-imputed readiness.
         expected_returns = windows_for(self.combo.horizon)
         return_ok = sum(1 for w in expected_returns if ret_multi.get(w) is not None)
         checks = [
-            (fv.has_reference, "reference"),
-            (fv.has_clob, "clob"),
-            (book.synced, "binance_book"),
-            (ret_multi.get(5000) is not None, "ret_5s"),
-            (ret_multi.get(60000) is not None, "ret_60s"),
-            (flows[5000]["trade_count"] > 0, "flow_5s"),
-            (vols[60000] is not None, "rv_60s"),
+            (fv.has_reference, "reference"), (fv.has_clob, "clob"), (book.synced, "binance_book"),
+            (ret_multi.get(5000) is not None, "ret_5s"), (ret_multi.get(60000) is not None, "ret_60s"),
+            (flows[5000]["trade_count"] > 0, "flow_5s"), (vols[60000] is not None, "rv_60s"),
         ]
         fv.missing_features = [name for ok, name in checks if not ok]
         core_ratio = sum(1 for ok, _ in checks if ok) / len(checks)
-        return_ratio = return_ok / len(expected_returns)
-        fv.feature_coverage = 0.7 * core_ratio + 0.3 * return_ratio
+        fv.feature_coverage = 0.7 * core_ratio + 0.3 * (return_ok / len(expected_returns))
         fv.feature_ready = core_ratio == 1.0 and fv.feature_coverage >= 0.80
         return fv
