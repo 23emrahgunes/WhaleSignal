@@ -1,6 +1,8 @@
 """Central configuration for Direction Engine vNext.
 
-P2.1 is feature-only SHADOW: no model fitting, calibration, signing or execution.
+P2.5 is a SHADOW forecast phase: official labels may update the local model and
+calibration artifacts, but signing, private keys, execution and live orders remain
+absent from the codebase.
 """
 from __future__ import annotations
 
@@ -19,32 +21,51 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     db_path: str = Field(default="data/direction_engine.sqlite", alias="DB_PATH")
 
-    # P2.1 = feature-only. Training/calibration remain hard-locked OFF.
-    phase: str = Field(default="P2.1", alias="PHASE")
+    phase: str = Field(default="P2.5", alias="PHASE")
     model_training_enabled: bool = Field(default=False, alias="MODEL_TRAINING_ENABLED")
     calibration_enabled: bool = Field(default=False, alias="CALIBRATION_ENABLED")
+    model_path: str = Field(default="models/direction_model.pkl", alias="MODEL_PATH")
+    calibration_path: str = Field(default="models/calibration.pkl", alias="CALIBRATION_PATH")
+
+    @property
+    def phase_key(self) -> str:
+        return self.phase.strip().upper().replace("_", ".")
 
     @property
     def feature_only_phase(self) -> bool:
-        return self.phase.strip().upper() in {"P1", "P2.1", "P2_1", "P21"}
+        return self.phase_key in {"P1", "P2.1", "P21"}
+
+    @property
+    def regime_only_phase(self) -> bool:
+        return self.phase_key in {"P2.2", "P22"}
+
+    @property
+    def shadow_forecast_phase(self) -> bool:
+        return self.phase_key in {"P2.5", "P25", "P3", "P3.0"}
 
     def enforce_phase_lock(self) -> None:
-        if self.feature_only_phase and (self.model_training_enabled or self.calibration_enabled):
+        if (self.feature_only_phase or self.regime_only_phase) and (
+            self.model_training_enabled or self.calibration_enabled
+        ):
             raise SystemExit(
-                "FATAL CONFIG ERROR: P1/P2.1 feature-only phase cannot enable training/calibration."
+                "FATAL CONFIG ERROR: P1/P2.1/P2.2 cannot enable training/calibration."
+            )
+        if self.calibration_enabled and not self.model_training_enabled:
+            raise SystemExit(
+                "FATAL CONFIG ERROR: calibration requires shadow model training enabled."
             )
 
     @property
     def training_active(self) -> bool:
-        return (not self.feature_only_phase) and self.model_training_enabled
+        return self.shadow_forecast_phase and self.model_training_enabled
 
     @property
     def calibration_active(self) -> bool:
-        return (not self.feature_only_phase) and self.calibration_enabled
+        return self.shadow_forecast_phase and self.calibration_enabled
 
     @property
     def model_inference_active(self) -> bool:
-        return not self.feature_only_phase
+        return not (self.feature_only_phase or self.regime_only_phase)
 
     chainlink_enabled: bool = Field(default=True, alias="CHAINLINK_ENABLED")
     rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com", alias="RTDS_WS_URL")
@@ -101,7 +122,12 @@ class Settings(BaseSettings):
     ws_recv_timeout_sec: float = Field(default=30.0, alias="WS_RECV_TIMEOUT_SEC")
 
     per_combo_model_min_markets: int = Field(default=200, alias="PER_COMBO_MODEL_MIN_MARKETS")
+    horizon_model_min_markets: int = Field(default=50, alias="HORIZON_MODEL_MIN_MARKETS")
     min_markets_for_stats: int = Field(default=30, alias="MIN_MARKETS_FOR_STATS")
+    calibration_min_markets: int = Field(default=30, alias="CALIBRATION_MIN_MARKETS")
+    calibration_min_class_markets: int = Field(default=5, alias="CALIBRATION_MIN_CLASS_MARKETS")
+    threshold_min_decisions: int = Field(default=30, alias="THRESHOLD_MIN_DECISIONS")
+    threshold_target_accuracy: float = Field(default=0.52, alias="THRESHOLD_TARGET_ACCURACY")
 
     def assets(self) -> list[str]:
         return [a.strip().upper() for a in self.assets_csv.split(",") if a.strip()]
@@ -114,7 +140,11 @@ class Settings(BaseSettings):
         return sorted(set(out), reverse=True)
 
     def checkpoints_for(self, horizon: str) -> list[int]:
-        csv = {"5m": self.checkpoints_5m_csv, "15m": self.checkpoints_15m_csv, "1h": self.checkpoints_1h_csv}.get(horizon, self.snapshot_checkpoints_csv)
+        csv = {
+            "5m": self.checkpoints_5m_csv,
+            "15m": self.checkpoints_15m_csv,
+            "1h": self.checkpoints_1h_csv,
+        }.get(horizon, self.snapshot_checkpoints_csv)
         return sorted({int(t.strip()) for t in csv.split(",") if t.strip().isdigit()}, reverse=True)
 
 
