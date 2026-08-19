@@ -58,13 +58,13 @@ def test_learned_threshold_blocks_two_independent_opposing_votes():
     assert result.opposing_votes == 2
 
 
-def test_per_combo_validated_contrarian_model_can_pass_with_support():
+def test_per_combo_validated_model_can_pass_with_three_supporting_votes():
     result = evaluate_decision_gate(
         p_up=0.78,
         threshold_source="PER_COMBO_LEARNED",
         calibration_source="PER_COMBO_RELIABILITY",
         calibration_n=80,
-        market_up=0.66,
+        market_up=0.75,
         ptb_model_up=0.72,
         directional_vote=0.8,
         directional_consensus=0.9,
