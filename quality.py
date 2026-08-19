@@ -1,9 +1,4 @@
-"""Veri sagligi / invariant checker — 7 boyutlu quality + prediction_ready.
-
-Her cycle marketin plumbing dogrulugunu denetler ve 7 ayri boyut uretir:
-TIME / MARKET / TOKENS / CLOB / REFERENCE / CLOCK / MODEL. Ihlalde uygun
-`AbstainReason` doner ve `prediction_ready=False` olur. Saf fonksiyonlar; ag yok.
-"""
+"""Data quality / invariant checker — 7 dimensions + prediction_ready."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,11 +27,6 @@ def _stale(age_ms, limit_ms) -> bool:  # noqa: ANN001
 
 
 def check_freshness(snap: FeatureSnapshot, settings: Settings) -> QualityResult:
-    """Spot/book KRITIK (hizli kaynak); bayatsa STALE_DATA -> ABSTAIN.
-
-    reference/clob eksikligi stale-block DEGIL ama not olarak isaretlenir
-    (distance/teyit hesaplanamaz; yon katmani bunu ayrica degerlendirir).
-    """
     notes: list[str] = []
     critical_stale = False
 
@@ -46,7 +36,6 @@ def check_freshness(snap: FeatureSnapshot, settings: Settings) -> QualityResult:
     if _stale(snap.book_age_ms, settings.max_book_age_ms):
         notes.append("book_stale")
         critical_stale = True
-
     if _stale(snap.reference_age_ms, settings.max_reference_age_ms):
         notes.append("reference_missing_or_stale")
     if _stale(snap.clob_age_ms, settings.max_clob_age_ms):
@@ -57,23 +46,20 @@ def check_freshness(snap: FeatureSnapshot, settings: Settings) -> QualityResult:
     return QualityResult(True, AbstainReason.NONE, notes)
 
 
-# ---------------------------------------------------------------------------
-# 7-boyutlu invariant checker (P1 acceptance)
-# ---------------------------------------------------------------------------
-
-
-def _clob_status(snap: FeatureSnapshot, settings: Settings) -> tuple[QStatus, Optional[str]]:
-    """CLOB=OK icin **UP ve DOWN ikisi de** gerekli: bid+ask var, bid<=ask, [0,1], fresh."""
+def _clob_status(
+    snap: FeatureSnapshot, settings: Settings
+) -> tuple[QStatus, Optional[str]]:
+    """CLOB OK requires valid, fresh bid/ask on both UP and DOWN."""
     sides = (("up", snap.up_bid, snap.up_ask), ("down", snap.down_bid, snap.down_ask))
-    for name, b, a in sides:
-        if b is None or a is None:
-            return QStatus.WAITING, f"clob:waiting(no_{name}_quote)"  # 0.505 fallback YOK
-        if not (0.0 <= b <= 1.0) or not (0.0 <= a <= 1.0):
-            return QStatus.FAIL, f"clob:{name}_out_of_range(bid={b},ask={a})"
-        if b > a:
-            return QStatus.FAIL, f"clob:{name}_bid>ask({b}>{a})"
-    if snap.clob_age_ms is not None and snap.clob_age_ms > settings.max_clob_age_ms:
-        return QStatus.WAITING, "clob:stale"  # bayat -> usable degil -> ABSTAIN(CLOB_MISSING)
+    for name, bid, ask in sides:
+        if bid is None or ask is None:
+            return QStatus.WAITING, f"clob:waiting(no_{name}_quote)"
+        if not (0.0 <= bid <= 1.0) or not (0.0 <= ask <= 1.0):
+            return QStatus.FAIL, f"clob:{name}_out_of_range(bid={bid},ask={ask})"
+        if bid > ask:
+            return QStatus.FAIL, f"clob:{name}_bid>ask({bid}>{ask})"
+    if snap.clob_age_ms is None or snap.clob_age_ms > settings.max_clob_age_ms:
+        return QStatus.WAITING, "clob:stale"
     return QStatus.OK, None
 
 
@@ -85,7 +71,6 @@ def assess(
     clock_synced: bool = True,
     model_ready: bool = False,
 ) -> QualityReport:
-    """7 boyut + prediction_ready + snapshot_recordable + primary AbstainReason."""
     notes: list[str] = []
     horizon_sec = ref.combo.horizon.seconds
     tte = snap.tte_sec if snap.tte_sec is not None else ref.remaining_sec(now)
@@ -125,10 +110,16 @@ def assess(
     if clob_note:
         notes.append(clob_note)
 
-    # REFERENCE (PTB)
+    # REFERENCE: opening anchor + fresh current observation from the same official lineage.
     if snap.reference_price is None:
         reference_q = QStatus.WAITING
         notes.append("reference:PTB_MISSING")
+    elif snap.reference_age_ms is None:
+        reference_q = QStatus.WAITING
+        notes.append("reference:current_missing")
+    elif snap.reference_age_ms > settings.max_reference_age_ms:
+        reference_q = QStatus.WAITING
+        notes.append(f"reference:current_stale({snap.reference_age_ms:.0f}ms)")
     else:
         reference_q = QStatus.OK
 
@@ -137,10 +128,10 @@ def assess(
     if not clock_synced:
         notes.append("clock:unsync")
 
-    # MODEL (P1: her zaman WARN -> MODEL_NOT_TRAINED)
+    # MODEL (P1 is WARN / MODEL_NOT_TRAINED)
     model_q = QStatus.OK if model_ready else QStatus.WARN
 
-    # FEED health (transport/source) — ayrik; seyrek trade != stale
+    # Feed transport health; sparse trades do not imply a dead feed.
     feed_ok = (
         snap.transport_age_ms is not None
         and snap.transport_age_ms <= settings.max_transport_age_ms
@@ -162,7 +153,6 @@ def assess(
         and model_q == QStatus.OK
     )
 
-    # primary abstain reason (oncelik sirasi)
     reason = AbstainReason.NONE
     if time_q == QStatus.FAIL:
         reason = AbstainReason.UNSAFE_TIME_METADATA
@@ -180,8 +170,15 @@ def assess(
         reason = AbstainReason.MODEL_NOT_TRAINED
 
     return QualityReport(
-        time=time_q, market=market_q, tokens=tokens_q, clob=clob_q,
-        reference=reference_q, clock=clock_q, model=model_q,
-        prediction_ready=prediction_ready, snapshot_recordable=snapshot_recordable,
-        abstain_reason=reason, notes=notes,
+        time=time_q,
+        market=market_q,
+        tokens=tokens_q,
+        clob=clob_q,
+        reference=reference_q,
+        clock=clock_q,
+        model=model_q,
+        prediction_ready=prediction_ready,
+        snapshot_recordable=snapshot_recordable,
+        abstain_reason=reason,
+        notes=notes,
     )
