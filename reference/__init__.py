@@ -147,7 +147,7 @@ class ReferenceRouter:
             fresh = cl.age_ms(now) <= self.settings.max_reference_source_age_ms
             if fresh and cl.value > 0:
                 twap = ref.resolution_type == ResolutionType.CHAINLINK_TWAP
-                src = "CHAINLINK_TWAP" if twap else "CHAINLINK_RTDS_CAPTURE"
+                src = "CHAINLINK_TWAP_ONCHAIN" if twap else "CHAINLINK_ONCHAIN_CAPTURE"
                 ref.official_reference_open = cl.value
                 ref.official_reference_open_time = ref.market_start_ts
                 ref.official_reference_source = src

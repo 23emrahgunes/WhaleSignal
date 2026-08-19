@@ -50,17 +50,22 @@ class Settings(BaseSettings):
     def calibration_active(self) -> bool:
         return self.phase.strip().upper() != "P1" and self.calibration_enabled
 
-    # ----- Chainlink RTDS (5m/15m official reference kaynagi) -----
-    rtds_ws_url: str = Field(
-        default="wss://ws-live-data.polymarket.com", alias="RTDS_WS_URL"
+    # ----- Chainlink OFFICIAL reference (5m/15m) — Polygon ON-CHAIN aggregator -----
+    # Marketlerin resolve oldugu authoritative Chainlink kaynagi. Public Polygon RPC ile
+    # aggregator latestRoundData okunur (Binance proxy DEGIL). Geoblock disi, her yerden calisir.
+    chainlink_enabled: bool = Field(default=True, alias="CHAINLINK_ENABLED")
+    polygon_rpc_csv: str = Field(
+        default="https://polygon-bor-rpc.publicnode.com,https://polygon.drpc.org,https://1rpc.io/matic",
+        alias="POLYGON_RPC_URLS",
     )
-    rtds_enabled: bool = Field(default=True, alias="RTDS_ENABLED")
-    rtds_debug_raw: bool = Field(default=True, alias="RTDS_DEBUG_RAW")  # ham mesaj logu
-    rtds_subscribe_json: str = Field(default="", alias="RTDS_SUBSCRIBE_JSON")  # AWS'te ayarlanabilir
+    chainlink_poll_sec: float = Field(default=6.0, alias="CHAINLINK_POLL_SEC")
+
+    def polygon_rpc_urls(self) -> list[str]:
+        return [u.strip() for u in self.polygon_rpc_csv.split(",") if u.strip()]
     # yeni 5m/15m market bu kadar saniyeden gencse acilis referansi RTDS'ten yakalanir
     open_capture_window_sec: float = Field(default=30.0, alias="OPEN_CAPTURE_WINDOW_SEC")
     max_reference_source_age_ms: float = Field(
-        default=5000, alias="MAX_REFERENCE_SOURCE_AGE_MS"
+        default=15000, alias="MAX_REFERENCE_SOURCE_AGE_MS"  # poll(6s)+Chainlink heartbeat kapsar
     )
 
     # ----- Web dashboard -----

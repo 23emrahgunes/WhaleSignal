@@ -608,7 +608,7 @@ async def run() -> None:
         discovery = MarketDiscovery(cfg, session, combos)
         binance = BinanceFeed(cfg, symbols, session)
         clob_store = ClobQuoteStore()
-        chainlink = ChainlinkFeed(cfg, session) if cfg.rtds_enabled else None
+        chainlink = ChainlinkFeed(cfg, session) if cfg.chainlink_enabled else None
         reference = ReferenceRouter(cfg, chainlink=chainlink)
         hub = DataHub(cfg, discovery, binance, clob_store, reference)
         engine = ShadowEngine(cfg, hub, recorder, model, calib)
