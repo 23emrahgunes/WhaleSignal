@@ -1,9 +1,4 @@
-"""DataHub — tum feed'lerin birlesik anlik durumu (combo bazli FeatureSnapshot).
-
-Kaynaklar: discovery (aktif marketler), binance_feed (spot + local book), clob_feed
-(UP/DOWN kotalari), reference (horizon adaptorunun PTB'si). PTB pencerede sabit bir
-capa oldugundan `reference_cache`'te tutulur ve ayri bir gorevle tazelenir.
-"""
+"""DataHub — birleşik anlık durum ve market bazlı FeatureSnapshot üretimi."""
 from __future__ import annotations
 
 import logging
@@ -37,7 +32,7 @@ class DataHub:
         self.binance = binance
         self.clob_store = clob_store
         self.reference = reference
-        self.reference_cache: dict[str, object] = {}  # condition_id -> ReferencePrice
+        self.reference_cache: dict[str, object] = {}
         self.started_at = time.time()
 
     def active_token_ids(self) -> list[str]:
@@ -50,13 +45,12 @@ class DataHub:
         return ids
 
     async def refresh_references(self, session: aiohttp.ClientSession) -> None:
-        """Aktif her market icin PTB'yi (horizon adaptoru) cek/onbellekle."""
         for ref in self.discovery.snapshot_active().values():
             feed = self.binance.get_feed(ref.combo.binance_symbol)
             try:
                 rp = await self.reference.reference_for(ref, feed, session)
             except Exception as exc:  # noqa: BLE001
-                log.warning("%s PTB tazeleme hatasi: %s", ref.combo.key, exc)
+                log.warning("%s PTB refresh error: %s", ref.combo.key, exc)
                 continue
             if rp.ok and ref.condition_id:
                 self.reference_cache[ref.condition_id] = rp
@@ -72,39 +66,42 @@ class DataHub:
             transport_age = feed.transport_age_ms()
             source_age = feed.source_event_age_ms()
 
-        # PTB = OFFICIAL reference (resolution kaynagi). Proxy ASLA PTB degil.
         official = ref.official_reference_open
-        reference_price = official  # PTB yalniz official
-        reference_age = 0.0 if official is not None else None
+        reference_price = official
+        # Opening PTB is a static anchor; reference_age_ms represents the current
+        # official-source observation age, not a fake zero-age for the opening anchor.
+        reference_age = ref.reference_current_age_ms
         current = ref.reference_current if ref.reference_current is not None else spot
 
-        # official_distance_bps = 10000*ln(current/official) (spec 17)
         official_distance_bps = None
         distance_usd = None
         if current is not None and official:
             official_distance_bps = 10000.0 * math.log(current / official)
             distance_usd = current - official
-        # proxy_distance_bps (analytics-only)
+
         proxy_distance_bps = None
         if current is not None and ref.proxy_reference_open:
             proxy_distance_bps = 10000.0 * math.log(current / ref.proxy_reference_open)
 
-        # CLOB: up VE down token'in gercek bid/ask/mid. **0.505 fallback YOK** —
-        # bid/ask yoksa None. token_id -> market_id reverse index (store token-anahtarli).
         up_q = self.clob_store.get(ref.up_token_id)
         down_q = self.clob_store.get(ref.down_token_id)
         up_bid = up_q.best_bid if up_q else None
         up_ask = up_q.best_ask if up_q else None
-        up_mid = up_q.mid if up_q else None  # ClobQuote.mid None-guard'li
+        up_mid = up_q.mid if up_q else None
         down_bid = down_q.best_bid if down_q else None
         down_ask = down_q.best_ask if down_q else None
         down_mid = down_q.mid if down_q else None
+
         clob_spread = None
-        clob_age = None
         if up_q is not None and up_bid is not None and up_ask is not None:
             clob_spread = up_ask - up_bid
-        # clob_age = UP ve DOWN'un EN BAYAT olani (ikisi de taze olmali)
-        ages = [max(0.0, now * 1000 - q.ts * 1000) for q in (up_q, down_q) if q is not None]
+
+        clob_age = None
+        ages = [
+            max(0.0, now * 1000.0 - quote.ts * 1000.0)
+            for quote in (up_q, down_q)
+            if quote is not None
+        ]
         if ages:
             clob_age = max(ages)
 
@@ -117,9 +114,9 @@ class DataHub:
             market_end=ref.market_end_ts,
             tte_sec=tte,
             spot_price=spot,
-            reference_price=reference_price,  # = official (PTB)
+            reference_price=reference_price,
             distance_usd=distance_usd,
-            distance_bps=official_distance_bps,  # PTB distance = official
+            distance_bps=official_distance_bps,
             official_reference_open=official,
             official_reference_open_time=ref.official_reference_open_time,
             official_reference_source=ref.official_reference_source,
