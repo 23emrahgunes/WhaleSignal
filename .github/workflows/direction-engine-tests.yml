@@ -3,6 +3,8 @@ name: Direction Engine Tests
 on:
   push:
     branches: [direction-engine]
+  pull_request:
+    branches: [direction-engine]
   workflow_dispatch:
 
 jobs:
@@ -23,8 +25,7 @@ jobs:
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
       - name: Compile
-        run: |
-          python -m py_compile *.py reference/*.py
+        run: python -m py_compile *.py reference/*.py
 
       - name: Test
         env:
