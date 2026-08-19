@@ -1,0 +1,77 @@
+name: Runtime Probe P2.5 PR
+
+on:
+  pull_request:
+    branches:
+      - direction-engine
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check deployed P2.5 runtime
+        shell: bash
+        env:
+          BASE_URL: http://13.63.157.215:8091
+        run: |
+          set -Eeuo pipefail
+          ok=0
+          for attempt in $(seq 1 18); do
+            echo "attempt=$attempt target=$BASE_URL"
+            hc=$(curl --connect-timeout 5 --max-time 12 -sS -o /tmp/health.json -w '%{http_code}' "$BASE_URL/health" || true)
+            sc=$(curl --connect-timeout 5 --max-time 15 -sS -o /tmp/state.json -w '%{http_code}' "$BASE_URL/api/state" || true)
+            echo "health_http=$hc state_http=$sc"
+            if [[ "$hc" == "200" && "$sc" == "200" ]]; then ok=1; break; fi
+            sleep 5
+          done
+          [[ "$ok" == "1" ]] || { echo PUBLIC_RUNTIME_UNREACHABLE; exit 1; }
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          health=json.loads(Path('/tmp/health.json').read_text())
+          state=json.loads(Path('/tmp/state.json').read_text())
+          footer=state.get('footer') or {}
+          safety=state.get('safety') or {}
+          cards=state.get('cards') or []
+          chainlink=state.get('chainlink') or {}
+          analytics=(state.get('forecast_analytics') or {}).get('overall') or {}
+          summary={
+            'health':health,
+            'mode':state.get('mode'),'phase':state.get('phase'),'uptime_sec':state.get('uptime_sec'),
+            'markets_active':footer.get('markets_active'),'clob_transport':footer.get('clob_transport_healthy'),
+            'clob_quote':footer.get('clob_quote_healthy'),'ptb':footer.get('ptb_states_healthy'),
+            'features_ready':footer.get('features_ready'),'model_ready_cards':footer.get('model_ready_cards'),
+            'snapshots':footer.get('snapshots_total'),'forecasts':footer.get('forecasts'),
+            'labeled_forecasts':footer.get('labeled_forecasts'),'resolved':footer.get('resolved_total'),
+            'coverage':analytics.get('coverage'),'accuracy':analytics.get('accuracy'),
+            'binance_connected':state.get('binance_connected'),'clock_synced':state.get('clock_synced'),
+            'chainlink_connection':chainlink.get('connection'),'chainlink_messages':chainlink.get('messages'),
+            'safety':safety,'cards_count':len(cards),
+          }
+          print('RUNTIME_SUMMARY='+json.dumps(summary,ensure_ascii=False,sort_keys=True))
+          print('CARD_SUMMARY_BEGIN')
+          for c in cards:
+            f=c.get('feature') or {}
+            print(json.dumps({
+              'combo':c.get('combo'),'active':c.get('active'),'tte':c.get('tte_sec'),
+              'feature_ready':f.get('ready'),'coverage':f.get('coverage'),'missing':f.get('missing'),
+              'regime':c.get('regime'),'predictability':c.get('predictability'),
+              'p_up':c.get('p_up'),'decision':c.get('decision'),'reason':c.get('abstain_reason'),
+              'ptb':c.get('official_reference_open'),'clob_age_ms':c.get('clob_age_ms')
+            },ensure_ascii=False,sort_keys=True))
+          print('CARD_SUMMARY_END')
+          assert health.get('ok') is True
+          assert state.get('mode')=='SHADOW'
+          assert state.get('phase')=='P2.5'
+          assert safety.get('phase')=='P2.5'
+          assert safety.get('execution_enabled') is False
+          assert safety.get('private_key_loaded') is False
+          assert int(safety.get('live_orders') or 0)==0
+          assert len(cards)==12
+          PY
+          echo RUNTIME_PROBE_PASS
