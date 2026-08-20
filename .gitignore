@@ -2,8 +2,12 @@
 __pycache__/
 *.pyc
 .env
+.env.p26
 *.log
+*.pid
 .pytest_cache/
 data/
 models/
+reports/
+logs/
 recordings/

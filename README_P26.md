@@ -55,6 +55,24 @@ CI can prove syntax, deterministic algorithms and dry-run safety, but cannot cla
 that an AWS Security Group blocks unauthorized public traffic or that RTDS/CLOB
 feeds are healthy on the target VPS.
 
+## AWS one-shot deployment
+
+The rollback-safe AWS runbook and one-shot deployment command are documented in
+[`README_P26_AWS.md`](README_P26_AWS.md):
+
+```bash
+cd ~/direction-engine
+git checkout direction-engine
+git pull --ff-only origin direction-engine
+chmod +x deploy_p26.sh scripts/*.sh
+./deploy_p26.sh
+```
+
+The deployment keeps P2.5 running, creates a verified baseline freeze, installs
+dynamic systemd units and fails unless a real RTDS tick is persisted. Port 8091
+hardening remains an explicit post-deployment operation and is never applied
+implicitly.
+
 ## Training and evaluation
 
 ```bash
