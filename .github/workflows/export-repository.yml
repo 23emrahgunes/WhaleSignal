@@ -1,0 +1,35 @@
+name: Export Repository Snapshot
+
+on:
+  push:
+    branches:
+      - direction-engine-p26-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Build source archive
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/export
+          tar \
+            --exclude='.git' \
+            --exclude='data' \
+            --exclude='models' \
+            --exclude='.venv' \
+            -czf /tmp/export/direction-engine-source.tar.gz .
+          sha256sum /tmp/export/direction-engine-source.tar.gz > /tmp/export/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direction-engine-source
+          path: /tmp/export
+          if-no-files-found: error
+          retention-days: 1
