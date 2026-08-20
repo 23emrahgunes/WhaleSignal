@@ -14,7 +14,7 @@ from p25_paper_records import (
     query_paper_records,
 )
 from p25_paper_records_page import PAPER_RECORDS_HTML
-from p25_web_records import _main_html_with_paper_link
+from p25_web_records import _main_html_with_paper_link, _paper_records_html
 
 
 def _settings(monkeypatch, db_path: str) -> PaperSettings:
@@ -148,7 +148,23 @@ def test_records_are_newest_first_and_paginated(recorder):
     assert page["records"][1]["outcome_label"] == "ACIK"
 
 
+def test_traded_virtual_status_excludes_skipped_rows(recorder):
+    page = query_paper_records(
+        recorder,
+        PaperRecordFilters.from_mapping({"status": "TRADED"}),
+    )
+    assert page["filters"]["status"] == "TRADED"
+    assert page["pagination"]["total"] == 2
+    assert {row["status"] for row in page["records"]} == {
+        "OPEN",
+        "SETTLED",
+    }
+    assert all(row["condition_id"] != "sol-skipped" for row in page["records"])
+
+
 def test_filters_by_asset_horizon_status_and_query(recorder):
+    # Explicit SKIPPED remains available through the diagnostic API, but the
+    # user-facing records page never selects it.
     page = query_paper_records(
         recorder,
         PaperRecordFilters.from_mapping(
@@ -197,6 +213,15 @@ def test_dedicated_page_has_filters_records_and_safety_labels():
     assert "/api/paper-trades.csv" in PAPER_RECORDS_HTML
     assert "Kripto Bazlı" in PAPER_RECORDS_HTML
     assert "Market Bazlı Paper Kayıtları" in PAPER_RECORDS_HTML
+
+
+def test_runtime_page_defaults_to_entered_trades_only():
+    html = _paper_records_html()
+    assert '<option value="TRADED" selected>Giriş yapılanlar</option>' in html
+    assert "<option>SKIPPED</option>" not in html
+    assert "Market Bazlı Paper İşlemler" in html
+    assert "$('status').value='TRADED'" in html
+    assert "LOW_CONFIDENCE" not in html
 
 
 def test_main_dashboard_gets_paper_records_navigation_link():
