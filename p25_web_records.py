@@ -31,6 +31,49 @@ def _main_html_with_paper_link() -> str:
     return _HTML.replace(marker, link, 1)
 
 
+def _paper_records_html() -> str:
+    """Return the records page defaulting to actual entries only.
+
+    Diagnostic SKIPPED attempts remain in SQLite and aggregate skip counters, but
+    the user-facing market table shows only OPEN/SETTLED paper positions.
+    """
+    html = PAPER_RECORDS_HTML
+    html = html.replace(
+        '<div class="field"><label>Durum</label><select id="status">'
+        '<option value="ALL">Tümü</option><option>OPEN</option>'
+        '<option>SETTLED</option><option>SKIPPED</option></select></div>',
+        '<div class="field"><label>Durum</label><select id="status">'
+        '<option value="TRADED" selected>Giriş yapılanlar</option>'
+        '<option>OPEN</option><option>SETTLED</option></select></div>',
+        1,
+    )
+    html = html.replace(
+        'placeholder="BTC:5m, slug, LOW_CONFIDENCE"',
+        'placeholder="BTC:5m, slug, condition ID"',
+        1,
+    )
+    html = html.replace(
+        '<h2>Market Bazlı Paper Kayıtları</h2>',
+        '<h2>Market Bazlı Paper İşlemler</h2>',
+        1,
+    )
+    html = html.replace(
+        'Henüz bu filtreye uyan paper kayıt yok. İlk kayıt 5m markette T-60, '
+        '15m markette T-240, 1h markette T-600 checkpointinde oluşur.',
+        'Henüz giriş yapılan paper işlem yok. İlk gerçek paper giriş 5m markette '
+        'T-60, 15m markette T-240, 1h markette T-600 checkpointinde oluşur.',
+        1,
+    )
+    html = html.replace(
+        "for(const id of ['asset','horizon','status','side','result'])"
+        "$(id).value='ALL';$('limit').value='50';",
+        "for(const id of ['asset','horizon','side','result'])$(id).value='ALL';"
+        "$('status').value='TRADED';$('limit').value='50';",
+        1,
+    )
+    return html
+
+
 async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
     app = web.Application()
 
@@ -41,7 +84,7 @@ async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
         )
 
     async def paper_page(_request: web.Request) -> web.Response:
-        return web.Response(text=PAPER_RECORDS_HTML, content_type="text/html")
+        return web.Response(text=_paper_records_html(), content_type="text/html")
 
     async def paper_alias(_request: web.Request) -> web.Response:
         raise web.HTTPFound("/paper-trades")
@@ -126,6 +169,7 @@ async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
                 ),
                 "paper_records_page": "/paper-trades",
                 "paper_records_api": "/api/paper-trades",
+                "paper_records_default_status": "TRADED",
                 "paper_summary_api": "/api/paper-summary",
                 "live_orders": snapshot.get("safety", {}).get(
                     "live_orders", 0
