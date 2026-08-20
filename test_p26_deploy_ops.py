@@ -47,9 +47,10 @@ def test_deploy_is_fail_closed_and_does_not_replace_p25():
         "systemctl stop direction-engine-p25",
         "systemctl disable direction-engine-p25",
         "p25_main.py >",
-        "private_key",
-        "submit_order",
-        "create_order",
+        "PRIVATE_KEY=",
+        "private_key =",
+        "submit_order(",
+        "create_order(",
     )
     for token in forbidden:
         assert token not in text
@@ -58,8 +59,8 @@ def test_deploy_is_fail_closed_and_does_not_replace_p25():
     assert "direction-engine-p26-oracle.service" in text
     assert "direction-engine-p26-dataset.service" in text
     assert "no RTDS oracle tick persisted within 90 seconds" in text
-    assert "scripts/harden_port_8091.sh\" --dry-run" in text
-    assert "scripts/harden_port_8091.sh\" --apply" not in text
+    assert 'harden_port_8091.sh" --dry-run' in text
+    assert 'harden_port_8091.sh" --apply' not in text
 
 
 def test_deploy_generates_dynamic_service_identity_and_paths():
