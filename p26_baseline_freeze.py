@@ -1,8 +1,13 @@
 """P2.6.0 baseline freeze and integrity verification.
 
-The freeze operation is read-only with respect to the P2.5 database.  It uses
-SQLite's online backup API, exports RESEARCH_PAPER_V1, snapshots runtime JSON and
-creates an atomic SHA-256 manifest.  It never restores a database automatically.
+The freeze operation is read-only with respect to the live P2.5 database. It
+pins one SQLite read transaction, captures row counts and schema from that exact
+snapshot, and runs the online backup from the same connection. Writes that land
+in P2.5 after the snapshot are recorded as live growth, not misclassified as
+backup corruption.
+
+The module exports RESEARCH_PAPER_V1, snapshots runtime JSON, creates an atomic
+SHA-256 manifest and never restores a database automatically.
 """
 from __future__ import annotations
 
@@ -28,7 +33,7 @@ from typing import Any, Iterable, Optional
 from p26_config import P26Settings, get_p26_settings
 
 
-BASELINE_FORMAT_VERSION = "P26_BASELINE_FREEZE_V1"
+BASELINE_FORMAT_VERSION = "P26_BASELINE_FREEZE_V2"
 PAPER_V1_STRATEGY = "RESEARCH_PAPER_V1"
 
 
@@ -70,12 +75,10 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 
 def atomic_write_json(path: Path, payload: Any) -> None:
-    atomic_write_bytes(
-        path,
-        (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode(
-            "utf-8"
-        ),
-    )
+    encoded = (
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    atomic_write_bytes(path, encoded)
 
 
 def git_output(args: list[str], cwd: Path) -> str:
@@ -101,7 +104,51 @@ def git_state(cwd: Path) -> dict[str, Any]:
             ],
         }
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": "UNKNOWN", "branch": "UNKNOWN", "dirty_lines": ["GIT_UNAVAILABLE"]}
+        return {
+            "commit": "UNKNOWN",
+            "branch": "UNKNOWN",
+            "dirty_lines": ["GIT_UNAVAILABLE"],
+        }
+
+
+def _schema_sql_from_connection(conn: sqlite3.Connection) -> str:
+    rows = conn.execute(
+        """
+        SELECT type, name, tbl_name, sql
+        FROM sqlite_master
+        WHERE sql IS NOT NULL
+        ORDER BY type, name
+        """
+    ).fetchall()
+    return "\n".join(str(row[3]) for row in rows)
+
+
+def _table_row_counts_from_connection(conn: sqlite3.Connection) -> dict[str, int]:
+    tables = [
+        str(row[0])
+        for row in conn.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name NOT LIKE 'sqlite_%'
+            ORDER BY name
+            """
+        ).fetchall()
+    ]
+    counts: dict[str, int] = {}
+    for table in tables:
+        quoted = '"' + table.replace('"', '""') + '"'
+        counts[table] = int(
+            conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]
+        )
+    return counts
+
+
+@dataclass(frozen=True)
+class SQLiteSnapshotProof:
+    row_counts: dict[str, int]
+    schema_sql: str
+    snapshot_started_at_ms: int
+    snapshot_completed_at_ms: int
 
 
 def sqlite_online_backup(
@@ -110,22 +157,48 @@ def sqlite_online_backup(
     *,
     pages: int = 256,
     sleep: float = 0.01,
-) -> None:
+) -> SQLiteSnapshotProof:
+    """Back up one pinned read snapshot and return its audit proof.
+
+    P2.5 is expected to keep writing while this runs. Therefore callers must
+    compare the backup with ``row_counts`` returned here, not with a fresh count
+    query executed after the backup has completed.
+    """
     if not source_path.exists():
         raise FileNotFoundError(source_path)
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = destination_path.with_suffix(destination_path.suffix + ".tmp")
     temp_path.unlink(missing_ok=True)
+
     source_uri = f"file:{source_path.resolve()}?mode=ro"
     source = sqlite3.connect(source_uri, uri=True, timeout=30.0)
     destination = sqlite3.connect(temp_path, timeout=30.0)
+    started_ms = int(time.time() * 1000)
     try:
+        source.execute("PRAGMA query_only=ON")
+        source.execute("PRAGMA busy_timeout=30000")
+        source.execute("BEGIN")
+        snapshot_counts = _table_row_counts_from_connection(source)
+        snapshot_schema = _schema_sql_from_connection(source)
         source.backup(destination, pages=pages, sleep=sleep)
         destination.commit()
+        completed_ms = int(time.time() * 1000)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
     finally:
         destination.close()
+        if source.in_transaction:
+            source.rollback()
         source.close()
+
     os.replace(temp_path, destination_path)
+    return SQLiteSnapshotProof(
+        row_counts=snapshot_counts,
+        schema_sql=snapshot_schema,
+        snapshot_started_at_ms=started_ms,
+        snapshot_completed_at_ms=completed_ms,
+    )
 
 
 def sqlite_integrity(path: Path) -> str:
@@ -140,15 +213,7 @@ def sqlite_integrity(path: Path) -> str:
 def sqlite_schema_sql(path: Path) -> str:
     conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
     try:
-        rows = conn.execute(
-            """
-            SELECT type, name, tbl_name, sql
-            FROM sqlite_master
-            WHERE sql IS NOT NULL
-            ORDER BY type, name
-            """
-        ).fetchall()
-        return "\n".join(str(row[3]) for row in rows)
+        return _schema_sql_from_connection(conn)
     finally:
         conn.close()
 
@@ -156,21 +221,7 @@ def sqlite_schema_sql(path: Path) -> str:
 def table_row_counts(path: Path) -> dict[str, int]:
     conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True)
     try:
-        tables = [
-            str(row[0])
-            for row in conn.execute(
-                """
-                SELECT name FROM sqlite_master
-                WHERE type='table' AND name NOT LIKE 'sqlite_%'
-                ORDER BY name
-                """
-            ).fetchall()
-        ]
-        counts: dict[str, int] = {}
-        for table in tables:
-            quoted = '"' + table.replace('"', '""') + '"'
-            counts[table] = int(conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0])
-        return counts
+        return _table_row_counts_from_connection(conn)
     finally:
         conn.close()
 
@@ -178,17 +229,11 @@ def table_row_counts(path: Path) -> dict[str, int]:
 def fetch_json(url: str, timeout_sec: float) -> Any:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "direction-engine-p26-freeze/1.0"},
+        headers={"User-Agent": "direction-engine-p26-freeze/2.0"},
     )
     with urllib.request.urlopen(request, timeout=timeout_sec) as response:
         raw = response.read()
     return json.loads(raw.decode("utf-8"))
-
-
-def _json_default(value: Any) -> Any:
-    if isinstance(value, bytes):
-        return value.hex()
-    raise TypeError(f"not JSON serializable: {type(value)!r}")
 
 
 def export_paper_v1(db_path: Path, json_path: Path, csv_path: Path) -> int:
@@ -196,7 +241,8 @@ def export_paper_v1(db_path: Path, json_path: Path, csv_path: Path) -> int:
     conn.row_factory = sqlite3.Row
     try:
         exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_trades'"
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='paper_trades'"
         ).fetchone()
         if not exists:
             rows: list[dict[str, Any]] = []
@@ -217,9 +263,13 @@ def export_paper_v1(db_path: Path, json_path: Path, csv_path: Path) -> int:
 
     atomic_write_json(json_path, rows)
     fieldnames = sorted({key for row in rows for key in row})
-    buffer = tempfile.SpooledTemporaryFile(mode="w+", newline="", encoding="utf-8")
+    buffer = tempfile.SpooledTemporaryFile(
+        mode="w+", newline="", encoding="utf-8"
+    )
     try:
-        writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(
+            buffer, fieldnames=fieldnames, extrasaction="ignore"
+        )
         if fieldnames:
             writer.writeheader()
             for row in rows:
@@ -239,7 +289,9 @@ class ArtifactEntry:
     required: bool
 
 
-def artifact_entry(root: Path, path: Path, required: bool = True) -> ArtifactEntry:
+def artifact_entry(
+    root: Path, path: Path, required: bool = True
+) -> ArtifactEntry:
     return ArtifactEntry(
         relative_path=str(path.relative_to(root)),
         size_bytes=path.stat().st_size,
@@ -275,7 +327,8 @@ class BaselineFreezer:
         dirty = bool(git["dirty_lines"])
         if self.settings.baseline_require_clean_git and dirty and not allow_dirty:
             raise RuntimeError(
-                "BASELINE_FREEZE_FAIL: WORKTREE_DIRTY: " + ", ".join(git["dirty_lines"])
+                "BASELINE_FREEZE_FAIL: WORKTREE_DIRTY: "
+                + ", ".join(git["dirty_lines"])
             )
 
         baseline_id = baseline_id or f"P25_FREEZE_{utc_stamp()}"
@@ -286,17 +339,26 @@ class BaselineFreezer:
 
         source_db = Path(self.settings.p25_db_path)
         backup_db = target / "direction_engine.sqlite"
-        sqlite_online_backup(source_db, backup_db)
+        snapshot = sqlite_online_backup(source_db, backup_db)
         integrity = sqlite_integrity(backup_db)
         if integrity.lower() != "ok":
             raise RuntimeError(f"backup integrity failed: {integrity}")
 
-        source_counts = table_row_counts(source_db)
         backup_counts = table_row_counts(backup_db)
-        if source_counts != backup_counts:
+        if snapshot.row_counts != backup_counts:
             raise RuntimeError(
-                f"row-count mismatch source={source_counts} backup={backup_counts}"
+                "snapshot row-count mismatch "
+                f"snapshot={snapshot.row_counts} backup={backup_counts}"
             )
+
+        backup_schema = sqlite_schema_sql(backup_db)
+        if snapshot.schema_sql != backup_schema:
+            raise RuntimeError("snapshot schema mismatch between source and backup")
+
+        source_live_after_counts = table_row_counts(source_db)
+        source_changed_after_snapshot = (
+            source_live_after_counts != snapshot.row_counts
+        )
 
         paper_json = target / "paper_v1.json"
         paper_csv = target / "paper_v1.csv"
@@ -322,7 +384,9 @@ class BaselineFreezer:
         ):
             destination = target / f"api_{name}.json"
             try:
-                payload = fetch_json(url, self.settings.baseline_http_timeout_sec)
+                payload = fetch_json(
+                    url, self.settings.baseline_http_timeout_sec
+                )
                 atomic_write_json(destination, payload)
                 api_exports[name] = {
                     "status": "OK",
@@ -330,17 +394,28 @@ class BaselineFreezer:
                     "relative_path": str(destination.relative_to(target)),
                 }
                 artifact_paths.append((destination, True))
-            except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            except (
+                OSError,
+                urllib.error.URLError,
+                json.JSONDecodeError,
+            ) as exc:
                 if not allow_api_unavailable:
-                    raise RuntimeError(f"runtime API unavailable: {url}: {exc}") from exc
-                error_payload = {"status": "UNAVAILABLE", "url": url, "error": repr(exc)}
+                    raise RuntimeError(
+                        f"runtime API unavailable: {url}: {exc}"
+                    ) from exc
+                error_payload = {
+                    "status": "UNAVAILABLE",
+                    "url": url,
+                    "error": repr(exc),
+                }
                 atomic_write_json(destination, error_payload)
                 api_exports[name] = error_payload
                 artifact_paths.append((destination, False))
 
-        schema_sql = sqlite_schema_sql(backup_db)
         schema_path = target / "schema.sql"
-        atomic_write_bytes(schema_path, (schema_sql + "\n").encode("utf-8"))
+        atomic_write_bytes(
+            schema_path, (backup_schema + "\n").encode("utf-8")
+        )
         artifact_paths.append((schema_path, True))
 
         artifacts = [
@@ -362,14 +437,24 @@ class BaselineFreezer:
             "db_source_path": str(source_db.resolve()),
             "db_backup_path": str(backup_db.relative_to(target)),
             "db_integrity_check": integrity,
-            "db_schema_sha256": sha256_bytes(schema_sql.encode("utf-8")),
+            "db_schema_sha256": sha256_bytes(backup_schema.encode("utf-8")),
+            "source_snapshot_schema_sha256": sha256_bytes(
+                snapshot.schema_sql.encode("utf-8")
+            ),
             "table_row_counts": backup_counts,
+            "source_snapshot_row_counts": snapshot.row_counts,
+            "source_live_after_row_counts": source_live_after_counts,
+            "source_changed_after_snapshot": source_changed_after_snapshot,
+            "snapshot_started_at_ms": snapshot.snapshot_started_at_ms,
+            "snapshot_completed_at_ms": snapshot.snapshot_completed_at_ms,
             "paper_v1_count": paper_count,
             "api_exports": api_exports,
             "artifacts": [asdict(entry) for entry in artifacts],
             "safety": {
                 "restored_automatically": False,
                 "p25_database_mutated": False,
+                "p25_writes_allowed_during_snapshot": True,
+                "fresh_source_growth_is_not_backup_corruption": True,
                 "execution_enabled": False,
             },
         }
@@ -395,6 +480,7 @@ def verify_manifest(manifest_path: Path) -> dict[str, Any]:
             failures.append(f"size:{entry['relative_path']}")
         if actual_hash != entry["sha256"]:
             failures.append(f"sha256:{entry['relative_path']}")
+
     db_path = root / str(manifest["db_backup_path"])
     if db_path.exists():
         integrity = sqlite_integrity(db_path)
@@ -403,9 +489,22 @@ def verify_manifest(manifest_path: Path) -> dict[str, Any]:
         actual_counts = table_row_counts(db_path)
         if actual_counts != manifest.get("table_row_counts", {}):
             failures.append("row_counts")
+        actual_schema_hash = sha256_bytes(
+            sqlite_schema_sql(db_path).encode("utf-8")
+        )
+        if actual_schema_hash != manifest.get("db_schema_sha256"):
+            failures.append("schema_sha256")
+
     if failures:
         raise RuntimeError("BASELINE_VERIFY_FAIL: " + ",".join(failures))
-    return {"ok": True, "baseline_id": manifest["baseline_id"], "artifacts": len(manifest.get("artifacts", []))}
+    return {
+        "ok": True,
+        "baseline_id": manifest["baseline_id"],
+        "artifacts": len(manifest.get("artifacts", [])),
+        "source_changed_after_snapshot": bool(
+            manifest.get("source_changed_after_snapshot", False)
+        ),
+    }
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -427,6 +526,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         result = verify_manifest(Path(args.manifest))
         print(json.dumps(result, sort_keys=True))
         return 0
+
     settings = get_p26_settings()
     freezer = BaselineFreezer(settings, Path(args.repo_root))
     manifest = freezer.freeze(
