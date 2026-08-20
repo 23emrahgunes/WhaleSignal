@@ -1,0 +1,112 @@
+name: Apply P2.6 Implementation
+
+on:
+  push:
+    branches:
+      - direction-engine-p26-apply
+  pull_request:
+    branches:
+      - direction-engine
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout P2.6 target branch
+        uses: actions/checkout@v4
+        with:
+          ref: direction-engine-p26-full
+          path: target
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout patch payload
+        uses: actions/checkout@v4
+        with:
+          ref: direction-engine-p26-apply
+          path: payload
+          fetch-depth: 1
+
+      - name: Decode and verify patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat payload/p26_patch_chunks/chunk_* > /tmp/p26_patch.b64
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import zlib
+          from pathlib import Path
+
+          raw = base64.b64decode(Path('/tmp/p26_patch.b64').read_bytes())
+          patch = zlib.decompress(raw)
+          digest = hashlib.sha256(patch).hexdigest()
+          expected = '8e4bf74aabe069f081932f899e5e035653c3b2ebe4e582ba23c37acdb70b885d'
+          print(f'patch_bytes={len(patch)}')
+          print(f'patch_sha256={digest}')
+          if digest != expected:
+              raise SystemExit(f'patch digest mismatch: expected={expected} actual={digest}')
+          Path('/tmp/p26_full.patch').write_bytes(patch)
+          PY
+
+      - name: Apply P2.6 patch
+        shell: bash
+        working-directory: target
+        run: |
+          set -Eeuo pipefail
+          git status --short
+          git apply --check /tmp/p26_full.patch
+          git apply /tmp/p26_full.patch
+          git diff --check
+          changed_core="$(git diff --name-only | grep -E '^(p25_|main\.py$|recorder\.py$|features\.py$|chainlink_feed\.py$|clob_feed\.py$|binance_feed\.py$|models\.py$|config\.py$|deploy_p25\.sh$)' || true)"
+          if [[ -n "$changed_core" ]]; then
+            echo 'ERROR: P2.5 baseline files changed:' >&2
+            echo "$changed_core" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: target/requirements.txt
+
+      - name: Install dependencies
+        working-directory: target
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Syntax validation
+        working-directory: target
+        run: |
+          python -m py_compile *.py reference/*.py
+          python -m compileall -q .
+          bash -n scripts/harden_port_8091.sh scripts/rollback_port_8091.sh
+
+      - name: Full regression suite
+        working-directory: target
+        env:
+          PHASE: P1
+          MODEL_TRAINING_ENABLED: 'false'
+          CALIBRATION_ENABLED: 'false'
+          PAPER_TRADING_ENABLED: 'false'
+        run: pytest -q
+
+      - name: Commit and push target branch
+        shell: bash
+        working-directory: target
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          if git diff --cached --quiet; then
+            echo 'P2.6 target already up to date.'
+            exit 0
+          fi
+          git commit -m 'Implement isolated P2.6 quant research stack'
+          git push origin HEAD:direction-engine-p26-full
