@@ -1,4 +1,11 @@
-"""Periodic canonical dataset synchronizer for the isolated P2.6 database."""
+"""Periodic canonical dataset synchronizer for the isolated P2.6 database.
+
+The builder owns persistent SQLite connections. Synchronization therefore runs on
+the same event-loop thread that created those connections. The process is an
+isolated sidecar with no latency-sensitive websocket work, so a short synchronous
+SQLite scan is preferable to violating sqlite3 thread affinity via
+``asyncio.to_thread``.
+"""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +13,7 @@ import asyncio
 import json
 import logging
 import signal
+import time
 
 from p26_config import get_p26_settings
 from p26_dataset import CanonicalDatasetBuilder
@@ -23,13 +31,33 @@ async def run(interval_sec: float) -> None:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:
             pass
+
+    consecutive_errors = 0
     try:
         while not stop.is_set():
+            started = time.monotonic()
             try:
-                result = await asyncio.to_thread(builder.sync)
-                log.info("canonical sync %s", json.dumps(result.__dict__, sort_keys=True))
+                result = builder.sync()
+                consecutive_errors = 0
+                elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
+                payload = dict(result.__dict__)
+                payload["elapsed_ms"] = elapsed_ms
+                log.info(
+                    "canonical sync %s",
+                    json.dumps(payload, sort_keys=True),
+                )
             except Exception:  # noqa: BLE001
-                log.exception("canonical sync failed")
+                consecutive_errors += 1
+                log.exception(
+                    "canonical sync failed consecutive_errors=%d",
+                    consecutive_errors,
+                )
+                # Fail the service after repeated errors so systemd restarts it
+                # and deploy/status checks cannot mistake an endless error loop
+                # for a healthy dataset sidecar.
+                if consecutive_errors >= 3:
+                    raise
+
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_sec)
             except asyncio.TimeoutError:
