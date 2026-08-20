@@ -27,7 +27,7 @@ from p25_model import DirectionModel
 from p25_paper_config import PaperSettings as Settings
 from p25_paper_engine import P25Engine
 from p25_paper_recorder import P25PaperRecorder
-from p25_web import run_web
+from p25_web_records import run_web
 from reference import ReferenceRouter
 
 log = logging.getLogger("direction_engine.p25_main")
