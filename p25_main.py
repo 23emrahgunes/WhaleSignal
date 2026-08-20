@@ -25,8 +25,9 @@ from p25_calibration import CalibrationBook
 from p25_discovery import P25MarketDiscovery
 from p25_model import DirectionModel
 from p25_paper_config import PaperSettings as Settings
-from p25_paper_engine import P25Engine
-from p25_paper_recorder import P25PaperRecorder
+from p25_paper_reconcile import PaperTradeReconciler
+from p25_reconciled_paper_engine import P25Engine
+from p25_reconciling_recorder import P25ReconcilingPaperRecorder
 from p25_web_records import run_web
 from reference import ReferenceRouter
 
@@ -57,7 +58,7 @@ async def run() -> None:
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
 
-    recorder = P25PaperRecorder(cfg.db_path, cfg)
+    recorder = P25ReconcilingPaperRecorder(cfg.db_path, cfg)
     if cfg.model_inference_active:
         model = DirectionModel.load(cfg.model_path) or DirectionModel(
             cfg.per_combo_model_min_markets,
@@ -89,6 +90,9 @@ async def run() -> None:
         engine = P25Engine(cfg, hub, recorder, model, calibration)
         engine.attach_session(session)
         discovery.on_resolved(engine.on_market_resolved)
+
+        paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
+        engine.attach_paper_reconciler(paper_reconciler)
 
         clob = ClobSupervisor(
             cfg,
@@ -133,6 +137,10 @@ async def run() -> None:
                     stop,
                 ),
                 name="reference",
+            ),
+            asyncio.create_task(
+                _supervise("paper_reconcile", paper_reconciler.run, stop),
+                name="paper_reconcile",
             ),
             asyncio.create_task(
                 _supervise("engine", engine.run, stop),
