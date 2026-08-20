@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - direction-engine-p26-export
+  pull_request:
+    branches:
+      - direction-engine
 
 permissions:
   contents: read
