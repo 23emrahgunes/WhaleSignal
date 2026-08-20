@@ -7,7 +7,7 @@ Usage: ./deploy_p26.sh [options]
 
 Deploy the isolated P2.6 oracle/dataset sidecars without replacing or stopping
 P2.5. The script freezes a P2.5 baseline, validates the complete test suite,
-installs dynamic systemd units, starts the sidecars and verifies persisted RTDS
+installs dynamic systemd units, restarts the sidecars and verifies persisted RTDS
 oracle ticks.
 
 Options:
@@ -61,10 +61,14 @@ fi
 
 fail() {
   echo "ERROR: $*" >&2
+  echo "--- P26 oracle service ---" >&2
+  $SUDO systemctl --no-pager --full status direction-engine-p26-oracle.service 2>/dev/null >&2 || true
   echo "--- P26 oracle log ---" >&2
-  $SUDO tail -n 100 "$REPO_DIR/logs/p26-oracle.log" 2>/dev/null >&2 || true
+  $SUDO tail -n 120 "$REPO_DIR/logs/p26-oracle.log" 2>/dev/null >&2 || true
+  echo "--- P26 dataset service ---" >&2
+  $SUDO systemctl --no-pager --full status direction-engine-p26-dataset.service 2>/dev/null >&2 || true
   echo "--- P26 dataset log ---" >&2
-  $SUDO tail -n 100 "$REPO_DIR/logs/p26-dataset.log" 2>/dev/null >&2 || true
+  $SUDO tail -n 120 "$REPO_DIR/logs/p26-dataset.log" 2>/dev/null >&2 || true
   exit 1
 }
 
@@ -231,17 +235,25 @@ EOF
 $SUDO install -m 0644 "$ORACLE_TEMP" "$ORACLE_UNIT"
 $SUDO install -m 0644 "$DATASET_TEMP" "$DATASET_UNIT"
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable --now direction-engine-p26-oracle.service
-$SUDO systemctl enable --now direction-engine-p26-dataset.service
+$SUDO systemctl enable direction-engine-p26-oracle.service
+$SUDO systemctl enable direction-engine-p26-dataset.service
+
+# Explicit restart is required on redeploy. `enable --now` leaves an already
+# active process running old Python bytecode after git pull.
+printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-oracle.log"
+printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-dataset.log"
+$SUDO systemctl restart direction-engine-p26-oracle.service
+sleep 1
+$SUDO systemctl restart direction-engine-p26-dataset.service
 
 sleep 5
 $SUDO systemctl is-active --quiet direction-engine-p26-oracle.service || fail "oracle sidecar is not active"
 $SUDO systemctl is-active --quiet direction-engine-p26-dataset.service || fail "dataset sidecar is not active"
 
-# Official RTDS traffic can be bursty. Wait up to 90 seconds for a persisted tick.
+# Official RTDS traffic can be bursty. Wait up to 120 seconds for a persisted tick.
 echo "=== WAIT FOR PERSISTED CHAINLINK RTDS TICK ==="
 TICK_COUNT=0
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 40); do
   TICK_COUNT="$("$PY" - <<'PY'
 from p26_config import get_p26_settings
 from p26_schema import connect_p26, ensure_p26_schema
@@ -256,9 +268,12 @@ PY
   if [[ "$TICK_COUNT" -gt 0 ]]; then
     break
   fi
+  if ! $SUDO systemctl is-active --quiet direction-engine-p26-oracle.service; then
+    fail "oracle sidecar stopped while waiting for an RTDS tick"
+  fi
   sleep 3
 done
-[[ "$TICK_COUNT" -gt 0 ]] || fail "no RTDS oracle tick persisted within 90 seconds"
+[[ "$TICK_COUNT" -gt 0 ]] || fail "no RTDS oracle tick persisted within 120 seconds"
 
 P25_HEALTH_AFTER="$(http_code http://127.0.0.1:8091/health /tmp/p26-p25-health-after.json)"
 [[ "$P25_HEALTH_AFTER" == "200" ]] || fail "P2.5 health failed after P2.6 deployment"
