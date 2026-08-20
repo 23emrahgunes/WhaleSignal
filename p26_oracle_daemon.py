@@ -1,8 +1,15 @@
 """Independent Chainlink RTDS persistence sidecar for P2.6.
 
 This process opens its own public RTDS connection and writes only to the isolated
-P2.6 research database.  The P2.5 runtime is not imported or modified beyond
-reusing its proven payload parser.
+P2.6 research database. The P2.5 runtime is not modified; only its proven public
+payload parser is reused.
+
+SQLite connections remain on the event-loop thread that created them. Previous
+code sent ``OracleTickStore.insert_many`` to an arbitrary worker thread, which
+violated SQLite thread affinity and could silently terminate the writer task while
+the websocket task remained connected. This implementation performs small batched
+WAL writes directly in the isolated sidecar and fails the whole service if either
+the websocket or writer task exits unexpectedly.
 """
 from __future__ import annotations
 
@@ -43,8 +50,8 @@ class OracleBatchWriter:
     async def enqueue(self, tick: OracleTick) -> None:
         if self.queue.full():
             self.backpressure_events += 1
-        # Do not silently drop official oracle observations. Backpressure the WS
-        # consumer; reconnect logic will recover if the connection times out.
+        # Official observations are never silently dropped. Backpressure the WS
+        # reader; reconnect logic will recover if prolonged blocking times out.
         await self.queue.put(tick)
         self.enqueued += 1
 
@@ -59,14 +66,31 @@ class OracleBatchWriter:
                 if remaining <= 0:
                     break
                 try:
-                    tick = await asyncio.wait_for(self.queue.get(), timeout=remaining)
+                    tick = await asyncio.wait_for(
+                        self.queue.get(), timeout=remaining
+                    )
                 except asyncio.TimeoutError:
                     break
                 batch.append(tick)
-                self.queue.task_done()
             if not batch:
                 continue
-            inserted = await asyncio.to_thread(self.store.insert_many, batch)
+
+            try:
+                # This sidecar owns its SQLite connection and batches are tiny.
+                # Keep the call on the creating thread instead of using
+                # asyncio.to_thread with a thread-affine sqlite3.Connection.
+                inserted = self.store.insert_many(batch)
+            except Exception:
+                log.exception(
+                    "P2.6 oracle batch persistence failed batch=%d queued=%d",
+                    len(batch),
+                    self.queue.qsize(),
+                )
+                raise
+            finally:
+                for _ in batch:
+                    self.queue.task_done()
+
             self.inserted += inserted
             self.duplicates += len(batch) - inserted
             self.flushes += 1
@@ -74,8 +98,22 @@ class OracleBatchWriter:
             for tick in batch:
                 self._recent[tick.asset].append(tick)
 
+            if self.flushes <= 3 or self.flushes % 100 == 0:
+                log.info(
+                    "P2.6 oracle persisted batch=%d inserted=%d total=%d "
+                    "duplicates=%d assets=%s",
+                    len(batch),
+                    inserted,
+                    self.inserted,
+                    self.duplicates,
+                    sorted({tick.asset for tick in batch}),
+                )
+
     def rehydrate(self) -> int:
-        since = int(time.time() * 1000) - self.settings.oracle_rehydrate_minutes * 60_000
+        since = (
+            int(time.time() * 1000)
+            - self.settings.oracle_rehydrate_minutes * 60_000
+        )
         restored = self.store.rehydrate(since_ts_ms=since)
         count = 0
         for asset, ticks in restored.items():
@@ -93,7 +131,9 @@ class OracleBatchWriter:
             "backpressure_events": self.backpressure_events,
             "flushes": self.flushes,
             "last_flush_ms": self.last_flush_ms,
-            "recent_points": {asset: len(points) for asset, points in self._recent.items()},
+            "recent_points": {
+                asset: len(points) for asset, points in self._recent.items()
+            },
         }
 
 
@@ -105,13 +145,19 @@ class OracleRTDSSidecar:
         self.reconnects = 0
         self.messages = 0
         self.parsed_ticks = 0
+        self._raw_logged = 0
+        self._unparsed_messages = 0
 
     @staticmethod
     def subscribe_message() -> dict:
         return {
             "action": "subscribe",
             "subscriptions": [
-                {"topic": "crypto_prices_chainlink", "type": "*", "filters": ""}
+                {
+                    "topic": "crypto_prices_chainlink",
+                    "type": "*",
+                    "filters": "",
+                }
             ],
         }
 
@@ -121,9 +167,14 @@ class OracleRTDSSidecar:
         stop: asyncio.Event,
     ) -> None:
         while not stop.is_set() and not ws.closed:
-            await ws.send_str("PING")
             try:
-                await asyncio.wait_for(stop.wait(), timeout=self.settings.rtds_ping_sec)
+                await ws.send_str("PING")
+            except Exception:
+                return
+            try:
+                await asyncio.wait_for(
+                    stop.wait(), timeout=self.settings.rtds_ping_sec
+                )
             except asyncio.TimeoutError:
                 pass
 
@@ -140,9 +191,16 @@ class OracleRTDSSidecar:
                     ) as ws:
                         self.connected = True
                         attempt = 0
-                        await ws.send_str(json.dumps(self.subscribe_message()))
-                        ping_task = asyncio.create_task(self._ping_loop(ws, stop))
-                        log.info("P2.6 oracle sidecar connected")
+                        subscription = self.subscribe_message()
+                        await ws.send_str(json.dumps(subscription))
+                        ping_task = asyncio.create_task(
+                            self._ping_loop(ws, stop),
+                            name="p26-oracle-ping",
+                        )
+                        log.info(
+                            "P2.6 oracle sidecar connected topic=%s",
+                            subscription["subscriptions"][0]["topic"],
+                        )
                         async for message in ws:
                             if stop.is_set():
                                 break
@@ -153,14 +211,39 @@ class OracleRTDSSidecar:
                                     continue
                                 if raw == "PONG":
                                     continue
+
                                 self.messages += 1
+                                if self._raw_logged < 3:
+                                    self._raw_logged += 1
+                                    log.info(
+                                        "P2.6 RTDS RAW[%d]: %s",
+                                        self._raw_logged,
+                                        raw[:500],
+                                    )
                                 try:
                                     obj = json.loads(raw)
                                 except json.JSONDecodeError:
+                                    self._unparsed_messages += 1
+                                    log.warning(
+                                        "P2.6 RTDS non-JSON frame count=%d",
+                                        self._unparsed_messages,
+                                    )
                                     continue
+
                                 recv_ms = int(time.time() * 1000)
                                 ticks = list(iter_rtds_ticks(obj, recv_ms))
                                 self.parsed_ticks += len(ticks)
+                                if not ticks:
+                                    self._unparsed_messages += 1
+                                    if self._unparsed_messages <= 3 or (
+                                        self._unparsed_messages % 100 == 0
+                                    ):
+                                        log.warning(
+                                            "P2.6 RTDS frame produced no oracle tick "
+                                            "messages=%d unparsed=%d",
+                                            self.messages,
+                                            self._unparsed_messages,
+                                        )
                                 for tick in ticks:
                                     await self.writer.enqueue(tick)
                             elif message.type in (
@@ -172,9 +255,11 @@ class OracleRTDSSidecar:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     self.reconnects += 1
-                    delay = min(30.0, 2.0**min(attempt, 5))
+                    delay = min(30.0, 2.0 ** min(attempt, 5))
                     attempt += 1
-                    log.warning("P2.6 oracle reconnect in %.1fs: %s", delay, exc)
+                    log.warning(
+                        "P2.6 oracle reconnect in %.1fs: %s", delay, exc
+                    )
                     try:
                         await asyncio.wait_for(stop.wait(), timeout=delay)
                     except asyncio.TimeoutError:
@@ -194,6 +279,7 @@ class OracleRTDSSidecar:
             "reconnects": self.reconnects,
             "messages": self.messages,
             "parsed_ticks": self.parsed_ticks,
+            "unparsed_messages": self._unparsed_messages,
             "writer": self.writer.health(),
         }
 
@@ -213,13 +299,40 @@ async def run(settings: P26Settings) -> None:
         except NotImplementedError:
             pass
 
-    writer_task = asyncio.create_task(writer.run(stop), name="p26-oracle-writer")
-    sidecar_task = asyncio.create_task(sidecar.run(stop), name="p26-oracle-rtds")
+    writer_task = asyncio.create_task(
+        writer.run(stop), name="p26-oracle-writer"
+    )
+    sidecar_task = asyncio.create_task(
+        sidecar.run(stop), name="p26-oracle-rtds"
+    )
+    stop_task = asyncio.create_task(stop.wait(), name="p26-oracle-stop")
+
     try:
-        await stop.wait()
+        done, _pending = await asyncio.wait(
+            {writer_task, sidecar_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stop_task not in done:
+            failed = writer_task if writer_task in done else sidecar_task
+            exc = failed.exception()
+            if exc is not None:
+                raise RuntimeError(
+                    f"P2.6 oracle task crashed: {failed.get_name()}"
+                ) from exc
+            raise RuntimeError(
+                f"P2.6 oracle task exited unexpectedly: {failed.get_name()}"
+            )
     finally:
         stop.set()
-        await asyncio.gather(sidecar_task, writer_task, return_exceptions=True)
+        for task in (sidecar_task, writer_task, stop_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(
+            sidecar_task,
+            writer_task,
+            stop_task,
+            return_exceptions=True,
+        )
         store.close()
 
 
