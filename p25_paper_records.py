@@ -4,6 +4,9 @@ This module exposes SQLite simulation records only.  It never creates orders,
 loads credentials, signs payloads or calls a trading endpoint.  Queries are
 parameterized, newest-first and bounded so the public dashboard cannot issue an
 unlimited database scan.
+
+``status=TRADED`` is a virtual filter meaning real paper entries only:
+``OPEN`` or ``SETTLED``.  It deliberately excludes diagnostic ``SKIPPED`` rows.
 """
 from __future__ import annotations
 
@@ -16,7 +19,7 @@ from typing import Mapping, Optional
 
 _ASSETS = {"BTC", "ETH", "SOL", "XRP"}
 _HORIZONS = {"5m", "15m", "1h"}
-_STATUSES = {"OPEN", "SETTLED", "SKIPPED"}
+_STATUSES = {"OPEN", "SETTLED", "SKIPPED", "TRADED"}
 _SIDES = {"UP", "DOWN"}
 _RESULTS = {"UP", "DOWN"}
 _DEFAULT_LIMIT = 50
@@ -171,10 +174,10 @@ def _where_clause(
 ) -> tuple[str, list[object]]:  # noqa: ANN001
     clauses = ["strategy_version=?"]
     params: list[object] = [_strategy_version(recorder)]
+
     for column, value in (
         ("asset", filters.asset),
         ("horizon", filters.horizon),
-        ("status", filters.status),
         ("side", filters.side),
         ("official_result", filters.official_result),
         ("combo_key", filters.combo),
@@ -182,6 +185,13 @@ def _where_clause(
         if value is not None:
             clauses.append(f"{column}=?")
             params.append(value)
+
+    if filters.status == "TRADED":
+        clauses.append("status IN ('OPEN','SETTLED')")
+    elif filters.status is not None:
+        clauses.append("status=?")
+        params.append(filters.status)
+
     if filters.query:
         needle = f"%{filters.query}%"
         clauses.append(
