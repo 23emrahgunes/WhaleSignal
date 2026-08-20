@@ -92,10 +92,32 @@ if ! kill -0 "$new_pid" 2>/dev/null; then
   exit 1
 fi
 
-http_code="$(curl -sS -o /tmp/direction-p25-state.json -w '%{http_code}' http://127.0.0.1:8091/api/state || true)"
-if [[ "$http_code" != "200" ]]; then
-  echo "ERROR: /api/state HTTP=$http_code" >&2
-  tail -n 150 engine.log >&2 || true
+base_url="http://127.0.0.1:8091"
+state_code="$(curl -sS -o /tmp/direction-p25-state.json -w '%{http_code}' "$base_url/api/state" || true)"
+health_code="$(curl -sS -o /tmp/direction-p25-health.json -w '%{http_code}' "$base_url/health" || true)"
+paper_page_code="$(curl -sS -o /tmp/direction-p25-paper.html -w '%{http_code}' "$base_url/paper-trades" || true)"
+paper_api_code="$(curl -sS -o /tmp/direction-p25-paper-api.json -w '%{http_code}' "$base_url/api/paper-trades?limit=1" || true)"
+paper_summary_code="$(curl -sS -o /tmp/direction-p25-paper-summary.json -w '%{http_code}' "$base_url/api/paper-summary" || true)"
+
+for check in \
+  "api/state:$state_code" \
+  "health:$health_code" \
+  "paper-trades:$paper_page_code" \
+  "api/paper-trades:$paper_api_code" \
+  "api/paper-summary:$paper_summary_code"
+do
+  endpoint="${check%%:*}"
+  code="${check##*:}"
+  if [[ "$code" != "200" ]]; then
+    echo "ERROR: /$endpoint HTTP=$code" >&2
+    tail -n 150 engine.log >&2 || true
+    exit 1
+  fi
+done
+
+if ! grep -q 'Paper Kayıtları' /tmp/direction-p25-paper.html; then
+  echo "ERROR: /paper-trades eski router veya yanlis HTML dondu" >&2
+  head -n 30 /tmp/direction-p25-paper.html >&2 || true
   exit 1
 fi
 
@@ -104,6 +126,9 @@ import json
 from pathlib import Path
 
 state = json.loads(Path('/tmp/direction-p25-state.json').read_text(encoding='utf-8'))
+health = json.loads(Path('/tmp/direction-p25-health.json').read_text(encoding='utf-8'))
+paper_api = json.loads(Path('/tmp/direction-p25-paper-api.json').read_text(encoding='utf-8'))
+paper_summary = json.loads(Path('/tmp/direction-p25-paper-summary.json').read_text(encoding='utf-8'))
 safety = state.get('safety', {})
 paper = state.get('paper_trading', {})
 policy = paper.get('policy', {})
@@ -116,6 +141,10 @@ print('forecast_recording=', safety.get('forecast_recording_enabled'))
 print('paper_trading=', safety.get('paper_trading_enabled'))
 print('paper_strategy=', policy.get('strategy_version'))
 print('paper_stake=', policy.get('stake_usdc'))
+print('paper_records_page=', health.get('paper_records_page'))
+print('paper_records_api=', health.get('paper_records_api'))
+print('paper_records_total=', (paper_api.get('pagination') or {}).get('total'))
+print('paper_summary_source=', paper_summary.get('source'))
 print('execution=', safety.get('execution_enabled'))
 print('orders=', safety.get('live_orders'))
 print('paper_order_submissions=', safety.get('paper_order_submissions'))
@@ -127,6 +156,12 @@ assert int(safety.get('paper_order_submissions') or 0) == 0
 assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
 assert paper.get('enabled') is True
+assert health.get('paper_records_page') == '/paper-trades'
+assert health.get('paper_records_api') == '/api/paper-trades'
+assert paper_api.get('paperOnly') is True
+assert paper_api.get('source') == 'sqlite'
+assert paper_summary.get('paperOnly') is True
+assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 SHADOW + PAPER DEPLOY PASS | pid=$new_pid | http=200"
+echo "P2.5 SHADOW + PAPER DEPLOY PASS | pid=$new_pid | http=200 | paper-routes=200"
