@@ -22,17 +22,21 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          shopt -s nullglob
-          parts=(.p265-patch/part-*)
-          if (( ${#parts[@]} != 13 )); then
-            echo "Expected 13 patch parts, found ${#parts[@]}" >&2
-            exit 1
-          fi
+          parts=(
+            .p265-patch/part-00 .p265-patch/part-01 .p265-patch/part-02
+            .p265-patch/part-03 .p265-patch/part-04 .p265-patch/part-05
+            .p265-patch/part-06 .p265-patch/part-07 .p265-patch/part-08
+            .p265-patch/part-09a .p265-patch/part-09b
+            .p265-patch/part-09c .p265-patch/part-09d
+            .p265-patch/part-10 .p265-patch/part-11 .p265-patch/part-12
+          )
+          for part in "${parts[@]}"; do
+            [[ -f "$part" ]] || { echo "Missing patch segment: $part" >&2; exit 1; }
+          done
           cat "${parts[@]}" > /tmp/p265.patch.xz.b64
           base64 -d /tmp/p265.patch.xz.b64 > /tmp/p265.patch.xz
-          sha256sum /tmp/p265.patch.xz
+          echo "ef2b301c8790892f903d9c3b261e644c0ff68982fc43e2563340f210b91820d3  /tmp/p265.patch.xz" | sha256sum -c -
           xz -dc /tmp/p265.patch.xz > /tmp/p265.patch
-          sha256sum /tmp/p265.patch
           echo "fb39a86d8415b51cc6245e193c20278020ccf5e69ad5a1f210e948011e709034  /tmp/p265.patch" | sha256sum -c -
           git apply --check /tmp/p265.patch
           git apply /tmp/p265.patch
