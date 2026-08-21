@@ -1,10 +1,13 @@
 """Runtime wrapper exposing paper-trade state and scorecards.
 
 The parent engine continues to produce the always-on research forecast and the
-validation-gated signal.  This wrapper only surfaces simulation state from the
+validation-gated signal. This wrapper only surfaces simulation state from the
 SQLite recorder; it cannot submit or sign orders.
 """
 from __future__ import annotations
+
+import os
+import time
 
 from p25_safety_engine import P25Engine as _BaseP25Engine
 
@@ -21,23 +24,53 @@ class P25Engine(_BaseP25Engine):
             )
         return card
 
-    def snapshot(self) -> dict:
-        data = super().snapshot()
+    @staticmethod
+    def _paper_analytics_cache_sec() -> float:
+        raw = os.getenv("P25_PAPER_ANALYTICS_CACHE_SEC", "30")
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            return 30.0
+
+    @staticmethod
+    def _empty_paper_payload() -> dict:
+        return {
+            "enabled": False,
+            "paper_only": True,
+            "overall": {},
+            "per_asset": {},
+            "per_horizon": {},
+            "per_combo": {},
+            "recent_markets": [],
+            "open_positions": [],
+        }
+
+    def _paper_analytics_cached(self) -> dict:
+        """Return paper analytics without re-scanning SQLite on every poll."""
+        now = time.monotonic()
+        cached = getattr(self, "_paper_analytics_cache", None)
+        cached_at = float(
+            getattr(self, "_paper_analytics_cache_at", 0.0) or 0.0
+        )
+        if (
+            cached is not None
+            and now - cached_at < self._paper_analytics_cache_sec()
+        ):
+            return cached
+
         analytics_fn = getattr(self.recorder, "paper_analytics", None)
         paper = (
             analytics_fn(getattr(self.cfg, "paper_recent_limit", 50))
             if callable(analytics_fn)
-            else {
-                "enabled": False,
-                "paper_only": True,
-                "overall": {},
-                "per_asset": {},
-                "per_horizon": {},
-                "per_combo": {},
-                "recent_markets": [],
-                "open_positions": [],
-            }
+            else self._empty_paper_payload()
         )
+        self._paper_analytics_cache = paper
+        self._paper_analytics_cache_at = now
+        return paper
+
+    def snapshot(self) -> dict:
+        data = super().snapshot()
+        paper = self._paper_analytics_cached()
         data["paper_trading"] = paper
         overall = paper.get("overall") or {}
         footer = data.setdefault("footer", {})
