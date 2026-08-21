@@ -1,28 +1,33 @@
-name: Export Source Snapshot
+name: Apply P2.6.5 Hardening Patch
 
 on:
   push:
     branches:
       - direction-engine-p265-hardening
-  pull_request:
-    branches:
-      - direction-engine
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Create clean source archive
-        run: |
-          git status --short
-          tar --exclude=.git -czf "$RUNNER_TEMP/direction-engine-source.tar.gz" .
-      - uses: actions/upload-artifact@v4
         with:
-          name: direction-engine-source
-          path: ${{ runner.temp }}/direction-engine-source.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          ref: direction-engine-p265-hardening
+          fetch-depth: 0
+      - name: Apply validated local patch and remove bootstrap files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -f .p265-hardening.patch ]]; then
+            echo "Patch not present yet; bootstrap workflow is ready."
+            exit 0
+          fi
+          git apply --check .p265-hardening.patch
+          git apply --index .p265-hardening.patch
+          git rm .p265-hardening.patch .github/workflows/export-source.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Complete P2.6.5 hardening and disabled Paper V2 runtime"
+          git push origin HEAD:direction-engine-p265-hardening
