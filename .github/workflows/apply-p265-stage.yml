@@ -29,7 +29,6 @@ jobs:
             exit 1
           fi
           cat "${parts[@]}" > /tmp/p265.patch.xz.b64
-          echo "ad8e40224c2fe09ba9820c20fd3afaf800175b60290467173e380b4aa92aadd2  /tmp/p265.patch.xz.b64" | sha256sum -c -
           base64 -d /tmp/p265.patch.xz.b64 > /tmp/p265.patch.xz
           echo "ef2b301c8790892f903d9c3b261e644c0ff68982fc43e2563340f210b91820d3  /tmp/p265.patch.xz" | sha256sum -c -
           xz -dc /tmp/p265.patch.xz > /tmp/p265.patch
