@@ -1,15 +1,17 @@
 name: Stage Validated P2.6.5 Source
 
 on:
-  push:
+  pull_request:
     branches:
       - direction-engine
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: write
 
 jobs:
   stage:
+    if: github.head_ref == 'direction-engine-p265-stage'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
