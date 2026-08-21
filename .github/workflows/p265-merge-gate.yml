@@ -1,0 +1,91 @@
+name: P2.6.5 Completion Gate
+
+on:
+  push:
+    branches:
+      - direction-engine-p265-hardening
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: p265-completion-gate
+  cancel-in-progress: true
+
+jobs:
+  validate-and-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: direction-engine-p265-hardening
+          fetch-depth: 0
+
+      - name: Assert required implementation is present
+        run: |
+          set -Eeuo pipefail
+          test -f p26_entry_policy.py
+          test -f p26_dynamic_fee.py
+          test -f p26_portfolio_risk.py
+          test -f p26_alpha_profile.py
+          test -f p26_book_daemon.py
+          test -f p26_paper_v2_daemon.py
+          test -f test_p26_incremental_dataset.py
+          test -f test_p26_paper_v2_hardening.py
+          grep -q 'dataset_snapshot_cursor' p26_dataset.py
+          grep -q 'P26_PAPER_V2_ENABLED=false' .env.p26.example
+          grep -q 'DUAL_EDGE_INTEGRITY_FAILURE' p26_entry_policy.py
+          grep -q 'FEE_SCHEDULE_UNAVAILABLE' p26_entry_policy.py
+          grep -q 'CORRELATION_CLUSTER_EXCEEDED' p26_portfolio_risk.py
+          grep -q 'direction-engine-p26-book.service' deploy_p26.sh
+          grep -q 'direction-engine-p26-paper-v2.service' deploy_p26.sh
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Syntax and safety
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile ./*.py reference/*.py
+          python -m compileall -q .
+          bash -n deploy_p26.sh scripts/*.sh
+          git diff --check origin/direction-engine...HEAD
+          ! grep -R -nE 'PRIVATE_KEY=|submit_order\(|create_order\(|signing_enabled *= *true|order_submission_enabled *= *true' p26_*.py deploy_p26.sh scripts || false
+          ! grep -R -n 'py_clob_client' requirements.txt p26_*.py || false
+
+      - name: Full regression suite
+        env:
+          PHASE: P1
+          MODEL_TRAINING_ENABLED: 'false'
+          CALIBRATION_ENABLED: 'false'
+          PAPER_TRADING_ENABLED: 'false'
+          P26_PAPER_V2_ENABLED: 'false'
+        run: python -m pytest -q
+
+      - name: Clean temporary implementation transport files
+        run: |
+          set -Eeuo pipefail
+          rm -f .github/workflows/export-source.yml
+          rm -rf .p265-patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'Remove temporary P2.6.5 transport files'
+            git push origin HEAD:direction-engine-p265-hardening
+          fi
+
+      - name: Mark PR ready and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh pr ready 60 --repo 23emrahgunes/WhaleSignal || true
+          gh pr merge 60 --repo 23emrahgunes/WhaleSignal --squash --delete-branch \
+            --subject 'Complete P2.6.5 hardening and incremental Paper V2 infrastructure' \
+            --body 'Validated incremental dataset processing, alpha leakage isolation, two-sided integrity selection, dynamic fee handling, portfolio risk, disabled-by-default shadow runtime, syntax, full regression suite, and no-execution safety invariants.'
