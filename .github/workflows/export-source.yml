@@ -19,10 +19,10 @@ jobs:
       - name: Create clean source archive
         run: |
           git status --short
-          tar --exclude=.git -czf direction-engine-source.tar.gz .
+          tar --exclude=.git -czf "$RUNNER_TEMP/direction-engine-source.tar.gz" .
       - uses: actions/upload-artifact@v4
         with:
           name: direction-engine-source
-          path: direction-engine-source.tar.gz
+          path: ${{ runner.temp }}/direction-engine-source.tar.gz
           if-no-files-found: error
           retention-days: 1
