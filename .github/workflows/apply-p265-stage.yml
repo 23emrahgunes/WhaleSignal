@@ -30,8 +30,9 @@ jobs:
           fi
           cat "${parts[@]}" > /tmp/p265.patch.xz.b64
           base64 -d /tmp/p265.patch.xz.b64 > /tmp/p265.patch.xz
-          echo "ef2b301c8790892f903d9c3b261e644c0ff68982fc43e2563340f210b91820d3  /tmp/p265.patch.xz" | sha256sum -c -
+          sha256sum /tmp/p265.patch.xz
           xz -dc /tmp/p265.patch.xz > /tmp/p265.patch
+          sha256sum /tmp/p265.patch
           echo "fb39a86d8415b51cc6245e193c20278020ccf5e69ad5a1f210e948011e709034  /tmp/p265.patch" | sha256sum -c -
           git apply --check /tmp/p265.patch
           git apply /tmp/p265.patch
