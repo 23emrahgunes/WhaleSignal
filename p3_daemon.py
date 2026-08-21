@@ -12,7 +12,7 @@ import signal
 import time
 
 from p3_config import get_p3_settings
-from p3_replay import P3ReplayEngine
+from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner import StructuralArbScanner
 from p3_web import run_web
 
