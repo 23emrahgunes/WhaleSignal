@@ -28,7 +28,7 @@ class P3Settings(BaseSettings):
     reports_dir: str = Field(default="reports/p3", alias="P3_REPORTS_DIR")
 
     scanner_enabled: bool = Field(default=True, alias="P3_SCANNER_ENABLED")
-    scan_interval_ms: int = Field(default=100, alias="P3_SCAN_INTERVAL_MS")
+    scan_interval_ms: int = Field(default=250, alias="P3_SCAN_INTERVAL_MS")
     max_book_age_ms: int = Field(default=750, alias="P3_MAX_BOOK_AGE_MS")
     max_source_skew_ms: int = Field(default=500, alias="P3_MAX_SOURCE_SKEW_MS")
     min_net_profit_usdc: float = Field(default=0.0, alias="P3_MIN_NET_PROFIT_USDC")
