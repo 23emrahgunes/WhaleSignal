@@ -1,0 +1,23 @@
+[Unit]
+Description=Direction Engine P2.6 Public CLOB Book and Fee Sidecar
+After=network-online.target direction-engine-p26-oracle.service
+Wants=network-online.target direction-engine-p26-oracle.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/direction-engine
+EnvironmentFile=-/home/ubuntu/direction-engine/.env.p26
+ExecStart=/home/ubuntu/direction-engine/.venv/bin/python p26_book_daemon.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/ubuntu/direction-engine/data /home/ubuntu/direction-engine/logs
+StandardOutput=append:/home/ubuntu/direction-engine/logs/p26-book.log
+StandardError=append:/home/ubuntu/direction-engine/logs/p26-book.log
+
+[Install]
+WantedBy=multi-user.target

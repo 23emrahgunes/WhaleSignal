@@ -1,0 +1,23 @@
+[Unit]
+Description=Direction Engine P2.6 Paper V2 Shadow Runtime (No Execution)
+After=network-online.target direction-engine-p26-dataset.service direction-engine-p26-book.service
+Wants=network-online.target direction-engine-p26-dataset.service direction-engine-p26-book.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/direction-engine
+EnvironmentFile=-/home/ubuntu/direction-engine/.env.p26
+ExecStart=/home/ubuntu/direction-engine/.venv/bin/python p26_paper_v2_daemon.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/ubuntu/direction-engine/data /home/ubuntu/direction-engine/logs /home/ubuntu/direction-engine/models /home/ubuntu/direction-engine/reports
+StandardOutput=append:/home/ubuntu/direction-engine/logs/p26-paper-v2.log
+StandardError=append:/home/ubuntu/direction-engine/logs/p26-paper-v2.log
+
+[Install]
+WantedBy=multi-user.target

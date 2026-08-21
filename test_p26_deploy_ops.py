@@ -11,6 +11,7 @@ SCRIPTS = [
     Path("scripts/stop_p26.sh"),
     Path("scripts/harden_port_8091.sh"),
     Path("scripts/rollback_port_8091.sh"),
+    Path("scripts/smoke_p26.sh"),
 ]
 
 
@@ -58,6 +59,8 @@ def test_deploy_is_fail_closed_and_does_not_replace_p25():
     assert "p26_baseline_freeze.py verify" in text
     assert "direction-engine-p26-oracle.service" in text
     assert "direction-engine-p26-dataset.service" in text
+    assert "direction-engine-p26-book.service" in text
+    assert "direction-engine-p26-paper-v2.service" in text
     assert "no RTDS oracle tick persisted within 120 seconds" in text
     assert 'harden_port_8091.sh" --dry-run' in text
     assert 'harden_port_8091.sh" --apply' not in text
@@ -69,6 +72,8 @@ def test_deploy_generates_dynamic_service_identity_and_paths():
     assert "WorkingDirectory=$REPO_DIR" in text
     assert "ExecStart=$PY $REPO_DIR/p26_oracle_daemon.py" in text
     assert "ExecStart=$PY $REPO_DIR/p26_dataset_daemon.py" in text
+    assert "ExecStart=$PY $REPO_DIR/p26_book_daemon.py" in text
+    assert "ExecStart=$PY $REPO_DIR/p26_paper_v2_daemon.py" in text
     assert "User=ubuntu" not in text
     assert "WorkingDirectory=/home/ubuntu" not in text
 
@@ -77,8 +82,12 @@ def test_redeploy_restarts_existing_sidecars_instead_of_only_enabling_them():
     text = Path("deploy_p26.sh").read_text(encoding="utf-8")
     assert "systemctl enable direction-engine-p26-oracle.service" in text
     assert "systemctl enable direction-engine-p26-dataset.service" in text
+    assert "systemctl enable direction-engine-p26-book.service" in text
+    assert "systemctl enable direction-engine-p26-paper-v2.service" in text
     assert "systemctl restart direction-engine-p26-oracle.service" in text
     assert "systemctl restart direction-engine-p26-dataset.service" in text
+    assert "systemctl restart direction-engine-p26-book.service" in text
+    assert "systemctl restart direction-engine-p26-paper-v2.service" in text
     assert "systemctl enable --now direction-engine-p26-oracle.service" not in text
     assert "systemctl enable --now direction-engine-p26-dataset.service" not in text
 
@@ -87,10 +96,20 @@ def test_stop_script_preserves_all_databases_and_p25_runtime():
     text = Path("scripts/stop_p26.sh").read_text(encoding="utf-8")
     assert "direction-engine-p26-dataset.service" in text
     assert "direction-engine-p26-oracle.service" in text
+    assert "direction-engine-p26-book.service" in text
+    assert "direction-engine-p26-paper-v2.service" in text
     assert "direction-engine-p25" not in text
     assert "direction_engine.sqlite" not in text
     assert "p26_research.sqlite was preserved" in text
     assert "rollback_port_8091" not in text
+
+
+def test_smoke_requires_paper_v2_to_remain_disabled():
+    text = Path("scripts/smoke_p26.sh").read_text(encoding="utf-8")
+    assert "paper_v2_enabled is False" in text
+    assert "execution=false" in text
+    assert "signing=false" in text
+    assert "orders=false" in text
 
 
 def test_p26_runtime_files_are_gitignored():

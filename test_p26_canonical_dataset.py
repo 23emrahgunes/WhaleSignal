@@ -174,7 +174,11 @@ def test_canonical_extracts_one_row_and_separate_label(tmp_path):
         first = builder.sync()
         second = builder.sync()
         assert first.inserted == 1
-        assert second.duplicate == 1
+        assert first.scanned == 1
+        assert first.labels_upserted == 1
+        assert second.scanned == 0
+        assert second.duplicate == 0
+        assert second.labels_upserted == 0
         rows = builder.canonical_rows(labeled_only=True)
         assert len(rows) == 1
         row = rows[0]
@@ -188,6 +192,91 @@ def test_canonical_extracts_one_row_and_separate_label(tmp_path):
         names = json.loads(row["feature_names_json"])
         assert names == list(EXTERNAL_FEATURE_WHITELIST)
         assert all("clob" not in name.lower() for name in names)
+    finally:
+        builder.close()
+
+
+def test_incremental_cursor_processes_only_new_canonical_snapshots(tmp_path):
+    p25 = tmp_path / "p25.sqlite"
+    conn = sqlite3.connect(p25)
+    _p25_schema(conn)
+    _insert_market_and_snapshot(
+        conn, condition_id="first", horizon="5m", checkpoint=60, lag_ms=100
+    )
+    conn.close()
+    settings = _settings(tmp_path, p25).model_copy(
+        update={"dataset_label_sync_interval_sec": 3600}
+    )
+    oracle = OracleTickStore(settings.p26_db_path)
+    oracle.insert(
+        OracleTick(
+            asset="BTC", source="POLYMARKET_RTDS_CHAINLINK",
+            value_text="100", value_real=100.0,
+            source_ts_ms=1_799_999_939_000,
+            recv_ts_ms=1_799_999_939_010,
+            payload_sha256="cursor-tick",
+        )
+    )
+    oracle.close()
+
+    builder = CanonicalDatasetBuilder(settings, code_commit="cursor")
+    try:
+        first = builder.sync()
+        assert first.scanned == 1 and first.inserted == 1
+
+        conn = sqlite3.connect(p25)
+        _insert_market_and_snapshot(
+            conn, condition_id="noncanonical", horizon="5m",
+            checkpoint=240, lag_ms=100,
+        )
+        _insert_market_and_snapshot(
+            conn, condition_id="second", horizon="5m",
+            checkpoint=60, lag_ms=200,
+        )
+        conn.close()
+
+        second = builder.sync()
+        assert second.scanned == 1
+        assert second.inserted == 1
+        assert second.rejected_checkpoint == 0
+        assert len(builder.canonical_rows()) == 2
+
+        third = builder.sync()
+        assert third.scanned == 0
+        assert third.duplicate == 0
+        assert third.snapshot_cursor_from == third.snapshot_cursor_to
+    finally:
+        builder.close()
+
+
+def test_label_sync_is_separate_and_only_writes_changes(tmp_path):
+    p25 = tmp_path / "p25.sqlite"
+    conn = sqlite3.connect(p25)
+    _p25_schema(conn)
+    _insert_market_and_snapshot(
+        conn, condition_id="label-row", horizon="5m",
+        checkpoint=60, lag_ms=100,
+    )
+    conn.close()
+    settings = _settings(tmp_path, p25).model_copy(
+        update={"dataset_label_sync_interval_sec": 1}
+    )
+    builder = CanonicalDatasetBuilder(settings, code_commit="labels")
+    try:
+        first = builder.sync()
+        assert first.label_markets_scanned == 1
+        assert first.labels_upserted == 1
+        builder._set_meta_int(builder._label_sync_key, 0)
+        before = builder.p26.execute(
+            "SELECT updated_at_ms FROM p26_labels WHERE condition_id='label-row'"
+        ).fetchone()[0]
+        second = builder.sync()
+        after = builder.p26.execute(
+            "SELECT updated_at_ms FROM p26_labels WHERE condition_id='label-row'"
+        ).fetchone()[0]
+        assert second.label_markets_scanned == 1
+        assert second.labels_upserted == 0
+        assert after == before
     finally:
         builder.close()
 

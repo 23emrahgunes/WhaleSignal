@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence
 
+from p26_fee import FeeSchedule, FeeScheduleUnavailable
+
 
 @dataclass(frozen=True, order=True)
 class BookLevel:
@@ -82,6 +84,11 @@ class ExecutionFill:
     best_ask: Optional[float]
     worst_ask: Optional[float]
     price_impact: Optional[float]
+    fee_enabled: bool = False
+    fee_rate: Optional[float] = None
+    fee_exponent: Optional[float] = None
+    fee_source: Optional[str] = None
+    fee_formula_version: Optional[str] = None
 
     @property
     def complete(self) -> bool:
@@ -96,7 +103,9 @@ def simulate_buy(
     snapshot: OrderBookSnapshot,
     *,
     stake_usdc: float,
-    fee_bps: float,
+    fee_bps: float = 0.0,
+    fee_schedule: Optional[FeeSchedule] = None,
+    require_fee_schedule: bool = False,
 ) -> ExecutionFill:
     """Consume asks in price order and return a realizable VWAP simulation.
 
@@ -108,12 +117,17 @@ def simulate_buy(
         raise ValueError("stake must be positive")
     if fee_bps < 0:
         raise ValueError("fee_bps cannot be negative")
+    if require_fee_schedule and fee_schedule is None:
+        raise FeeScheduleUnavailable("FEE_SCHEDULE_UNAVAILABLE")
+    if fee_schedule is not None and fee_schedule.token_id != snapshot.token_id:
+        raise ValueError("fee schedule token does not match order book token")
 
     remaining = stake
     spent = 0.0
     shares = 0.0
     consumed = 0
     worst: Optional[float] = None
+    fee = 0.0
     asks = sorted(snapshot.asks, key=lambda level: level.price)
     for level in asks:
         if remaining <= 1e-12:
@@ -122,14 +136,20 @@ def simulate_buy(
         take_notional = min(remaining, capacity)
         if take_notional <= 0:
             continue
-        shares += take_notional / float(level.price)
+        level_shares = take_notional / float(level.price)
+        shares += level_shares
         spent += take_notional
+        if fee_schedule is not None:
+            fee += fee_schedule.fee_usdc(
+                shares=level_shares, price=float(level.price)
+            )
         remaining -= take_notional
         consumed += 1
         worst = float(level.price)
 
     fill_fraction = spent / stake
-    fee = spent * float(fee_bps) / 10_000.0
+    if fee_schedule is None:
+        fee = spent * float(fee_bps) / 10_000.0
     if shares > 0:
         vwap = spent / shares
         fee_per_share = fee / shares
@@ -153,4 +173,12 @@ def simulate_buy(
         best_ask=best,
         worst_ask=worst,
         price_impact=impact,
+        fee_enabled=(bool(fee_schedule.enabled) if fee_schedule is not None else fee_bps > 0),
+        fee_rate=(fee_schedule.rate if fee_schedule is not None else None),
+        fee_exponent=(fee_schedule.exponent if fee_schedule is not None else None),
+        fee_source=(fee_schedule.source if fee_schedule is not None else "LEGACY_FIXED_BPS"),
+        fee_formula_version=(
+            fee_schedule.formula_version if fee_schedule is not None
+            else "LEGACY_FIXED_BPS_V1"
+        ),
     )

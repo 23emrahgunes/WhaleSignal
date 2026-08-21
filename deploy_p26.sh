@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: ./deploy_p26.sh [options]
 
-Deploy the isolated P2.6 oracle/dataset sidecars without replacing or stopping
+Deploy the isolated P2.6 oracle/dataset/book/Paper-V2 sidecars without replacing or stopping
 P2.5. The script freezes a P2.5 baseline, validates the complete test suite,
 installs dynamic systemd units, restarts the sidecars and verifies persisted RTDS
 oracle ticks.
@@ -69,6 +69,12 @@ fail() {
   $SUDO systemctl --no-pager --full status direction-engine-p26-dataset.service 2>/dev/null >&2 || true
   echo "--- P26 dataset log ---" >&2
   $SUDO tail -n 120 "$REPO_DIR/logs/p26-dataset.log" 2>/dev/null >&2 || true
+  echo "--- P26 book service/log ---" >&2
+  $SUDO systemctl --no-pager --full status direction-engine-p26-book.service 2>/dev/null >&2 || true
+  $SUDO tail -n 120 "$REPO_DIR/logs/p26-book.log" 2>/dev/null >&2 || true
+  echo "--- P26 Paper V2 service/log ---" >&2
+  $SUDO systemctl --no-pager --full status direction-engine-p26-paper-v2.service 2>/dev/null >&2 || true
+  $SUDO tail -n 120 "$REPO_DIR/logs/p26-paper-v2.log" 2>/dev/null >&2 || true
   exit 1
 }
 
@@ -135,7 +141,7 @@ echo "=== DEPENDENCIES ==="
 echo "=== SYNTAX / STATIC SAFETY ==="
 "$PY" -m py_compile ./*.py reference/*.py
 "$PY" -m compileall -q .
-bash -n deploy_p26.sh scripts/harden_port_8091.sh scripts/rollback_port_8091.sh scripts/status_p26.sh scripts/stop_p26.sh
+bash -n deploy_p26.sh scripts/harden_port_8091.sh scripts/rollback_port_8091.sh scripts/status_p26.sh scripts/stop_p26.sh scripts/smoke_p26.sh
 
 if [[ "$RUN_TESTS" == "1" ]]; then
   echo "=== COMPLETE REGRESSION SUITE ==="
@@ -171,10 +177,14 @@ $SUDO chown -R "$RUN_USER:$RUN_GROUP" data logs models/p26 reports/p26
 
 ORACLE_UNIT=/etc/systemd/system/direction-engine-p26-oracle.service
 DATASET_UNIT=/etc/systemd/system/direction-engine-p26-dataset.service
+BOOK_UNIT=/etc/systemd/system/direction-engine-p26-book.service
+PAPER_UNIT=/etc/systemd/system/direction-engine-p26-paper-v2.service
 
 ORACLE_TEMP="$(mktemp)"
 DATASET_TEMP="$(mktemp)"
-trap 'rm -f "$ORACLE_TEMP" "$DATASET_TEMP"' EXIT
+BOOK_TEMP="$(mktemp)"
+PAPER_TEMP="$(mktemp)"
+trap 'rm -f "$ORACLE_TEMP" "$DATASET_TEMP" "$BOOK_TEMP" "$PAPER_TEMP"' EXIT
 
 cat > "$ORACLE_TEMP" <<EOF
 [Unit]
@@ -232,23 +242,89 @@ StandardError=append:$REPO_DIR/logs/p26-dataset.log
 WantedBy=multi-user.target
 EOF
 
+cat > "$BOOK_TEMP" <<EOF
+[Unit]
+Description=Direction Engine P2.6 Public CLOB Book and Fee Sidecar
+After=network-online.target direction-engine-p26-oracle.service
+Wants=network-online.target direction-engine-p26-oracle.service
+
+[Service]
+Type=simple
+User=$RUN_USER
+Group=$RUN_GROUP
+WorkingDirectory=$REPO_DIR
+EnvironmentFile=-$REPO_DIR/.env.p26
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$PY $REPO_DIR/p26_book_daemon.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=$REPO_DIR/data $REPO_DIR/logs $REPO_DIR/models $REPO_DIR/reports
+StandardOutput=append:$REPO_DIR/logs/p26-book.log
+StandardError=append:$REPO_DIR/logs/p26-book.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > "$PAPER_TEMP" <<EOF
+[Unit]
+Description=Direction Engine P2.6 Paper V2 Shadow Runtime (No Execution)
+After=network-online.target direction-engine-p26-dataset.service direction-engine-p26-book.service
+Wants=network-online.target direction-engine-p26-dataset.service direction-engine-p26-book.service
+
+[Service]
+Type=simple
+User=$RUN_USER
+Group=$RUN_GROUP
+WorkingDirectory=$REPO_DIR
+EnvironmentFile=-$REPO_DIR/.env.p26
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$PY $REPO_DIR/p26_paper_v2_daemon.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=$REPO_DIR/data $REPO_DIR/logs $REPO_DIR/models $REPO_DIR/reports
+StandardOutput=append:$REPO_DIR/logs/p26-paper-v2.log
+StandardError=append:$REPO_DIR/logs/p26-paper-v2.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 $SUDO install -m 0644 "$ORACLE_TEMP" "$ORACLE_UNIT"
 $SUDO install -m 0644 "$DATASET_TEMP" "$DATASET_UNIT"
+$SUDO install -m 0644 "$BOOK_TEMP" "$BOOK_UNIT"
+$SUDO install -m 0644 "$PAPER_TEMP" "$PAPER_UNIT"
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable direction-engine-p26-oracle.service
 $SUDO systemctl enable direction-engine-p26-dataset.service
+$SUDO systemctl enable direction-engine-p26-book.service
+$SUDO systemctl enable direction-engine-p26-paper-v2.service
 
 # Explicit restart is required on redeploy. `enable --now` leaves an already
 # active process running old Python bytecode after git pull.
 printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-oracle.log"
 printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-dataset.log"
+printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-book.log"
+printf '\n=== P26 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> "$REPO_DIR/logs/p26-paper-v2.log"
 $SUDO systemctl restart direction-engine-p26-oracle.service
 sleep 1
 $SUDO systemctl restart direction-engine-p26-dataset.service
+$SUDO systemctl restart direction-engine-p26-book.service
+$SUDO systemctl restart direction-engine-p26-paper-v2.service
 
 sleep 5
 $SUDO systemctl is-active --quiet direction-engine-p26-oracle.service || fail "oracle sidecar is not active"
 $SUDO systemctl is-active --quiet direction-engine-p26-dataset.service || fail "dataset sidecar is not active"
+$SUDO systemctl is-active --quiet direction-engine-p26-book.service || fail "book sidecar is not active"
+$SUDO systemctl is-active --quiet direction-engine-p26-paper-v2.service || fail "Paper V2 sidecar is not active"
 
 # Official RTDS traffic can be bursty. Wait up to 120 seconds for a persisted tick.
 echo "=== WAIT FOR PERSISTED CHAINLINK RTDS TICK ==="
@@ -323,6 +399,7 @@ P2.6 SIDECAR DEPLOY PASS
 - P2.6 oracle ticks: $TICK_COUNT
 - baseline manifest: $MANIFEST
 - P2.6 database: $REPO_DIR/data/p26_research.sqlite
+- Paper V2 enabled: $(grep -E '^P26_PAPER_V2_ENABLED=' "$REPO_DIR/.env.p26" | tail -1 | cut -d= -f2 || echo false)
 - execution/signing/private-key/order submission: DISABLED
 
 Status command:
