@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 .env.p26
+.env.p3
 *.log
 *.pid
 .pytest_cache/
