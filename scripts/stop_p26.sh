@@ -9,7 +9,7 @@ case "${1:-}" in
     cat <<'EOF'
 Usage: scripts/stop_p26.sh [--remove-units]
 
-Stops and disables only the P2.6 oracle/dataset sidecars. It never stops P2.5,
+Stops and disables only the P2.6 oracle/dataset/book/Paper-V2 sidecars. It never stops P2.5,
 never restores a database, never deletes research data and never changes port 8091
 firewall rules. Use --remove-units to remove the installed systemd unit files after
 stopping the services.
@@ -26,14 +26,20 @@ else
   SUDO="sudo"
 fi
 
-for service in direction-engine-p26-dataset.service direction-engine-p26-oracle.service; do
+for service in \
+  direction-engine-p26-paper-v2.service \
+  direction-engine-p26-book.service \
+  direction-engine-p26-dataset.service \
+  direction-engine-p26-oracle.service; do
   $SUDO systemctl disable --now "$service" 2>/dev/null || true
 done
 
 if [[ "$REMOVE_UNITS" == "1" ]]; then
   $SUDO rm -f \
     /etc/systemd/system/direction-engine-p26-oracle.service \
-    /etc/systemd/system/direction-engine-p26-dataset.service
+    /etc/systemd/system/direction-engine-p26-dataset.service \
+    /etc/systemd/system/direction-engine-p26-book.service \
+    /etc/systemd/system/direction-engine-p26-paper-v2.service
   $SUDO systemctl daemon-reload
 fi
 

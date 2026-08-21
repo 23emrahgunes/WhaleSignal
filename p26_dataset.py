@@ -115,6 +115,9 @@ class CanonicalExtractionResult:
     complete_lineage: int = 0
     partial_lineage: int = 0
     labels_upserted: int = 0
+    label_markets_scanned: int = 0
+    snapshot_cursor_from: int = 0
+    snapshot_cursor_to: int = 0
 
     def plus(self, **changes: int) -> "CanonicalExtractionResult":
         values = self.__dict__.copy()
@@ -139,6 +142,39 @@ class CanonicalDatasetBuilder:
             EXTERNAL_FEATURE_WHITELIST,
             settings.feature_schema_version,
         )
+        self._cursor_key = (
+            "dataset_snapshot_cursor:"
+            f"{settings.extraction_policy_version}:{self._schema_hash}"
+        )
+        self._label_sync_key = "dataset_labels_last_scan_ms"
+
+    def _meta_int(self, key: str, default: int = 0) -> int:
+        row = self.p26.execute(
+            "SELECT value FROM p26_meta WHERE key=?", (key,)
+        ).fetchone()
+        if row is None:
+            return int(default)
+        try:
+            return int(row["value"])
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _set_meta_int(self, key: str, value: int) -> None:
+        self.p26.execute(
+            """
+            INSERT INTO p26_meta(key,value,updated_at_ms)
+            VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET
+                value=excluded.value, updated_at_ms=excluded.updated_at_ms
+            """,
+            (key, str(int(value)), int(time.time() * 1000)),
+        )
+
+    def _initial_snapshot_cursor(self) -> int:
+        row = self.p26.execute(
+            "SELECT MAX(source_snapshot_id) FROM p26_canonical_rows"
+        ).fetchone()
+        return int(row[0] or 0)
 
     def _required_tables(self, conn: sqlite3.Connection) -> None:
         existing = {
@@ -155,7 +191,17 @@ class CanonicalDatasetBuilder:
     def _checkpoint_for_horizon(self, horizon: str) -> int:
         return self.settings.canonical_checkpoint(horizon)
 
-    def _scan_rows(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    def _snapshot_highwater(self, conn: sqlite3.Connection) -> int:
+        row = conn.execute("SELECT MAX(id) FROM snapshots").fetchone()
+        return int(row[0] or 0)
+
+    def _scan_rows(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        after_snapshot_id: int,
+        through_snapshot_id: int,
+    ) -> list[sqlite3.Row]:
         return conn.execute(
             """
             SELECT
@@ -179,9 +225,37 @@ class CanonicalDatasetBuilder:
                 m.computed_result,m.label_status
             FROM snapshots s
             JOIN markets m ON m.condition_id=s.condition_id
-            WHERE s.checkpoint_sec IS NOT NULL
+            WHERE s.id > ?
+              AND s.id <= ?
               AND s.extra_json IS NOT NULL
+              AND (
+                    (m.horizon='5m'  AND s.checkpoint_sec=?)
+                 OR (m.horizon='15m' AND s.checkpoint_sec=?)
+                 OR (m.horizon='1h'  AND s.checkpoint_sec=?)
+              )
             ORDER BY s.ts ASC,s.id ASC
+            LIMIT ?
+            """
+            ,
+            (
+                int(after_snapshot_id), int(through_snapshot_id),
+                self.settings.canonical_checkpoints_5m,
+                self.settings.canonical_checkpoints_15m,
+                self.settings.canonical_checkpoints_1h,
+                self.settings.dataset_max_snapshot_batch,
+            ),
+        ).fetchall()
+
+    def _scan_labels(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
+        return conn.execute(
+            """
+            SELECT condition_id,official_result,official_result_source,
+                   official_resolved_at,computed_result,label_status
+            FROM markets
+            WHERE official_result IS NOT NULL
+               OR computed_result IS NOT NULL
+               OR UPPER(COALESCE(label_status,'UNKNOWN')) <> 'UNKNOWN'
+            ORDER BY condition_id
             """
         ).fetchall()
 
@@ -329,7 +403,27 @@ class CanonicalDatasetBuilder:
         status = _computed_status(row["label_status"])
         if official is None and computed is None and status == "UNKNOWN":
             return False
-        before = self.p26.total_changes
+        existing = self.p26.execute(
+            "SELECT * FROM p26_labels WHERE condition_id=?",
+            (row["condition_id"],),
+        ).fetchone()
+        resolved_at = _ms_from_seconds(row["official_resolved_at"])
+        official_source = row["official_result_source"]
+        if existing is not None:
+            merged = (
+                official if official is not None else existing["official_label"],
+                official_source if official_source is not None else existing["official_result_source"],
+                resolved_at if resolved_at is not None else existing["official_resolved_at_ms"],
+                computed if computed is not None else existing["computed_result"],
+                status,
+            )
+            current = (
+                existing["official_label"], existing["official_result_source"],
+                existing["official_resolved_at_ms"], existing["computed_result"],
+                existing["computed_status"],
+            )
+            if merged == current:
+                return False
         self.p26.execute(
             """
             INSERT INTO p26_labels(
@@ -345,19 +439,41 @@ class CanonicalDatasetBuilder:
                 updated_at_ms=excluded.updated_at_ms
             """,
             (
-                row["condition_id"],official,row["official_result_source"],
-                _ms_from_seconds(row["official_resolved_at"]),computed,status,
+                row["condition_id"],official,official_source,
+                resolved_at,computed,status,
                 int(time.time()*1000),
             ),
         )
-        return self.p26.total_changes > before
+        return True
+
+    def _labels_due(self, now_ms: int) -> bool:
+        last_ms = self._meta_int(self._label_sync_key, 0)
+        return now_ms - last_ms >= self.settings.dataset_label_sync_interval_sec * 1000
 
     def sync(self) -> CanonicalExtractionResult:
-        result = CanonicalExtractionResult()
+        now_ms = int(time.time() * 1000)
         p25 = open_p25_read_only(self.settings.p25_db_path)
         try:
             self._required_tables(p25)
-            rows = self._scan_rows(p25)
+            p25.execute("BEGIN")
+            highwater = self._snapshot_highwater(p25)
+            cursor = self._meta_int(self._cursor_key, self._initial_snapshot_cursor())
+            rows = self._scan_rows(
+                p25,
+                after_snapshot_id=cursor,
+                through_snapshot_id=highwater,
+            )
+            advance_to = (
+                int(rows[-1]["snapshot_id"])
+                if len(rows) >= self.settings.dataset_max_snapshot_batch
+                else highwater
+            )
+            label_rows = self._scan_labels(p25) if self._labels_due(now_ms) else []
+            p25.rollback()
+            result = CanonicalExtractionResult(
+                snapshot_cursor_from=cursor,
+                snapshot_cursor_to=cursor,
+            )
             for row in rows:
                 result = result.plus(scanned=1)
                 status, lineage_status = self._insert_row(row)
@@ -375,11 +491,19 @@ class CanonicalDatasetBuilder:
                     result = result.plus(rejected_checkpoint=1)
                 elif status == "INVALID_FEATURES":
                     result = result.plus(invalid_features=1)
+            self._set_meta_int(self._cursor_key, advance_to)
+            result = result.plus(snapshot_cursor_to=advance_to - cursor)
+            for row in label_rows:
+                result = result.plus(label_markets_scanned=1)
                 if self._upsert_label(row):
                     result = result.plus(labels_upserted=1)
+            if label_rows:
+                self._set_meta_int(self._label_sync_key, now_ms)
             self.p26.commit()
             return result
         finally:
+            if p25.in_transaction:
+                p25.rollback()
             p25.close()
 
     def canonical_rows(self, *, labeled_only: bool = False, eligible_only: bool = False) -> list[sqlite3.Row]:

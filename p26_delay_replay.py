@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Optional, Sequence
 
 from p26_alpha_decay import AlphaDecayMetrics, EdgeObservation, analyze_alpha_decay
 from p26_execution import OrderBookSnapshot, simulate_buy
+from p26_fee import FeeSchedule
 
 
 DEFAULT_DELAYS_MS = (0, 100, 250, 500, 1000, 2000, 5000, 10000)
@@ -14,7 +15,7 @@ DEFAULT_DELAYS_MS = (0, 100, 250, 500, 1000, 2000, 5000, 10000)
 @dataclass(frozen=True)
 class DelayReplayResult:
     observations: tuple[EdgeObservation, ...]
-    decay: AlphaDecayMetrics
+    decay: Optional[AlphaDecayMetrics]
     missing_delays_ms: tuple[int, ...]
 
 
@@ -25,6 +26,7 @@ def replay_edge_curve(
     conservative_probability: float,
     stake_usdc: float,
     fee_bps: float,
+    fee_schedule: FeeSchedule | None = None,
     safety_buffer: float,
     delays_ms: Iterable[int] = DEFAULT_DELAYS_MS,
     max_book_wait_ms: int = 200,
@@ -39,7 +41,12 @@ def replay_edge_curve(
             missing.append(int(delay))
             continue
         book = candidates[0]
-        fill = simulate_buy(book, stake_usdc=stake_usdc, fee_bps=fee_bps)
+        fill = simulate_buy(
+            book,
+            stake_usdc=stake_usdc,
+            fee_bps=fee_bps,
+            fee_schedule=fee_schedule,
+        )
         if fill.all_in_cost_per_share is None or not fill.complete:
             missing.append(int(delay))
             continue
@@ -47,6 +54,6 @@ def replay_edge_curve(
         observations.append(EdgeObservation(int(delay), edge))
     return DelayReplayResult(
         observations=tuple(observations),
-        decay=analyze_alpha_decay(observations),
+        decay=(analyze_alpha_decay(observations) if observations else None),
         missing_delays_ms=tuple(missing),
     )

@@ -27,6 +27,8 @@ service_state() {
 
 ORACLE_STATE="$(service_state direction-engine-p26-oracle.service)"
 DATASET_STATE="$(service_state direction-engine-p26-dataset.service)"
+BOOK_STATE="$(service_state direction-engine-p26-book.service)"
+PAPER_STATE="$(service_state direction-engine-p26-paper-v2.service)"
 P25_HEALTH="$(curl --connect-timeout 3 --max-time 8 -sS -o /tmp/p26-status-health.json -w '%{http_code}' http://127.0.0.1:8091/health || true)"
 
 DB_JSON="$("$PY" - <<'PY'
@@ -45,6 +47,11 @@ if not path.exists():
 
 conn = connect_p26(settings.p26_db_path)
 ensure_p26_schema(conn)
+def count_if_exists(table, where="1=1"):
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}").fetchone()[0]) if exists else 0
 now_ms = int(time.time() * 1000)
 latest = conn.execute("SELECT MAX(source_ts_ms) FROM p26_oracle_ticks").fetchone()[0]
 by_asset = {
@@ -79,6 +86,11 @@ counts = {
     "partial_lineage": int(conn.execute("SELECT COUNT(*) FROM p26_canonical_rows WHERE lineage_status='PARTIAL_LEGACY'").fetchone()[0]),
     "official_labels": int(conn.execute("SELECT COUNT(*) FROM p26_labels WHERE official_label IS NOT NULL").fetchone()[0]),
     "health_errors": int(conn.execute("SELECT COUNT(*) FROM p26_health_events WHERE severity IN ('ERROR','CRITICAL')").fetchone()[0]),
+    "clob_books": count_if_exists("p26_clob_books"),
+    "fee_schedules": count_if_exists("p26_fee_schedules"),
+    "paper_v2_attempts": count_if_exists("p26_paper_trades"),
+    "paper_v2_open": count_if_exists("p26_paper_trades", "status='OPEN'"),
+    "paper_v2_settled": count_if_exists("p26_paper_trades", "status='SETTLED'"),
 }
 latest_health = [
     dict(row)
@@ -105,6 +117,7 @@ result = {
         "private_key_loaded": False,
         "signing_enabled": False,
         "order_submission_enabled": False,
+        "paper_v2_enabled": bool(settings.paper_v2_enabled),
     },
 }
 conn.close()
@@ -119,6 +132,8 @@ payload = json.loads('''$DB_JSON''')
 payload["services"] = {
     "oracle": "$ORACLE_STATE",
     "dataset": "$DATASET_STATE",
+    "book": "$BOOK_STATE",
+    "paper_v2": "$PAPER_STATE",
 }
 payload["p25_health_http"] = "$P25_HEALTH"
 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -129,6 +144,8 @@ fi
 echo "=== P2.6 STATUS ==="
 echo "oracle_service=$ORACLE_STATE"
 echo "dataset_service=$DATASET_STATE"
+echo "book_service=$BOOK_STATE"
+echo "paper_v2_service=$PAPER_STATE"
 echo "p25_health_http=$P25_HEALTH"
 "$PY" - <<PY
 import json
@@ -147,6 +164,11 @@ for key in (
     "official_labels",
     "health_errors",
     "latest_oracle_age_ms",
+    "clob_books",
+    "fee_schedules",
+    "paper_v2_attempts",
+    "paper_v2_open",
+    "paper_v2_settled",
 ):
     print(f"{key}={p.get(key)}")
 print("oracle_ticks_by_asset=", p.get("oracle_ticks_by_asset"))
@@ -157,3 +179,5 @@ PY
 echo "=== RECENT LOGS ==="
 tail -n 12 logs/p26-oracle.log 2>/dev/null || true
 tail -n 12 logs/p26-dataset.log 2>/dev/null || true
+tail -n 12 logs/p26-book.log 2>/dev/null || true
+tail -n 12 logs/p26-paper-v2.log 2>/dev/null || true

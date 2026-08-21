@@ -133,5 +133,70 @@ class BookSnapshotStore:
         ).fetchall()
         return [self._decode(row) for row in rows]
 
+    def latest(
+        self,
+        condition_id: str,
+        side: str,
+        *,
+        at_or_before_ms: int,
+    ) -> OrderBookSnapshot | None:
+        row = self.conn.execute(
+            """
+            SELECT * FROM p26_clob_books
+            WHERE condition_id=? AND side=? AND source_ts_ms<=?
+            ORDER BY source_ts_ms DESC,id DESC LIMIT 1
+            """,
+            (condition_id, side.upper(), int(at_or_before_ms)),
+        ).fetchone()
+        return self._decode(row) if row is not None else None
+
+    def prune(self, *, before_ts_ms: int, batch_size: int = 10_000) -> int:
+        rows = self.conn.execute(
+            "SELECT id FROM p26_clob_books WHERE source_ts_ms<? ORDER BY id LIMIT ?",
+            (int(before_ts_ms), int(batch_size)),
+        ).fetchall()
+        if not rows:
+            return 0
+        ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"DELETE FROM p26_clob_books WHERE id IN ({placeholders})", ids
+        )
+        self.conn.commit()
+        return len(ids)
+
+    def latest(
+        self,
+        condition_id: str,
+        side: str,
+        *,
+        at_or_before_ms: int,
+    ) -> OrderBookSnapshot | None:
+        row = self.conn.execute(
+            """
+            SELECT * FROM p26_clob_books
+            WHERE condition_id=? AND side=? AND source_ts_ms<=?
+            ORDER BY source_ts_ms DESC,id DESC LIMIT 1
+            """,
+            (condition_id, side.upper(), int(at_or_before_ms)),
+        ).fetchone()
+        return self._decode(row) if row is not None else None
+
+    def prune(self, *, before_ts_ms: int, batch_size: int = 10_000) -> int:
+        rows = self.conn.execute(
+            "SELECT id FROM p26_clob_books WHERE source_ts_ms<? ORDER BY id LIMIT ?",
+            (int(before_ts_ms), int(batch_size)),
+        ).fetchall()
+        if not rows:
+            return 0
+        ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"DELETE FROM p26_clob_books WHERE id IN ({placeholders})",
+            ids,
+        )
+        self.conn.commit()
+        return len(ids)
+
     def close(self) -> None:
         self.conn.close()

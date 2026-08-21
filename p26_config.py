@@ -99,6 +99,12 @@ class P26Settings(BaseSettings):
     feature_schema_version: str = Field(
         default="P26_EXTERNAL_FEATURES_V1", alias="P26_FEATURE_SCHEMA_VERSION"
     )
+    dataset_label_sync_interval_sec: int = Field(
+        default=60, alias="P26_DATASET_LABEL_SYNC_INTERVAL_SEC"
+    )
+    dataset_max_snapshot_batch: int = Field(
+        default=5_000, alias="P26_DATASET_MAX_SNAPSHOT_BATCH"
+    )
 
     # Frozen independent fair-value model. These are pre-registered initial
     # research policies, not claimed optimal thresholds.
@@ -150,6 +156,24 @@ class P26Settings(BaseSettings):
         default=2_000, alias="P26_MAX_FORECAST_AGE_MS"
     )
 
+    # Public read-only Polymarket CLOB V2 market/book data.
+    clob_http_url: str = Field(
+        default="https://clob.polymarket.com", alias="P26_CLOB_HTTP_URL"
+    )
+    clob_ws_url: str = Field(
+        default="wss://ws-subscriptions-clob.polymarket.com/ws/market",
+        alias="P26_CLOB_WS_URL",
+    )
+    book_market_refresh_sec: int = Field(
+        default=30, alias="P26_BOOK_MARKET_REFRESH_SEC"
+    )
+    book_persist_min_interval_ms: int = Field(
+        default=100, alias="P26_BOOK_PERSIST_MIN_INTERVAL_MS"
+    )
+    book_history_retention_hours: int = Field(
+        default=72, alias="P26_BOOK_HISTORY_RETENTION_HOURS"
+    )
+
     # Paper V2 / execution. Hypotheses are intentionally configurable and must be
     # selected on validation data before untouched test evaluation.
     paper_v2_strategy_version: str = Field(
@@ -181,6 +205,68 @@ class P26Settings(BaseSettings):
     )
     paper_v2_max_cancel_to_add_ratio: float = Field(
         default=8.0, alias="P26_PAPER_V2_MAX_CANCEL_TO_ADD_RATIO"
+    )
+    paper_v2_enabled: bool = Field(
+        default=False, alias="P26_PAPER_V2_ENABLED"
+    )
+    paper_v2_model_manifest: str = Field(
+        default="models/p26/fair_value_v1.manifest.json",
+        alias="P26_PAPER_V2_MODEL_MANIFEST",
+    )
+    paper_v2_alpha_artifact: str = Field(
+        default="models/p26/alpha_profile_v1.json",
+        alias="P26_PAPER_V2_ALPHA_ARTIFACT",
+    )
+    paper_v2_alpha_min_samples: int = Field(
+        default=30, alias="P26_PAPER_V2_ALPHA_MIN_SAMPLES"
+    )
+    paper_v2_alpha_ttl_quantile: float = Field(
+        default=0.20, alias="P26_PAPER_V2_ALPHA_TTL_QUANTILE"
+    )
+    paper_v2_fill_delay_ms: int = Field(
+        default=100, alias="P26_PAPER_V2_FILL_DELAY_MS"
+    )
+    paper_v2_approved_calibration_scopes: str = Field(
+        default="PER_COMBO", alias="P26_PAPER_V2_APPROVED_CALIBRATION_SCOPES"
+    )
+    paper_v2_approved_alpha_scopes: str = Field(
+        default="PER_COMBO", alias="P26_PAPER_V2_APPROVED_ALPHA_SCOPES"
+    )
+    paper_v2_initial_equity_usdc: float = Field(
+        default=1_000.0, alias="P26_PAPER_V2_INITIAL_EQUITY_USDC"
+    )
+    paper_v2_max_open_positions_total: int = Field(
+        default=4, alias="P26_PAPER_V2_MAX_OPEN_POSITIONS_TOTAL"
+    )
+    paper_v2_max_open_exposure_usdc: float = Field(
+        default=10.0, alias="P26_PAPER_V2_MAX_OPEN_EXPOSURE_USDC"
+    )
+    paper_v2_max_exposure_per_asset_usdc: float = Field(
+        default=3.0, alias="P26_PAPER_V2_MAX_EXPOSURE_PER_ASSET_USDC"
+    )
+    paper_v2_max_exposure_per_horizon_usdc: float = Field(
+        default=5.0, alias="P26_PAPER_V2_MAX_EXPOSURE_PER_HORIZON_USDC"
+    )
+    paper_v2_max_overlapping_positions_per_asset: int = Field(
+        default=1, alias="P26_PAPER_V2_MAX_OVERLAPPING_POSITIONS_PER_ASSET"
+    )
+    paper_v2_max_crypto_cluster_exposure_usdc: float = Field(
+        default=10.0, alias="P26_PAPER_V2_MAX_CRYPTO_CLUSTER_EXPOSURE_USDC"
+    )
+    paper_v2_daily_loss_limit_usdc: float = Field(
+        default=25.0, alias="P26_PAPER_V2_DAILY_LOSS_LIMIT_USDC"
+    )
+    paper_v2_max_drawdown_fraction: float = Field(
+        default=0.10, alias="P26_PAPER_V2_MAX_DRAWDOWN_FRACTION"
+    )
+    paper_v2_consecutive_loss_limit: int = Field(
+        default=3, alias="P26_PAPER_V2_CONSECUTIVE_LOSS_LIMIT"
+    )
+    paper_v2_cooldown_sec: int = Field(
+        default=900, alias="P26_PAPER_V2_COOLDOWN_SEC"
+    )
+    paper_v2_global_kill_switch: bool = Field(
+        default=False, alias="P26_PAPER_V2_GLOBAL_KILL_SWITCH"
     )
 
     # Promotion (paper-only). These are pre-registered initial policies.
@@ -234,12 +320,38 @@ class P26Settings(BaseSettings):
             raise ValueError("oracle queue must be >= batch size")
         if self.canonical_max_lag_ms < 0:
             raise ValueError("canonical lag cannot be negative")
+        if self.dataset_label_sync_interval_sec < 1:
+            raise ValueError("dataset label sync interval must be positive")
+        if self.dataset_max_snapshot_batch < 1:
+            raise ValueError("dataset snapshot batch must be positive")
         if not 0.0 < self.calibration_bucket_width <= 0.25:
             raise ValueError("calibration bucket width must be in (0, 0.25]")
         if not 0.0 <= self.paper_v2_fee_bps:
             raise ValueError("paper fee cannot be negative")
         if not 0.0 < self.paper_v2_min_fill_fraction <= 1.0:
             raise ValueError("paper fill fraction must be in (0,1]")
+        if self.paper_v2_initial_equity_usdc <= 0:
+            raise ValueError("paper V2 initial equity must be positive")
+        if self.book_persist_min_interval_ms < 0:
+            raise ValueError("book persist interval cannot be negative")
+        if self.paper_v2_alpha_min_samples < 1:
+            raise ValueError("alpha minimum samples must be positive")
+        if not 0 < self.paper_v2_alpha_ttl_quantile <= 1:
+            raise ValueError("alpha TTL quantile must be in (0,1]")
+
+    def approved_calibration_scopes(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip().upper()
+            for item in self.paper_v2_approved_calibration_scopes.split(",")
+            if item.strip()
+        )
+
+    def approved_alpha_scopes(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip().upper()
+            for item in self.paper_v2_approved_alpha_scopes.split(",")
+            if item.strip()
+        )
 
 
 @lru_cache(maxsize=1)

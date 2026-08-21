@@ -1,27 +1,30 @@
 # P2.6 Implementation Status
 
-P2.6 is an isolated research challenger. P2.5 SHADOW/PAPER remains the rollback
-baseline and its modules/tables are not rewritten by P2.6.
+P2.6 is an isolated SHADOW/PAPER research challenger. P2.5 remains the rollback
+baseline; P2.6 never loads a private key, signs a payload or submits an order.
 
-## Verification completed
+## Deterministic verification
 
-- Local Python syntax and compile validation: **PASS**
-- Local complete regression suite: **196 tests PASS**
-- GitHub Actions Direction Engine Tests run #84: **COMPILE PASS / TEST PASS**
-- P2.5/core isolation check: **PASS** — the implementation adds files only
-- AWS runtime, Security Group/firewall application and live sidecar feed acceptance:
-  **NOT DEPLOYED / NOT TESTED**
+- Python `py_compile` / `compileall`: **PASS**
+- Bash syntax: **PASS**
+- Complete local regression suite: **229 tests PASS**
+- `git diff --check`: **PASS**
+- GitHub Actions and AWS post-merge smoke: required before operational acceptance
 
-| Phase | Implemented scope | Code / deterministic validation | Runtime / empirical status |
+| Phase | Implemented scope | Code status | Runtime / empirical status |
 |---|---|---|---|
-| P2.6.0 | Baseline freeze + operational hardening | **LOCAL_PASS / CI_PASS** | AWS freeze and network hardening **NOT_APPLIED** |
-| P2.6.1 | Oracle persistence + canonical dataset | **LOCAL_PASS / CI_PASS** | Oracle/dataset sidecars **NOT_DEPLOYED** |
-| P2.6.2 | External-only frozen fair-value model | **LOCAL_PASS / CI_PASS** | Real frozen artifact **NOT_TRAINED** pending canonical data |
-| P2.6.3 | Purged nested OOS + latency/alpha replay | **LOCAL_PASS / CI_PASS** | Real OOS latency/alpha curves **NOT_AVAILABLE** |
-| P2.6.4 | OOS calibration + Wilson uncertainty | **LOCAL_PASS / CI_PASS** | Real OOS calibration buckets **NOT_AVAILABLE** |
-| P2.6.5 | Depth/latency/alpha-aware Paper V2 | **LOCAL_PASS / CI_PASS** | `RESEARCH_PAPER_V2` **NOT_ENABLED ON AWS** |
-| P2.6.6 | Promotion / rejection evaluation | **LOCAL_PASS / CI_PASS** | Current evidence state **NOT_READY**; no edge claim |
+| P2.6.0 | Baseline freeze + operational hardening | PASS | Existing baseline preserved; network hardening remains explicit |
+| P2.6.1 | Persistent oracle + incremental canonical dataset | PASS | Oracle live; incremental dataset requires post-merge redeploy |
+| P2.6.2 | External-only frozen fair-value model | PASS | Real frozen artifact NOT_READY pending sufficient labeled rows |
+| P2.6.3 | Purged OOS + latency + ex-post alpha replay | PASS | Real OOS distributions still accumulating |
+| P2.6.4 | Past-only calibration + Wilson uncertainty | PASS | PER_COMBO entry bucket NOTREADY until enough OOS rows |
+| P2.6.5A | Frozen pre-trade alpha; future-book isolation | PASS | Alpha artifact NOTREADY |
+| P2.6.5B | Two-sided integrity state machine | PASS | Paper V2 disabled |
+| P2.6.5C | Dynamic CLOB V2 fee lineage | PASS | Book/fee sidecar post-merge deployment pending |
+| P2.6.5D | Bankroll/exposure/overlap/loss guards | PASS | Fixed stake; Kelly OFF |
+| P2.6.5E | PER_COMBO-only entry calibration policy | PASS | HORIZON/OVERALL analytics-only |
+| P2.6.5F | Book collector + disabled Paper V2 runtime | PASS | `P26_PAPER_V2_ENABLED=false` by default |
+| P2.6.6 | Promotion/rejection evaluation | PASS | Current evidence state NOT_READY; no edge claim |
 
-Safety invariants: no private key, no signing, no order submission, no execution.
-The highest possible promotion state is `VALIDATED_PAPER_MODEL`, which remains
-PAPER-only and cannot enable live trading.
+The highest possible promotion state is `VALIDATED_PAPER_MODEL`; it remains
+paper-only and cannot activate live execution.
