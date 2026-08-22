@@ -1,6 +1,6 @@
 """P3 replay clock correction for live structural-arbitrage research.
 
-Opportunity detection timestamps are wall-clock/collector times.  P2.6 book rows
+Opportunity detection timestamps are wall-clock/collector times. P2.6 book rows
 carry two clocks:
 
 - source_ts_ms: exchange last-change timestamp (may stay old for resting quotes)
@@ -8,7 +8,7 @@ carry two clocks:
 
 The original P3.4 replay searched future books on source_ts_ms, so resting books
 produced false NO_SYNCHRONOUS_BOOK outcomes even while the arbitrage window stayed
-open.  Runtime replay must reconstruct the event-sourced book state *as of* the
+open. Runtime replay reconstructs the event-sourced book state *as of* the
 simulated submission time using recv_ts_ms.
 
 This module remains ex-post SHADOW/PAPER only and never submits orders.
@@ -24,13 +24,13 @@ REPLAY_VERSION = "P3_REPLAY_RECV_ASOF_V2"
 
 
 class P3ReplayEngine(_BaseReplayEngine):
-    """Replay using the collector-observation clock rather than exchange-change time."""
+    """Replay using collector-observation time rather than exchange-change time."""
 
     def _future_book(self, condition_id: str, side: str, target_ms: int):  # noqa: ANN001
         # Event-sourced reconstruction: the latest full-depth state observed at or
-        # before target is the state available to a simulated FOK at target.  If no
+        # before target is the state available to a simulated FOK at target. If no
         # change occurs after opportunity detection, the detection book correctly
-        # remains the active book instead of becoming a false missing snapshot.
+        # remains active instead of becoming a false missing snapshot.
         return self.p26.execute(
             """
             SELECT * FROM p26_clob_books
@@ -42,21 +42,22 @@ class P3ReplayEngine(_BaseReplayEngine):
 
     def _record(self, result) -> None:  # noqa: ANN001
         # details is intentionally mutable even though ReplayOutcome itself is a
-        # frozen dataclass.  Versioning lets the scheduler invalidate legacy rows
-        # produced with the incorrect source_ts time axis.
+        # frozen dataclass. Versioning identifies rows produced by corrected replay.
         result.details["replay_version"] = REPLAY_VERSION
         result.details["time_axis"] = "recv_ts_ms_asof"
         super()._record(result)
 
     def purge_legacy_replays(self) -> int:
-        """Delete replay rows produced before the recv-time reconstruction fix.
+        """Repair only false legacy NO_SYNCHRONOUS_BOOK research artifacts.
 
-        They are research artifacts, not trades.  Keeping them would permanently
-        pin Pair Fill at 0 because the scheduler normally skips existing
-        (opportunity, delay) rows.  Only rows without the current replay version are
-        removed; current-version rows are untouched.
+        The production symptom was 0% pair fill because source-time lookup could not
+        find any synchronous book. Other historical replay outcomes are left intact;
+        this avoids rewriting unrelated research history and preserves scheduler
+        completion semantics.
         """
-        rows = self.p3.execute("SELECT id,details_json FROM p3_replays").fetchall()
+        rows = self.p3.execute(
+            "SELECT id,outcome,details_json FROM p3_replays WHERE outcome='NO_SYNCHRONOUS_BOOK'"
+        ).fetchall()
         stale_ids: list[int] = []
         for row in rows:
             try:
