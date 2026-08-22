@@ -7,7 +7,7 @@ fee/depth-valid opportunities, and maintains contiguous lifetime windows.
 Freshness semantics are transport-aware: an unchanged resting quote can have an old
 exchange/source timestamp while still being the current executable book. When the
 P2.6 collector heartbeat is available, P3 therefore requires a live recent socket
-heartbeat plus an initial snapshot for both outcomes in the *current socket session*.
+heartbeat plus an initial snapshot for both outcomes in the current socket session.
 The old source-age/skew gates remain only as a backward-compatible fallback when no
 collector heartbeat exists. No order submission exists.
 """
@@ -154,16 +154,12 @@ class StructuralArbScanner:
             session_started = int(health.get("session_started_ms") or 0)
             if session_started <= 0:
                 return None, "SESSION_INCOMPLETE"
-            # `recv_ts_ms` proves both outcome books were observed after the current
-            # subscription began. Their exchange source timestamps may legitimately
-            # be old when resting quotes have not changed.
             if (
                 int(up_row["recv_ts_ms"]) < session_started
                 or int(down_row["recv_ts_ms"]) < session_started
             ):
                 return None, "SESSION_INCOMPLETE"
         else:
-            # Legacy fallback for tests/older collectors without heartbeat metadata.
             if (
                 now_ms - up_source_ts > self.settings.max_book_age_ms
                 or now_ms - down_source_ts > self.settings.max_book_age_ms
@@ -172,15 +168,17 @@ class StructuralArbScanner:
             if abs(up_source_ts - down_source_ts) > self.settings.max_source_skew_ms:
                 return None, "SOURCE_SKEW"
 
-        pair = BookPair(
-            condition_id=condition_id,
-            combo_key=str(item["combo_key"]),
-            up_book_id=int(up_row["id"]),
-            down_book_id=int(down_row["id"]),
-            up=self._decode_book(up_row),
-            down=self._decode_book(down_row),
+        return (
+            BookPair(
+                condition_id=condition_id,
+                combo_key=str(item["combo_key"]),
+                up_book_id=int(up_row["id"]),
+                down_book_id=int(down_row["id"]),
+                up=self._decode_book(up_row),
+                down=self._decode_book(down_row),
+            ),
+            "OK",
         )
-        return pair, "OK"
 
     def _accepted(self, opp: Optional[StructuralOpportunity]) -> bool:
         if opp is None:
@@ -265,6 +263,7 @@ class StructuralArbScanner:
                     detected_ts_ms=now,
                     max_quantity_shares=self.settings.max_quantity_shares,
                     execution_buffer_per_share=self.settings.execution_buffer_per_share,
+                    max_capital_usdc=self.settings.max_capital_per_cycle_usdc,
                 ),
                 best_split_sell(
                     pair,
@@ -273,6 +272,7 @@ class StructuralArbScanner:
                     detected_ts_ms=now,
                     max_quantity_shares=self.settings.max_quantity_shares,
                     execution_buffer_per_share=self.settings.execution_buffer_per_share,
+                    max_capital_usdc=self.settings.max_capital_per_cycle_usdc,
                 ),
             )
             for index, opp in enumerate(opportunities):
