@@ -4,13 +4,18 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from p3_replay import P3ReplayEngine as _BaseReplayEngine
+from p3_replay_clock import P3ReplayEngine as _BaseReplayEngine
 
 
 class P3ReplayEngine(_BaseReplayEngine):
     """Replay engine whose queue advances past already-complete opportunities."""
 
     def process_ready(self, *, now_ms: Optional[int] = None) -> dict:
+        # One-time research repair: source-time replay rows were false negatives for
+        # unchanged resting books. Remove only legacy-version rows so the corrected
+        # recv-time engine can regenerate them.
+        legacy_purged = self.purge_legacy_replays()
+
         now = int(time.time() * 1000) if now_ms is None else int(now_ms)
         delays = self.settings.replay_delays()
         max_delay = max(delays) + self.settings.replay_snapshot_tolerance_ms
@@ -46,4 +51,8 @@ class P3ReplayEngine(_BaseReplayEngine):
                     continue
                 self.replay_one(opp_id, delay)
                 created += 1
-        return {"opportunities_scanned": len(rows), "replays_created": created}
+        return {
+            "opportunities_scanned": len(rows),
+            "replays_created": created,
+            "legacy_replays_purged": legacy_purged,
+        }
