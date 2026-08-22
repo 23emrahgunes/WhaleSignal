@@ -1,8 +1,8 @@
 """Configuration for the isolated P3 structural-arbitrage research lab.
 
-P3 is strictly SHADOW/PAPER.  It reads public P2.6 CLOB/fee data, writes a
+P3 is strictly SHADOW/PAPER. It reads public P2.6 CLOB/fee data, writes a
 separate SQLite database and never loads credentials, signs payloads or submits
-orders.
+orders. Dry-run settings model one independent attempt per opportunity window.
 """
 from __future__ import annotations
 
@@ -37,6 +37,9 @@ class P3Settings(BaseSettings):
         default=0.0, alias="P3_EXECUTION_BUFFER_PER_SHARE"
     )
     max_quantity_shares: float = Field(default=500.0, alias="P3_MAX_QUANTITY_SHARES")
+    max_capital_per_cycle_usdc: float = Field(
+        default=20.0, alias="P3_MAX_CAPITAL_PER_CYCLE_USDC"
+    )
     window_grace_ms: int = Field(default=500, alias="P3_WINDOW_GRACE_MS")
 
     replay_delays_ms: str = Field(
@@ -46,6 +49,28 @@ class P3Settings(BaseSettings):
         default=250, alias="P3_REPLAY_SNAPSHOT_TOLERANCE_MS"
     )
     replay_batch_size: int = Field(default=200, alias="P3_REPLAY_BATCH_SIZE")
+
+    # DRY policy: one independent simulated attempt per opportunity window.
+    dry_enabled: bool = Field(default=True, alias="P3_DRY_ENABLED")
+    dry_latency_ms: int = Field(default=100, alias="P3_DRY_LATENCY_MS")
+    dry_start_bankroll_usdc: float = Field(default=100.0, alias="P3_DRY_START_BANKROLL_USDC")
+    dry_min_net_profit_usdc: float = Field(default=0.01, alias="P3_DRY_MIN_NET_PROFIT_USDC")
+    dry_min_net_roi: float = Field(default=0.0025, alias="P3_DRY_MIN_NET_ROI")
+
+    # Research promotion gates. They only report readiness; they never enable execution.
+    readiness_min_windows: int = Field(default=100, alias="P3_READINESS_MIN_WINDOWS")
+    readiness_min_pair_completion: float = Field(
+        default=0.97, alias="P3_READINESS_MIN_PAIR_COMPLETION"
+    )
+    readiness_min_pair_wilson_lower: float = Field(
+        default=0.90, alias="P3_READINESS_MIN_PAIR_WILSON_LOWER"
+    )
+    readiness_max_one_leg_rate: float = Field(
+        default=0.03, alias="P3_READINESS_MAX_ONE_LEG_RATE"
+    )
+    readiness_max_drawdown_usdc: float = Field(
+        default=5.0, alias="P3_READINESS_MAX_DRAWDOWN_USDC"
+    )
 
     web_enabled: bool = Field(default=True, alias="P3_WEB_ENABLED")
     web_host: str = Field(default="127.0.0.1", alias="P3_WEB_HOST")
@@ -77,11 +102,27 @@ class P3Settings(BaseSettings):
             raise ValueError("minimum profit/ROI cannot be negative")
         if self.execution_buffer_per_share < 0:
             raise ValueError("execution buffer cannot be negative")
-        if self.max_quantity_shares <= 0:
-            raise ValueError("max quantity must be positive")
+        if self.max_quantity_shares <= 0 or self.max_capital_per_cycle_usdc <= 0:
+            raise ValueError("quantity and capital limits must be positive")
+        if self.dry_latency_ms not in self.replay_delays():
+            raise ValueError("P3_DRY_LATENCY_MS must exist in P3_REPLAY_DELAYS_MS")
+        if self.dry_start_bankroll_usdc <= 0:
+            raise ValueError("dry bankroll must be positive")
+        if self.dry_min_net_profit_usdc < 0 or self.dry_min_net_roi < 0:
+            raise ValueError("dry thresholds cannot be negative")
+        if self.readiness_min_windows < 1:
+            raise ValueError("readiness_min_windows must be positive")
+        for value in (
+            self.readiness_min_pair_completion,
+            self.readiness_min_pair_wilson_lower,
+            self.readiness_max_one_leg_rate,
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("readiness rates must be in [0,1]")
+        if self.readiness_max_drawdown_usdc < 0:
+            raise ValueError("readiness drawdown cannot be negative")
         if not 1 <= self.web_port <= 65535:
             raise ValueError("invalid web port")
-        self.replay_delays()
 
     def ensure_directories(self) -> None:
         Path(self.p3_db_path).parent.mkdir(parents=True, exist_ok=True)
