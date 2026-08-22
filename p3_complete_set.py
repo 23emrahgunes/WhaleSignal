@@ -1,6 +1,6 @@
 """Model-free complete-set structural arbitrage math.
 
-This module never predicts direction.  It evaluates equal-share UP/DOWN
+This module never predicts direction. It evaluates equal-share UP/DOWN
 complete-set parity after full-depth VWAP, dynamic fee schedules and an explicit
 execution-risk buffer.
 """
@@ -27,7 +27,6 @@ class BookPair:
     down_book_id: int
     up: OrderBookSnapshot
     down: OrderBookSnapshot
-
 
 
 def _consume_shares(
@@ -223,6 +222,17 @@ def evaluate_split_sell_quantity(
     )
 
 
+def _within_cap(
+    value: Optional[StructuralOpportunity],
+    max_capital_usdc: Optional[float],
+) -> bool:
+    if value is None:
+        return False
+    if max_capital_usdc is None:
+        return True
+    return float(value.capital_usdc) <= float(max_capital_usdc) + 1e-9
+
+
 def best_buy_merge(
     pair: BookPair,
     *,
@@ -231,6 +241,7 @@ def best_buy_merge(
     detected_ts_ms: int,
     max_quantity_shares: float,
     execution_buffer_per_share: float = 0.0,
+    max_capital_usdc: Optional[float] = None,
 ) -> Optional[StructuralOpportunity]:
     candidates = _breakpoints(pair.up.asks, pair.down.asks, max_quantity_shares)
     values = [
@@ -244,7 +255,7 @@ def best_buy_merge(
         )
         for q in candidates
     ]
-    feasible = [value for value in values if value is not None]
+    feasible = [value for value in values if _within_cap(value, max_capital_usdc)]
     return max(feasible, key=lambda value: value.net_profit_usdc, default=None)
 
 
@@ -256,6 +267,7 @@ def best_split_sell(
     detected_ts_ms: int,
     max_quantity_shares: float,
     execution_buffer_per_share: float = 0.0,
+    max_capital_usdc: Optional[float] = None,
 ) -> Optional[StructuralOpportunity]:
     candidates = _breakpoints(pair.up.bids, pair.down.bids, max_quantity_shares)
     values = [
@@ -269,5 +281,5 @@ def best_split_sell(
         )
         for q in candidates
     ]
-    feasible = [value for value in values if value is not None]
+    feasible = [value for value in values if _within_cap(value, max_capital_usdc)]
     return max(feasible, key=lambda value: value.net_profit_usdc, default=None)
