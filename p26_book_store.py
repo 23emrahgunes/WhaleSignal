@@ -1,4 +1,12 @@
-"""Persistent full-depth Polymarket book snapshots for P2.6 research replay."""
+"""Persistent full-depth Polymarket book snapshots for P2.6 research replay.
+
+`source_ts_ms` is the exchange/book-change timestamp. `recv_ts_ms` is the most
+recent local observation time for that exact state. If a reconnect returns an
+identical unchanged snapshot, the existing row is not duplicated; its recv_ts_ms
+is advanced so downstream consumers can prove the state was observed in the
+current live socket session without pretending the exchange source timestamp was
+new.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -79,20 +87,26 @@ class BookSnapshotStore:
             separators=(",", ":"),
         )
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        observed_ms = int(snapshot.ts_ms if recv_ts_ms is None else recv_ts_ms)
         before = self.conn.total_changes
         self.conn.execute(
             """
-            INSERT OR IGNORE INTO p26_clob_books(
+            INSERT INTO p26_clob_books(
                 condition_id,combo_key,side,token_id,recv_ts_ms,source_ts_ms,
                 sequence,bids_json,asks_json,payload_sha256,schema_version,inserted_at_ms
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(token_id,source_ts_ms,payload_sha256) DO UPDATE SET
+                recv_ts_ms=MAX(p26_clob_books.recv_ts_ms,excluded.recv_ts_ms),
+                condition_id=excluded.condition_id,
+                combo_key=excluded.combo_key,
+                side=excluded.side
             """,
             (
                 condition_id,
                 combo_key,
                 side,
                 snapshot.token_id,
-                int(snapshot.ts_ms if recv_ts_ms is None else recv_ts_ms),
+                observed_ms,
                 int(snapshot.ts_ms),
                 snapshot.sequence,
                 bids,
@@ -132,38 +146,6 @@ class BookSnapshotStore:
             (condition_id, side.upper(), int(start_ts_ms), int(end_ts_ms)),
         ).fetchall()
         return [self._decode(row) for row in rows]
-
-    def latest(
-        self,
-        condition_id: str,
-        side: str,
-        *,
-        at_or_before_ms: int,
-    ) -> OrderBookSnapshot | None:
-        row = self.conn.execute(
-            """
-            SELECT * FROM p26_clob_books
-            WHERE condition_id=? AND side=? AND source_ts_ms<=?
-            ORDER BY source_ts_ms DESC,id DESC LIMIT 1
-            """,
-            (condition_id, side.upper(), int(at_or_before_ms)),
-        ).fetchone()
-        return self._decode(row) if row is not None else None
-
-    def prune(self, *, before_ts_ms: int, batch_size: int = 10_000) -> int:
-        rows = self.conn.execute(
-            "SELECT id FROM p26_clob_books WHERE source_ts_ms<? ORDER BY id LIMIT ?",
-            (int(before_ts_ms), int(batch_size)),
-        ).fetchall()
-        if not rows:
-            return 0
-        ids = [int(row["id"]) for row in rows]
-        placeholders = ",".join("?" for _ in ids)
-        self.conn.execute(
-            f"DELETE FROM p26_clob_books WHERE id IN ({placeholders})", ids
-        )
-        self.conn.commit()
-        return len(ids)
 
     def latest(
         self,
