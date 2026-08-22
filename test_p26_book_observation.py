@@ -19,7 +19,9 @@ def test_identical_reconnect_snapshot_refreshes_recv_without_duplicate(tmp_path)
             snapshot=snapshot,
             recv_ts_ms=1_100,
         )
-        assert store.insert(
+        # Dedup contract remains False, but the same state is freshly observed in
+        # the new socket session and therefore advances recv_ts_ms in-place.
+        assert not store.insert(
             condition_id="cond",
             combo_key="BTC:5m",
             side="UP",
