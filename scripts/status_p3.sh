@@ -10,6 +10,7 @@ echo "=== P3 STATUS ==="
 echo "p3_service=$STATE"
 echo "p3_health_http=$HTTP"
 "$PY" - <<'PY'
+import json
 from pathlib import Path
 from p3_config import get_p3_settings
 from p3_schema import connect_p3, ensure_p3_schema, integrity_check
@@ -21,6 +22,19 @@ print("p3_database=", p.resolve())
 print("integrity=", integrity_check(conn))
 for table in ("p3_opportunities","p3_windows","p3_replays","p3_health_events"):
     print(f"{table}=", conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+row=conn.execute("SELECT value FROM p3_meta WHERE key='latest_scan_stats_json'").fetchone()
+if row is not None:
+    try:
+        scan=json.loads(str(row[0]))
+    except Exception:
+        scan={}
+    keys=(
+        "conditions","valid_pairs","missing_book","stale_book","source_skew",
+        "transport_stale","session_incomplete","high_source_skew","missing_fee",
+        "positive_buy_merge","positive_split_sell","inserted","windows_closed",
+    )
+    print("scanner=", {key: scan.get(key,0) for key in keys})
+    print("book_transport=", scan.get("book_transport") or {})
 for row in conn.execute("SELECT strategy,COUNT(*),MAX(net_profit_usdc) FROM p3_opportunities GROUP BY strategy ORDER BY strategy"):
     print("strategy=", row[0], "opportunities=", row[1], "peak_net_profit=", row[2])
 print("safety=", {"mode":"SHADOW_PAPER_ONLY","execution":False,"private_key":False,"signing":False,"orders":False})

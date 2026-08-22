@@ -1,16 +1,22 @@
 """P3 structural complete-set scanner and opportunity lifetime tracker.
 
-The scanner is model-free.  It consumes already-persisted public P2.6 CLOB books
-and fee schedules, computes BUY+MERGE and SPLIT+SELL parity, persists only
-fee/depth/latency-valid positive opportunities, and maintains contiguous lifetime
-windows.  No order submission exists.
+The scanner is model-free. It consumes persisted public P2.6 CLOB books and fee
+schedules, computes BUY+MERGE and SPLIT+SELL parity, persists only positive
+fee/depth-valid opportunities, and maintains contiguous lifetime windows.
+
+Freshness semantics are transport-aware: an unchanged resting quote can have an old
+exchange/source timestamp while still being the current executable book. When the
+P2.6 collector heartbeat is available, P3 therefore requires a live recent socket
+heartbeat plus an initial snapshot for both outcomes in the *current socket session*.
+The old source-age/skew gates remain only as a backward-compatible fallback when no
+collector heartbeat exists. No order submission exists.
 """
 from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Optional
 
 from p26_execution import OrderBookSnapshot
 from p26_fee import FeeSchedule
@@ -21,6 +27,10 @@ from p3_recorder import P3Recorder
 from p3_schema import open_p26_read_only
 
 
+BOOK_HEALTH_META_KEY = "book_collector_health_json"
+LATEST_SCAN_META_KEY = "latest_scan_stats_json"
+
+
 @dataclass(frozen=True)
 class ScanStats:
     conditions: int = 0
@@ -28,6 +38,9 @@ class ScanStats:
     missing_book: int = 0
     stale_book: int = 0
     source_skew: int = 0
+    transport_stale: int = 0
+    session_incomplete: int = 0
+    high_source_skew: int = 0
     missing_fee: int = 0
     positive_buy_merge: int = 0
     positive_split_sell: int = 0
@@ -78,6 +91,21 @@ class StructuralArbScanner:
             (condition_id, side),
         ).fetchone()
 
+    def _book_health(self) -> Optional[dict[str, Any]]:
+        try:
+            row = self.p26.execute(
+                "SELECT value FROM p26_meta WHERE key=?", (BOOK_HEALTH_META_KEY,)
+            ).fetchone()
+        except Exception:  # noqa: BLE001
+            return None
+        if row is None:
+            return None
+        try:
+            value = json.loads(str(row["value"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
+
     def _fee(self, condition_id: str, token_id: str) -> Optional[FeeSchedule]:
         row = self.p26.execute(
             """
@@ -100,18 +128,50 @@ class StructuralArbScanner:
             formula_version=str(row["formula_version"]),
         )
 
-    def _pair(self, item: dict, now_ms: int) -> tuple[Optional[BookPair], str]:
+    def _pair(
+        self,
+        item: dict,
+        now_ms: int,
+        health: Optional[dict[str, Any]],
+    ) -> tuple[Optional[BookPair], str]:
         condition_id = str(item["condition_id"])
         up_row = self._latest_book(condition_id, "UP")
         down_row = self._latest_book(condition_id, "DOWN")
         if up_row is None or down_row is None:
             return None, "MISSING_BOOK"
-        up_ts = int(up_row["source_ts_ms"])
-        down_ts = int(down_row["source_ts_ms"])
-        if now_ms - up_ts > self.settings.max_book_age_ms or now_ms - down_ts > self.settings.max_book_age_ms:
-            return None, "STALE_BOOK"
-        if abs(up_ts - down_ts) > self.settings.max_source_skew_ms:
-            return None, "SOURCE_SKEW"
+
+        up_source_ts = int(up_row["source_ts_ms"])
+        down_source_ts = int(down_row["source_ts_ms"])
+        if health is not None:
+            heartbeat = int(health.get("heartbeat_ts_ms") or 0)
+            max_heartbeat_age = max(5_000, int(self.settings.max_book_age_ms))
+            if (
+                not bool(health.get("connected"))
+                or heartbeat <= 0
+                or now_ms - heartbeat > max_heartbeat_age
+            ):
+                return None, "TRANSPORT_STALE"
+            session_started = int(health.get("session_started_ms") or 0)
+            if session_started <= 0:
+                return None, "SESSION_INCOMPLETE"
+            # `recv_ts_ms` proves both outcome books were observed after the current
+            # subscription began. Their exchange source timestamps may legitimately
+            # be old when resting quotes have not changed.
+            if (
+                int(up_row["recv_ts_ms"]) < session_started
+                or int(down_row["recv_ts_ms"]) < session_started
+            ):
+                return None, "SESSION_INCOMPLETE"
+        else:
+            # Legacy fallback for tests/older collectors without heartbeat metadata.
+            if (
+                now_ms - up_source_ts > self.settings.max_book_age_ms
+                or now_ms - down_source_ts > self.settings.max_book_age_ms
+            ):
+                return None, "STALE_BOOK"
+            if abs(up_source_ts - down_source_ts) > self.settings.max_source_skew_ms:
+                return None, "SOURCE_SKEW"
+
         pair = BookPair(
             condition_id=condition_id,
             combo_key=str(item["combo_key"]),
@@ -130,14 +190,43 @@ class StructuralArbScanner:
             and opp.net_roi > self.settings.min_net_roi
         )
 
+    def _persist_scan_stats(
+        self,
+        stats: ScanStats,
+        *,
+        now_ms: int,
+        health: Optional[dict[str, Any]],
+    ) -> None:
+        payload = {
+            **asdict(stats),
+            "scan_ts_ms": int(now_ms),
+            "book_transport": health or {},
+        }
+        self.recorder.conn.execute(
+            """
+            INSERT INTO p3_meta(key,value,updated_at_ms) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at_ms=excluded.updated_at_ms
+            """,
+            (
+                LATEST_SCAN_META_KEY,
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                int(now_ms),
+            ),
+        )
+        self.recorder.conn.commit()
+
     def scan_once(self, *, now_ms: Optional[int] = None) -> ScanStats:
         now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        health = self._book_health()
         counters = {
             "conditions": 0,
             "valid_pairs": 0,
             "missing_book": 0,
             "stale_book": 0,
             "source_skew": 0,
+            "transport_stale": 0,
+            "session_incomplete": 0,
+            "high_source_skew": 0,
             "missing_fee": 0,
             "positive_buy_merge": 0,
             "positive_split_sell": 0,
@@ -147,11 +236,21 @@ class StructuralArbScanner:
         active_keys: set[tuple[str, str]] = set()
         for item in self._active_conditions():
             counters["conditions"] += 1
-            pair, reason = self._pair(item, now)
+            pair, reason = self._pair(item, now, health)
             if pair is None:
-                counters[reason.lower()] += 1
+                reason_key = {
+                    "MISSING_BOOK": "missing_book",
+                    "STALE_BOOK": "stale_book",
+                    "SOURCE_SKEW": "source_skew",
+                    "TRANSPORT_STALE": "transport_stale",
+                    "SESSION_INCOMPLETE": "session_incomplete",
+                }[reason]
+                counters[reason_key] += 1
                 continue
             counters["valid_pairs"] += 1
+            if abs(int(pair.up.ts_ms) - int(pair.down.ts_ms)) > self.settings.max_source_skew_ms:
+                counters["high_source_skew"] += 1
+
             up_fee = self._fee(pair.condition_id, pair.up.token_id)
             down_fee = self._fee(pair.condition_id, pair.down.token_id)
             if up_fee is None or down_fee is None:
@@ -195,7 +294,9 @@ class StructuralArbScanner:
             now_ms=now,
             grace_ms=self.settings.window_grace_ms,
         )
-        return ScanStats(**counters)
+        stats = ScanStats(**counters)
+        self._persist_scan_stats(stats, now_ms=now, health=health)
+        return stats
 
     def close(self) -> None:
         self.p26.close()
