@@ -70,6 +70,7 @@ class BookSnapshotStore:
         snapshot: OrderBookSnapshot,
         recv_ts_ms: int | None = None,
     ) -> bool:
+        """Persist/observe one state and return True only when a new row is created."""
         side = side.strip().upper()
         if side not in {"UP", "DOWN"}:
             raise ValueError("side must be UP or DOWN")
@@ -88,7 +89,14 @@ class BookSnapshotStore:
         )
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         observed_ms = int(snapshot.ts_ms if recv_ts_ms is None else recv_ts_ms)
-        before = self.conn.total_changes
+        existed = self.conn.execute(
+            """
+            SELECT 1 FROM p26_clob_books
+            WHERE token_id=? AND source_ts_ms=? AND payload_sha256=?
+            LIMIT 1
+            """,
+            (snapshot.token_id, int(snapshot.ts_ms), digest),
+        ).fetchone() is not None
         self.conn.execute(
             """
             INSERT INTO p26_clob_books(
@@ -117,7 +125,7 @@ class BookSnapshotStore:
             ),
         )
         self.conn.commit()
-        return self.conn.total_changes > before
+        return not existed
 
     @staticmethod
     def _decode(row: sqlite3.Row) -> OrderBookSnapshot:
