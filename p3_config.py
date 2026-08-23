@@ -51,8 +51,14 @@ class P3Settings(BaseSettings):
     replay_batch_size: int = Field(default=200, alias="P3_REPLAY_BATCH_SIZE")
 
     # DRY policy: one independent simulated attempt per opportunity window.
+    # Entry confirmation rejects the toxic first-print region: an opportunity must
+    # still exist at/after opened_ts + confirmation before it becomes a DRY attempt.
     dry_enabled: bool = Field(default=True, alias="P3_DRY_ENABLED")
     dry_latency_ms: int = Field(default=100, alias="P3_DRY_LATENCY_MS")
+    dry_entry_confirm_ms: int = Field(default=250, alias="P3_DRY_ENTRY_CONFIRM_MS")
+    dry_survival_delays_ms: str = Field(
+        default="0,50,100,200,250,500", alias="P3_DRY_SURVIVAL_DELAYS_MS"
+    )
     dry_start_bankroll_usdc: float = Field(default=100.0, alias="P3_DRY_START_BANKROLL_USDC")
     dry_min_net_profit_usdc: float = Field(default=0.01, alias="P3_DRY_MIN_NET_PROFIT_USDC")
     dry_min_net_roi: float = Field(default=0.0025, alias="P3_DRY_MIN_NET_ROI")
@@ -77,19 +83,29 @@ class P3Settings(BaseSettings):
     web_port: int = Field(default=8093, alias="P3_WEB_PORT")
     web_refresh_ms: int = Field(default=3000, alias="P3_WEB_REFRESH_MS")
 
-    def replay_delays(self) -> tuple[int, ...]:
+    @staticmethod
+    def _parse_nonnegative_ms(raw: str, *, name: str) -> tuple[int, ...]:
         values: list[int] = []
-        for part in str(self.replay_delays_ms).split(","):
+        for part in str(raw).split(","):
             part = part.strip()
             if not part:
                 continue
             value = int(part)
             if value < 0:
-                raise ValueError("replay delays cannot be negative")
+                raise ValueError(f"{name} cannot contain negative values")
             values.append(value)
         if not values:
-            raise ValueError("at least one replay delay is required")
+            raise ValueError(f"{name} must contain at least one value")
         return tuple(sorted(set(values)))
+
+    def replay_delays(self) -> tuple[int, ...]:
+        return self._parse_nonnegative_ms(self.replay_delays_ms, name="replay delays")
+
+    def dry_survival_delays(self) -> tuple[int, ...]:
+        return self._parse_nonnegative_ms(
+            self.dry_survival_delays_ms,
+            name="dry survival delays",
+        )
 
     def validate_research_safety(self) -> None:
         if Path(self.p26_db_path).resolve() == Path(self.p3_db_path).resolve():
@@ -106,6 +122,9 @@ class P3Settings(BaseSettings):
             raise ValueError("quantity and capital limits must be positive")
         if self.dry_latency_ms not in self.replay_delays():
             raise ValueError("P3_DRY_LATENCY_MS must exist in P3_REPLAY_DELAYS_MS")
+        if self.dry_entry_confirm_ms < 0:
+            raise ValueError("P3_DRY_ENTRY_CONFIRM_MS cannot be negative")
+        self.dry_survival_delays()
         if self.dry_start_bankroll_usdc <= 0:
             raise ValueError("dry bankroll must be positive")
         if self.dry_min_net_profit_usdc < 0 or self.dry_min_net_roi < 0:
