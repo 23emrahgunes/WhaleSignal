@@ -14,12 +14,11 @@ import time
 from p3_config import P3Settings, get_p3_settings
 from p3_entry_replay import P3EntryReplayEngine
 from p3_live_control import run_live_control
-from p3_live_executor import P3LiveExecutor
+from p3_live_executor_resolved import P3LiveExecutor
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
 from p3_web import run_web
-
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
 
@@ -49,7 +48,6 @@ def _run_research_backlog_once(settings: P3Settings) -> dict:
         )
     finally:
         generic.close()
-
     entry = P3EntryReplayEngine(settings)
     try:
         entry_result = entry.process_ready()
@@ -117,7 +115,6 @@ async def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
-
     live_state = LiveState(
         live_feature_enabled=settings.live_feature_enabled,
         auto_execute_enabled=settings.live_auto_execute_enabled,
@@ -135,7 +132,6 @@ async def run() -> None:
         settings.live_control_host,
         settings.live_control_port,
     )
-
     stop = asyncio.Event()
     install_handlers(asyncio.get_running_loop(), stop)
     tasks: list[asyncio.Task] = []
@@ -144,17 +140,15 @@ async def run() -> None:
     if settings.web_enabled:
         tasks.append(asyncio.create_task(run_web(settings, stop, live_state=live_state)))
         await asyncio.sleep(0.10)
-
     if settings.live_control_enabled:
         tasks.append(asyncio.create_task(run_live_control(settings, live_state, stop)))
-
     if settings.scanner_enabled:
         scanner = StructuralArbScanner(settings)
         tasks.append(asyncio.create_task(scanner_loop(scanner, settings.scan_interval_ms, stop)))
         tasks.append(asyncio.create_task(research_replay_loop(settings, stop)))
 
-    # Executor loop is safe to run without optional SDK dependencies because clients
-    # are imported lazily only after LIVE is explicitly armed and auto-execution true.
+    # Safe to run without optional SDK deps because gateway imports happen lazily only
+    # after LIVE is explicitly armed and auto-execution is enabled.
     tasks.append(asyncio.create_task(live_executor_loop(settings, live_state, stop)))
 
     if not tasks:
