@@ -31,6 +31,7 @@ done
 import json
 from pathlib import Path
 from p3_config import get_p3_settings
+from p3_live_ledger import ensure_live_ledger_schema
 from p3_schema import connect_p3, ensure_p3_schema, integrity_check
 
 s=get_p3_settings(); s.validate_research_safety()
@@ -39,10 +40,21 @@ assert health['ok'] is True
 assert health['mode'] == 'DRY', health
 assert health['execution_enabled'] is False, health
 assert health['order_submission_enabled'] is False, health
-conn=connect_p3(s.p3_db_path); ensure_p3_schema(conn)
+assert s.live_target_quantity_shares > 0
+assert s.live_target_quantity_shares <= s.live_max_quantity_shares
+assert s.live_max_capital_per_cycle_usdc >= 0  # compatibility only; never sizing input
+assert s.live_max_single_leg_notional_usdc > 0
+assert s.live_emergency_unwind_loss_usdc >= s.live_max_projected_unwind_loss_usdc
+assert s.live_rolling_24h_gross_loss_limit_usdc > 0
+conn=connect_p3(s.p3_db_path); ensure_p3_schema(conn); ensure_live_ledger_schema(conn)
 assert integrity_check(conn)=='ok'
+assert conn.execute("SELECT name FROM sqlite_master WHERE name='p3_live_ledger'").fetchone()
 assert s.p26_db_path != s.p3_db_path
-print(f"P3_AWS_SMOKE_PASS starts=DRY p3=200 live_feature={s.live_feature_enabled} live_auto={s.live_auto_execute_enabled}")
+print(
+    "P3_AWS_SMOKE_PASS starts=DRY p3=200 "
+    f"sizing=equal_shares target={s.live_target_quantity_shares} "
+    f"live_feature={s.live_feature_enabled} live_auto={s.live_auto_execute_enabled}"
+)
 conn.close()
 PY
 

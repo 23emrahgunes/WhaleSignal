@@ -1,8 +1,8 @@
 """Fail-closed preflight for P3 LIVE arming.
 
-The probe never posts an order. It checks jurisdiction, secret/dependency presence,
-authenticated CLOB access, collateral balance/allowance and STRICT DRY readiness.
-All returned data is sanitized for UI/logging.
+The connectivity probe never posts an order. Full arming checks jurisdiction,
+credentials, authenticated CLOB access, collateral/allowance, STRICT readiness and
+the configured equal-share/single-leg risk envelope.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _geoblock(settings: P3Settings, *, opener: Callable | None = None) -> dict[s
     open_fn = opener or urllib.request.urlopen
     req = urllib.request.Request(
         settings.live_geoblock_url,
-        headers={"User-Agent": "WhaleSignal-P3-LivePreflight/1.0"},
+        headers={"User-Agent": "WhaleSignal-P3-LivePreflight/2.0"},
     )
     with open_fn(req, timeout=5.0) as response:
         payload = json.loads(response.read().decode("utf-8"))
@@ -44,7 +44,7 @@ def _allowance_ready(payload: Any) -> bool | None:
     allowances = payload.get("allowances")
     if not isinstance(allowances, dict) or not allowances:
         return None
-    positives = []
+    positives: list[bool] = []
     for value in allowances.values():
         try:
             positives.append(float(value) > 0)
@@ -62,12 +62,6 @@ def run_live_preflight(
     secret_reader: Callable[[], Any] = read_live_secrets,
     dry_summary_builder: Callable[[Any, P3Settings], dict[str, Any]] = build_dry_summary,
 ) -> dict[str, Any]:
-    """Return a sanitized preflight payload.
-
-    ``for_arming=False`` is a no-order connectivity/authentication test. Full arming
-    additionally requires feature enablement, sufficient collateral and, by default,
-    ``DRY_VALIDATED`` research readiness.
-    """
     checked_at = int(time.time() * 1000)
     reasons: list[str] = []
     warnings: list[str] = []
@@ -154,6 +148,20 @@ def run_live_preflight(
         if for_arming:
             reasons.append("STRICT_DRY_CHECK_FAILED")
 
+    checks["risk_config"] = {
+        "sizing_mode": "EQUAL_SHARES_FRESH_DEPTH",
+        "target_quantity_shares": float(settings.live_target_quantity_shares),
+        "max_quantity_shares": float(settings.live_max_quantity_shares),
+        "legacy_capital_scaling_enabled": False,
+        "max_single_leg_notional_usdc": float(settings.live_max_single_leg_notional_usdc),
+        "max_projected_unwind_loss_usdc": float(settings.live_max_projected_unwind_loss_usdc),
+        "emergency_unwind_loss_usdc": float(settings.live_emergency_unwind_loss_usdc),
+        "halt_after_one_leg": bool(settings.live_halt_after_one_leg),
+        "rolling_24h_gross_loss_limit_usdc": float(
+            settings.live_rolling_24h_gross_loss_limit_usdc
+        ),
+    }
+
     if for_arming:
         if not settings.live_feature_enabled:
             reasons.append("LIVE_FEATURE_DISABLED")
@@ -163,13 +171,13 @@ def run_live_preflight(
             reasons.append("STRICT_DRY_NOT_VALIDATED")
         if collateral_usdc is None:
             reasons.append("COLLATERAL_BALANCE_UNKNOWN")
-        elif collateral_usdc + 1e-9 < settings.live_max_capital_per_cycle_usdc:
+        elif collateral_usdc + 1e-9 < float(settings.live_min_collateral_to_arm_usdc):
             reasons.append("INSUFFICIENT_COLLATERAL")
         if allowance_ready is False:
             reasons.append("TRADING_ALLOWANCE_NOT_READY")
 
-    # Connectivity-only can pass with zero collateral. It proves auth/geoblock only and
-    # intentionally never submits an order. Full arm is stricter and requires funding.
+    # Connectivity-only may pass with zero collateral. It proves geo/auth only and
+    # intentionally never submits an order.
     hard_probe_reasons = {
         "JURISDICTION_BLOCKED",
         "GEOBLOCK_CHECK_FAILED",
@@ -189,10 +197,21 @@ def run_live_preflight(
         "checks": checks,
         "risk": {
             "buy_merge_only": bool(settings.live_buy_merge_only),
-            "max_capital_per_cycle_usdc": float(settings.live_max_capital_per_cycle_usdc),
+            "sizing_mode": "EQUAL_SHARES_FRESH_DEPTH",
+            "target_quantity_shares": float(settings.live_target_quantity_shares),
             "max_quantity_shares": float(settings.live_max_quantity_shares),
             "min_net_profit_usdc": float(settings.live_min_net_profit_usdc),
             "min_net_roi": float(settings.live_min_net_roi),
+            "max_single_leg_notional_usdc": float(settings.live_max_single_leg_notional_usdc),
+            "max_projected_unwind_loss_usdc": float(
+                settings.live_max_projected_unwind_loss_usdc
+            ),
+            "min_edge_to_unwind_loss_ratio": float(
+                settings.live_min_edge_to_unwind_loss_ratio
+            ),
+            "rolling_24h_gross_loss_limit_usdc": float(
+                settings.live_rolling_24h_gross_loss_limit_usdc
+            ),
             "require_dry_validated": bool(settings.live_require_dry_validated),
             "auto_execute_enabled": bool(settings.live_auto_execute_enabled),
         },

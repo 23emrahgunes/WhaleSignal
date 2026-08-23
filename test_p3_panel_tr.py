@@ -34,8 +34,9 @@ def test_p3_8093_has_authenticated_csrf_protected_live_routes() -> None:
 def test_p3_daemon_does_not_start_separate_8094_control_server() -> None:
     daemon = Path("p3_daemon.py").read_text(encoding="utf-8")
     assert "run_live_control" not in daemon
-    assert "authenticated_web_8093" not in daemon  # log wording stays simple
-    assert "control=web8093" in daemon
+    assert "p3_live_control" not in daemon
+    assert "P3LiveExecutorV2" in daemon
+    assert "live_sizing=equal_shares" in daemon
 
 
 def test_health_is_minimal_but_operational_api_is_protected_by_middleware() -> None:

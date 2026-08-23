@@ -303,7 +303,10 @@ def test_p3_static_safety_and_shell_syntax():
     assert "P3_LIVE_AUTO_EXECUTE_ENABLED" in config
     assert "P3_WEB_AUTH_REQUIRED" in config
     assert "P3 WEB authentication is required whenever LIVE feature is enabled" in config
-    assert "P3 LIVE v1 only supports BUY+MERGE" in config
+    assert "P3 LIVE v2 only supports BUY+MERGE" in config
+    assert "P3_LIVE_TARGET_QUANTITY_SHARES" in config
+    assert "P3_LIVE_MAX_SINGLE_LEG_NOTIONAL_USDC" in config
+    assert "P3_LIVE_ROLLING_24H_GROSS_LOSS_LIMIT_USDC" in config
 
     operator_web = Path("p3_web.py").read_text(encoding="utf-8")
     assert 'web.post("/api/live/arm"' in operator_web
@@ -315,7 +318,14 @@ def test_p3_static_safety_and_shell_syntax():
 
     daemon = Path("p3_daemon.py").read_text(encoding="utf-8")
     assert "run_live_control" not in daemon
-    assert "control=web8093" in daemon
+    assert "P3LiveExecutorV2" in daemon
+    assert "live_sizing=equal_shares" in daemon
+
+    live_v2 = Path("p3_live_executor_v2.py").read_text(encoding="utf-8")
+    assert "select_equal_share_quantity" in live_v2
+    assert "SKIPPED_PROJECTED_UNWIND_LOSS" in live_v2
+    assert "HALTED_RESIDUAL_EXPOSURE" in live_v2
+    assert "ONE_LEG_RISK_EVENT_REVIEW_REQUIRED" in live_v2
 
     deploy = Path("deploy_p3.sh").read_text(encoding="utf-8")
     assert "systemctl stop direction-engine-p25" not in deploy

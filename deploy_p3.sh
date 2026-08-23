@@ -6,8 +6,9 @@ usage() {
 Usage: ./deploy_p3.sh [--no-pull] [--skip-tests]
 
 Deploy P3 structural arbitrage. The process always starts DRY. Optional guarded
-LIVE support is installed only when P3_LIVE_FEATURE_ENABLED=true; LIVE also requires
-the authenticated 8093 operator dashboard and successful preflight before execution.
+LIVE v2 support is installed only when P3_LIVE_FEATURE_ENABLED=true; LIVE also
+requires authenticated 8093, preflight, equal-share depth/edge gates and single-leg
+risk gates before any real order can be submitted.
 EOF
 }
 
@@ -79,6 +80,9 @@ fi
 
 "$PY" - <<'PY'
 from p3_config import get_p3_settings
+from p3_live_ledger import ensure_live_ledger_schema
+from p3_schema import connect_p3, ensure_p3_schema
+
 s=get_p3_settings(); s.validate_research_safety(); s.ensure_directories()
 print("p26_db=", s.p26_db_path)
 print("p3_db=", s.p3_db_path)
@@ -88,9 +92,20 @@ print("web_cookie_secure=", s.web_cookie_secure)
 print("live_feature=", s.live_feature_enabled)
 print("live_auto_execute=", s.live_auto_execute_enabled)
 print("live_control=authenticated_web_8093")
+print("live_sizing=EQUAL_SHARES_FRESH_DEPTH")
+print("live_target_shares_each_leg=", s.live_target_quantity_shares)
+print("live_hard_max_shares_each_leg=", s.live_max_quantity_shares)
+print("legacy_dollar_scaler_enabled=", False)
+print("max_single_leg_notional_usdc=", s.live_max_single_leg_notional_usdc)
+print("max_projected_unwind_loss_usdc=", s.live_max_projected_unwind_loss_usdc)
+print("emergency_unwind_loss_usdc=", s.live_emergency_unwind_loss_usdc)
+print("halt_after_one_leg=", s.live_halt_after_one_leg)
+print("rolling_24h_gross_loss_limit_usdc=", s.live_rolling_24h_gross_loss_limit_usdc)
 assert s.p26_db_path != s.p3_db_path
 if s.live_feature_enabled:
     assert s.web_auth_required
+    assert s.live_target_quantity_shares <= s.live_max_quantity_shares
+conn=connect_p3(s.p3_db_path); ensure_p3_schema(conn); ensure_live_ledger_schema(conn); conn.close()
 PY
 
 "$PY" -m py_compile p3_*.py
@@ -108,7 +123,7 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 cat > "$TMP" <<EOF
 [Unit]
-Description=Direction Engine P3 Structural Arbitrage (DRY default / guarded LIVE)
+Description=Direction Engine P3 Structural Arbitrage (DRY default / guarded LIVE v2)
 After=network-online.target direction-engine-p26-book.service
 Wants=network-online.target direction-engine-p26-book.service
 
@@ -145,4 +160,4 @@ $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail 
 bash scripts/smoke_p3.sh
 p25_alive || fail "P2.5 process stopped during P3 deploy"
 
-echo "P3 ARBITRAGE DEPLOY PASS | starts=DRY | control=authenticated_8093 | live_feature=$LIVE_FEATURE | p25=process_alive"
+echo "P3 ARBITRAGE DEPLOY PASS | starts=DRY | sizing=equal_shares | control=authenticated_8093 | live_feature=$LIVE_FEATURE | p25=process_alive"

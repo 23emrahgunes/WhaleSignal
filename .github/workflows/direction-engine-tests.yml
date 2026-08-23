@@ -59,10 +59,12 @@ jobs:
           from py_clob_client_v2 import (
               AssetType,
               BalanceAllowanceParams,
+              BookParams,
               ClobClient,
               MarketOrderArgs,
               OrderArgs,
               OrderType,
+              PartialCreateOrderOptions,
               PostOrdersV2Args,
               Side,
           )
@@ -73,7 +75,10 @@ jobs:
               "get_balance_allowance",
               "update_balance_allowance",
               "get_order_book",
+              "get_order_books",
+              "get_tick_size",
               "create_order",
+              "create_and_post_order",
               "post_orders",
               "create_and_post_market_order",
           )
@@ -81,11 +86,13 @@ jobs:
               assert hasattr(ClobClient, name), name
           assert hasattr(SecureClient, "create")
           assert hasattr(SecureClient, "merge_positions")
-          assert hasattr(OrderType, "FOK")
+          assert hasattr(OrderType, "FOK") and hasattr(OrderType, "FAK")
           assert hasattr(Side, "BUY") and hasattr(Side, "SELL")
           assert AssetType.COLLATERAL is not None and AssetType.CONDITIONAL is not None
           assert "condition_id" in inspect.signature(SecureClient.merge_positions).parameters
           assert "amount" in inspect.signature(SecureClient.merge_positions).parameters
+          assert BookParams(token_id="1").token_id == "1"
+          assert PartialCreateOrderOptions() is not None
           print("P3_LIVE_SDK_CONTRACT_PASS")
           PY
 
@@ -97,4 +104,10 @@ jobs:
           PHASE: P1
           MODEL_TRAINING_ENABLED: 'false'
           CALIBRATION_ENABLED: 'false'
-        run: pytest -q test_p3_live_guard.py test_p3_live_executor.py test_p3_panel_tr.py
+        run: >-
+          pytest -q
+          test_p3_live_guard.py
+          test_p3_live_executor.py
+          test_p3_live_equal_share_risk.py
+          test_p3_live_network_uncertainty.py
+          test_p3_panel_tr.py

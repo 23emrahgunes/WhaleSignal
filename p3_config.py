@@ -1,9 +1,8 @@
 """Configuration for P3 structural arbitrage DRY research and guarded LIVE mode.
 
-DRY remains the default. LIVE is a separately armed capability with conservative
-caps and an authenticated 8093 operator surface. Secret trading material is never
-modeled as a setting. The dashboard password is a Pydantic SecretStr so accidental
-settings dumps redact it.
+DRY remains the default. LIVE is separately armed through the authenticated 8093
+operator surface. LIVE v2 sizes UP/DOWN in equal shares and treats dollar notional
+as a derived safety metric instead of a proportional sizing input.
 """
 from __future__ import annotations
 
@@ -81,7 +80,9 @@ class P3Settings(BaseSettings):
         default=5.0, alias="P3_READINESS_MAX_DRAWDOWN_USDC"
     )
 
-    # Guarded LIVE capability. Everything is disabled by default.
+    # -------------------------------------------------------------------------
+    # Guarded LIVE v2. Disabled by default.
+    # -------------------------------------------------------------------------
     live_feature_enabled: bool = Field(default=False, alias="P3_LIVE_FEATURE_ENABLED")
     live_auto_execute_enabled: bool = Field(
         default=False, alias="P3_LIVE_AUTO_EXECUTE_ENABLED"
@@ -90,16 +91,57 @@ class P3Settings(BaseSettings):
         default=True, alias="P3_LIVE_REQUIRE_DRY_VALIDATED"
     )
     live_buy_merge_only: bool = Field(default=True, alias="P3_LIVE_BUY_MERGE_ONLY")
-    live_max_capital_per_cycle_usdc: float = Field(
-        default=1.0, alias="P3_LIVE_MAX_CAPITAL_PER_CYCLE_USDC"
+
+    # Equal-share sizing. Q is selected as min(STRICT optimum, target, hard max,
+    # fresh UP depth, fresh DOWN depth). The same exact Q is submitted on both legs.
+    live_target_quantity_shares: float = Field(
+        default=5.0, alias="P3_LIVE_TARGET_QUANTITY_SHARES"
     )
     live_max_quantity_shares: float = Field(
         default=10.0, alias="P3_LIVE_MAX_QUANTITY_SHARES"
     )
+
+    # Backward-compatible knob from LIVE v1. It is intentionally NOT used for
+    # proportional scaling anymore. Keep 0 to make that explicit; nonzero legacy
+    # env values are accepted but ignored by LIVE v2 sizing.
+    live_max_capital_per_cycle_usdc: float = Field(
+        default=0.0, alias="P3_LIVE_MAX_CAPITAL_PER_CYCLE_USDC"
+    )
+
+    # LIVE edge gates are recomputed from fresh CLOB depth at the selected equal Q.
     live_min_net_profit_usdc: float = Field(
         default=0.01, alias="P3_LIVE_MIN_NET_PROFIT_USDC"
     )
     live_min_net_roi: float = Field(default=0.0025, alias="P3_LIVE_MIN_NET_ROI")
+
+    # Single-leg controls. The notional cap bounds the worst capital exposed if one
+    # FOK leg fills while its pair is killed. Before entry, BOTH possible one-leg
+    # outcomes must have full visible unwind depth and acceptable projected loss.
+    live_min_collateral_to_arm_usdc: float = Field(
+        default=5.0, alias="P3_LIVE_MIN_COLLATERAL_TO_ARM_USDC"
+    )
+    live_max_single_leg_notional_usdc: float = Field(
+        default=5.25, alias="P3_LIVE_MAX_SINGLE_LEG_NOTIONAL_USDC"
+    )
+    live_max_projected_unwind_loss_usdc: float = Field(
+        default=0.25, alias="P3_LIVE_MAX_PROJECTED_UNWIND_LOSS_USDC"
+    )
+    live_emergency_unwind_loss_usdc: float = Field(
+        default=0.50, alias="P3_LIVE_EMERGENCY_UNWIND_LOSS_USDC"
+    )
+    live_min_edge_to_unwind_loss_ratio: float = Field(
+        default=0.10, alias="P3_LIVE_MIN_EDGE_TO_UNWIND_LOSS_RATIO"
+    )
+    live_emergency_fak_enabled: bool = Field(
+        default=True, alias="P3_LIVE_EMERGENCY_FAK_ENABLED"
+    )
+    live_halt_after_one_leg: bool = Field(
+        default=True, alias="P3_LIVE_HALT_AFTER_ONE_LEG"
+    )
+    live_rolling_24h_gross_loss_limit_usdc: float = Field(
+        default=2.0, alias="P3_LIVE_ROLLING_24H_GROSS_LOSS_LIMIT_USDC"
+    )
+
     live_poll_interval_ms: int = Field(default=100, alias="P3_LIVE_POLL_INTERVAL_MS")
     live_settlement_wait_sec: float = Field(
         default=15.0, alias="P3_LIVE_SETTLEMENT_WAIT_SEC"
@@ -202,6 +244,7 @@ class P3Settings(BaseSettings):
                 raise ValueError("readiness rates must be in [0,1]")
         if self.readiness_max_drawdown_usdc < 0:
             raise ValueError("readiness drawdown cannot be negative")
+
         if not 1 <= self.web_port <= 65535:
             raise ValueError("invalid web port")
         if self.web_refresh_ms < 250:
@@ -221,24 +264,37 @@ class P3Settings(BaseSettings):
         if self.live_feature_enabled and not self.web_auth_required:
             raise ValueError("P3 WEB authentication is required whenever LIVE feature is enabled")
 
-        # LIVE safety contract. These checks are structural and run even while LIVE
-        # is disabled, so a later env change cannot silently create an unsafe config.
-        if self.live_max_capital_per_cycle_usdc <= 0 or self.live_max_quantity_shares <= 0:
-            raise ValueError("LIVE quantity/capital limits must be positive")
-        if self.live_max_capital_per_cycle_usdc > self.max_capital_per_cycle_usdc:
-            raise ValueError("LIVE capital cap cannot exceed P3 research capital cap")
+        # LIVE v2 structural safety contract.
+        if self.live_target_quantity_shares <= 0 or self.live_max_quantity_shares <= 0:
+            raise ValueError("LIVE target/max share quantities must be positive")
+        if self.live_target_quantity_shares > self.live_max_quantity_shares:
+            raise ValueError("LIVE target shares cannot exceed LIVE hard max shares")
         if self.live_max_quantity_shares > self.max_quantity_shares:
             raise ValueError("LIVE quantity cap cannot exceed P3 research quantity cap")
+        if self.live_max_capital_per_cycle_usdc < 0:
+            raise ValueError("deprecated LIVE capital knob cannot be negative")
         if self.live_min_net_profit_usdc < 0 or self.live_min_net_roi < 0:
             raise ValueError("LIVE edge thresholds cannot be negative")
+        if self.live_min_collateral_to_arm_usdc < 0:
+            raise ValueError("LIVE minimum collateral cannot be negative")
+        if self.live_max_single_leg_notional_usdc <= 0:
+            raise ValueError("LIVE single-leg notional cap must be positive")
+        if self.live_max_projected_unwind_loss_usdc < 0:
+            raise ValueError("LIVE projected unwind loss cap cannot be negative")
+        if self.live_emergency_unwind_loss_usdc < self.live_max_projected_unwind_loss_usdc:
+            raise ValueError("LIVE emergency unwind loss cap must be >= projected unwind loss cap")
+        if self.live_min_edge_to_unwind_loss_ratio < 0:
+            raise ValueError("LIVE edge/unwind-loss ratio cannot be negative")
+        if self.live_rolling_24h_gross_loss_limit_usdc <= 0:
+            raise ValueError("LIVE rolling 24h loss limit must be positive")
         if self.live_poll_interval_ms < 20:
             raise ValueError("P3_LIVE_POLL_INTERVAL_MS below 20ms is not supported")
         if self.live_settlement_wait_sec <= 0 or self.live_settlement_poll_sec <= 0:
             raise ValueError("LIVE settlement timings must be positive")
         if self.live_chain_id != 137:
-            raise ValueError("P3 LIVE v1 supports Polygon mainnet chain_id=137 only")
+            raise ValueError("P3 LIVE v2 supports Polygon mainnet chain_id=137 only")
         if not self.live_buy_merge_only:
-            raise ValueError("P3 LIVE v1 only supports BUY+MERGE; SPLIT+SELL stays disabled")
+            raise ValueError("P3 LIVE v2 only supports BUY+MERGE; SPLIT+SELL stays disabled")
         if self.live_auto_execute_enabled and not self.live_feature_enabled:
             raise ValueError("LIVE auto execution cannot be enabled while LIVE feature is disabled")
 
