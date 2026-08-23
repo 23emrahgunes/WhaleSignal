@@ -46,6 +46,7 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         return {"type": type(exc).__name__, "message": str(exc)[:200]}
 
     def fetch_pair_books(self, *, up_token_id: str, down_token_id: str) -> tuple[Any, Any]:
+        """Fetch one batch and resolve each returned book by its explicit asset_id."""
         from py_clob_client_v2 import BookParams  # type: ignore
 
         raw = self.clob.get_order_books(
@@ -53,7 +54,16 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         )
         if not isinstance(raw, (list, tuple)) or len(raw) < 2:
             raise RuntimeError("CLOB pair-book response incomplete")
-        return raw[0], raw[1]
+        by_asset: dict[str, Any] = {}
+        for book in raw:
+            asset_id = str(_field(book, "asset_id", "") or "")
+            if asset_id:
+                by_asset[asset_id] = book
+        up = by_asset.get(str(up_token_id))
+        down = by_asset.get(str(down_token_id))
+        if up is None or down is None:
+            raise RuntimeError("CLOB pair-book asset mapping incomplete")
+        return up, down
 
     def quote_buy_from_book(
         self,
@@ -113,8 +123,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         shares: float,
         min_price: float | None = None,
     ) -> DepthQuote:
-        # Used after exposure exists: a re-quote failure must advance to emergency
-        # reduction, not abort the exit chain before it gets there.
         try:
             return self.quote_sell_from_book(
                 self.clob.get_order_book(str(token_id)),
@@ -197,8 +205,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
                     errors.append(self._error_payload(exc))
             time.sleep(float(self.settings.live_settlement_poll_sec))
         if successful_reads == 0:
-            # Orders may have reached CLOB. Without a single post-submit balance read
-            # we cannot classify BOTH/NONE/ONE safely. The executor will halt.
             raise RuntimeError("post-submit conditional balances could not be observed")
         up_delta = max(0.0, last_up - float(before_up))
         down_delta = max(0.0, last_down - float(before_down))
@@ -227,7 +233,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         shares: float,
         min_price: float,
     ) -> dict[str, Any]:
-        """Price-bounded full exit; response loss is reconciled by token balance."""
         from py_clob_client_v2 import (  # type: ignore
             OrderArgs,
             OrderType,
@@ -267,7 +272,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
             }
 
     def emergency_unwind_fak(self, *, token_id: str, shares: float) -> dict[str, Any]:
-        """Last-resort reducer: immediately consume available bids, never rest."""
         from py_clob_client_v2 import (  # type: ignore
             MarketOrderArgs,
             OrderType,
