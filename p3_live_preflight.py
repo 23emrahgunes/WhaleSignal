@@ -1,0 +1,187 @@
+"""Fail-closed preflight for P3 LIVE arming.
+
+The probe never posts an order. It checks jurisdiction, secret/dependency presence,
+authenticated CLOB access, collateral balance/allowance and STRICT DRY readiness.
+All returned data is sanitized for UI/logging.
+"""
+from __future__ import annotations
+
+import json
+import time
+import urllib.request
+from typing import Any, Callable
+
+from p3_config import P3Settings
+from p3_dry_run import build_dry_summary
+from p3_live_clients import make_clob_client, parse_clob_balance_usdc, read_live_secrets
+from p3_schema import connect_p3, ensure_p3_schema
+
+
+def _geoblock(settings: P3Settings, *, opener: Callable | None = None) -> dict[str, Any]:
+    open_fn = opener or urllib.request.urlopen
+    req = urllib.request.Request(
+        settings.live_geoblock_url,
+        headers={"User-Agent": "WhaleSignal-P3-LivePreflight/1.0"},
+    )
+    with open_fn(req, timeout=5.0) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("geoblock response is not a JSON object")
+    return {
+        "blocked": bool(payload.get("blocked")),
+        "country": payload.get("country"),
+        "region": payload.get("region"),
+    }
+
+
+def _allowance_ready(payload: Any) -> bool | None:
+    if not isinstance(payload, dict):
+        return None
+    allowances = payload.get("allowances")
+    if not isinstance(allowances, dict) or not allowances:
+        return None
+    positive = False
+    for value in allowances.values():
+        try:
+            if float(value) > 0:
+                positive = True
+        except (TypeError, ValueError):
+            continue
+    return positive
+
+
+def run_live_preflight(
+    settings: P3Settings,
+    *,
+    for_arming: bool,
+    clob_factory: Callable[..., Any] = make_clob_client,
+    geoblock_opener: Callable | None = None,
+) -> dict[str, Any]:
+    """Return a sanitized preflight payload.
+
+    ``for_arming=False`` is a no-order connectivity/authentication test. Full arming
+    additionally requires feature enablement, configured risk gates, sufficient
+    collateral and (by default) DRY_VALIDATED readiness.
+    """
+    checked_at = int(time.time() * 1000)
+    reasons: list[str] = []
+    warnings: list[str] = []
+    checks: dict[str, Any] = {}
+
+    # Jurisdiction is always checked before authenticated trading access. Fail closed
+    # if it cannot be proven clear when the policy requires it.
+    try:
+        geo = _geoblock(settings, opener=geoblock_opener)
+        checks["geoblock"] = geo
+        if geo["blocked"]:
+            reasons.append("JURISDICTION_BLOCKED")
+    except Exception as exc:  # noqa: BLE001
+        checks["geoblock"] = {"error": type(exc).__name__}
+        if settings.live_require_geoblock_clear:
+            reasons.append("GEOBLOCK_CHECK_FAILED")
+        else:
+            warnings.append("GEOBLOCK_CHECK_FAILED_BUT_NOT_REQUIRED")
+
+    secrets = read_live_secrets()
+    checks["credentials"] = {
+        "private_key_present": secrets.has_private_key,
+        "wallet_configured": bool(secrets.wallet or secrets.funder),
+        "clob_api_creds_present": secrets.has_full_clob_creds,
+        "signature_type": int(secrets.signature_type),
+    }
+    if not secrets.has_private_key:
+        reasons.append("PRIVATE_KEY_MISSING")
+
+    collateral_usdc: float | None = None
+    allowance_ready: bool | None = None
+    signer_address: str | None = None
+    if secrets.has_private_key and "JURISDICTION_BLOCKED" not in reasons:
+        try:
+            from py_clob_client_v2 import AssetType, BalanceAllowanceParams  # type: ignore
+
+            clob = clob_factory(host=settings.live_clob_host, chain_id=settings.live_chain_id)
+            signer_address = str(clob.get_address())
+            ok_payload = clob.get_ok()
+            balance_payload = clob.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+            collateral_usdc = parse_clob_balance_usdc(balance_payload)
+            allowance_ready = _allowance_ready(balance_payload)
+            checks["clob"] = {
+                "ok": True,
+                "server_ok": ok_payload,
+                "signer": signer_address,
+                "collateral_usdc": collateral_usdc,
+                "allowance_ready": allowance_ready,
+            }
+        except Exception as exc:  # noqa: BLE001
+            checks["clob"] = {"ok": False, "error": type(exc).__name__, "message": str(exc)[:240]}
+            reasons.append("CLOB_AUTH_OR_BALANCE_CHECK_FAILED")
+    else:
+        checks["clob"] = {"ok": False, "skipped": True}
+
+    # STRICT readiness is computed from the same isolated P3 DB used by the dashboard.
+    dry_status = "UNKNOWN"
+    dry_attempts = 0
+    dry_pnl = 0.0
+    try:
+        conn = connect_p3(settings.p3_db_path)
+        ensure_p3_schema(conn)
+        try:
+            dry = build_dry_summary(conn, settings)
+        finally:
+            conn.close()
+        dry_status = str((dry.get("readiness") or {}).get("status") or "UNKNOWN")
+        dry_attempts = int(dry.get("attempts_executed") or 0)
+        dry_pnl = float(dry.get("cumulative_pnl_usdc") or 0.0)
+        checks["strict_dry"] = {
+            "status": dry_status,
+            "attempts": dry_attempts,
+            "pnl_usdc": dry_pnl,
+            "pair_completion_rate": float(dry.get("pair_completion_rate") or 0.0),
+            "one_leg_rate": float(dry.get("one_leg_rate") or 0.0),
+        }
+    except Exception as exc:  # noqa: BLE001
+        checks["strict_dry"] = {"status": "ERROR", "error": type(exc).__name__}
+        if for_arming:
+            reasons.append("STRICT_DRY_CHECK_FAILED")
+
+    if for_arming:
+        if not settings.live_feature_enabled:
+            reasons.append("LIVE_FEATURE_DISABLED")
+        if not settings.live_auto_execute_enabled:
+            warnings.append("LIVE_ARMED_WILL_NOT_AUTO_EXECUTE")
+        if settings.live_require_dry_validated and dry_status != "DRY_VALIDATED":
+            reasons.append("STRICT_DRY_NOT_VALIDATED")
+        if collateral_usdc is None:
+            reasons.append("COLLATERAL_BALANCE_UNKNOWN")
+        elif collateral_usdc + 1e-9 < settings.live_max_capital_per_cycle_usdc:
+            reasons.append("INSUFFICIENT_COLLATERAL")
+        if allowance_ready is False:
+            reasons.append("TRADING_ALLOWANCE_NOT_READY")
+
+    # A connection test can be successful with zero balance because no order is posted.
+    hard_probe_reasons = {
+        "JURISDICTION_BLOCKED",
+        "GEOBLOCK_CHECK_FAILED",
+        "PRIVATE_KEY_MISSING",
+        "CLOB_AUTH_OR_BALANCE_CHECK_FAILED",
+    }
+    ok = not reasons if for_arming else not any(reason in hard_probe_reasons for reason in reasons)
+    return {
+        "ok": bool(ok),
+        "purpose": "ARM_LIVE" if for_arming else "CONNECTIVITY_ONLY_NO_ORDER",
+        "checked_at_ms": checked_at,
+        "reasons": reasons,
+        "warnings": warnings,
+        "checks": checks,
+        "risk": {
+            "buy_merge_only": bool(settings.live_buy_merge_only),
+            "max_capital_per_cycle_usdc": float(settings.live_max_capital_per_cycle_usdc),
+            "max_quantity_shares": float(settings.live_max_quantity_shares),
+            "min_net_profit_usdc": float(settings.live_min_net_profit_usdc),
+            "min_net_roi": float(settings.live_min_net_roi),
+            "require_dry_validated": bool(settings.live_require_dry_validated),
+            "auto_execute_enabled": bool(settings.live_auto_execute_enabled),
+        },
+    }
