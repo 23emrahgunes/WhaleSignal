@@ -13,7 +13,7 @@ import time
 
 from p3_config import P3Settings, get_p3_settings
 from p3_entry_replay import P3EntryReplayEngine
-from p3_live_executor_resolved import P3LiveExecutor
+from p3_live_executor_v2 import P3LiveExecutorV2
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
@@ -82,13 +82,13 @@ async def live_executor_loop(
     while not stop.is_set():
         if state.can_auto_execute():
             try:
-                result = await asyncio.to_thread(P3LiveExecutor(settings, state).process_once)
+                result = await asyncio.to_thread(P3LiveExecutorV2(settings, state).process_once)
                 status = str(result.get("status") or "")
                 if status not in {"NO_CONFIRMED_WINDOW", "IDLE_NOT_AUTO_ARMED", "IDLE_NOT_ARMED"}:
-                    log.warning("P3 LIVE result=%s", result)
+                    log.warning("P3 LIVE v2 result=%s", result)
             except Exception:  # noqa: BLE001
                 state.halt("LIVE_LOOP_EXCEPTION")
-                log.exception("P3 LIVE loop failed closed")
+                log.exception("P3 LIVE v2 loop failed closed")
         try:
             await asyncio.wait_for(
                 stop.wait(),
@@ -120,7 +120,7 @@ async def run() -> None:
     )
     log.info(
         "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
-        "web_auth=%s live_feature=%s live_auto=%s control=web8093",
+        "web_auth=%s live_feature=%s live_auto=%s live_sizing=equal_shares target=%.3f",
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
@@ -129,6 +129,7 @@ async def run() -> None:
         settings.web_auth_required,
         settings.live_feature_enabled,
         settings.live_auto_execute_enabled,
+        settings.live_target_quantity_shares,
     )
     stop = asyncio.Event()
     install_handlers(asyncio.get_running_loop(), stop)
@@ -143,8 +144,7 @@ async def run() -> None:
         tasks.append(asyncio.create_task(scanner_loop(scanner, settings.scan_interval_ms, stop)))
         tasks.append(asyncio.create_task(research_replay_loop(settings, stop)))
 
-    # Safe to run without optional SDK deps because gateway imports happen lazily only
-    # after LIVE is explicitly armed and auto-execution is enabled.
+    # Optional LIVE SDK imports stay lazy until an armed process reaches execution.
     tasks.append(asyncio.create_task(live_executor_loop(settings, live_state, stop)))
 
     if not tasks:
