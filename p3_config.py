@@ -51,11 +51,10 @@ class P3Settings(BaseSettings):
     replay_batch_size: int = Field(default=200, alias="P3_REPLAY_BATCH_SIZE")
 
     # DRY policy: one independent simulated attempt per opportunity window.
-    # Entry confirmation rejects the toxic first-print region: an opportunity must
-    # still exist at/after opened_ts + confirmation before it becomes a DRY attempt.
     dry_enabled: bool = Field(default=True, alias="P3_DRY_ENABLED")
     dry_latency_ms: int = Field(default=100, alias="P3_DRY_LATENCY_MS")
     dry_entry_confirm_ms: int = Field(default=250, alias="P3_DRY_ENTRY_CONFIRM_MS")
+    dry_confirm_max_gap_ms: int = Field(default=400, alias="P3_DRY_CONFIRM_MAX_GAP_MS")
     dry_survival_delays_ms: str = Field(
         default="0,50,100,200,250,500", alias="P3_DRY_SURVIVAL_DELAYS_MS"
     )
@@ -124,6 +123,8 @@ class P3Settings(BaseSettings):
             raise ValueError("P3_DRY_LATENCY_MS must exist in P3_REPLAY_DELAYS_MS")
         if self.dry_entry_confirm_ms < 0:
             raise ValueError("P3_DRY_ENTRY_CONFIRM_MS cannot be negative")
+        if self.dry_confirm_max_gap_ms < self.scan_interval_ms:
+            raise ValueError("P3_DRY_CONFIRM_MAX_GAP_MS must be >= P3_SCAN_INTERVAL_MS")
         self.dry_survival_delays()
         if self.dry_start_bankroll_usdc <= 0:
             raise ValueError("dry bankroll must be positive")
