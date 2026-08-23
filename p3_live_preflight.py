@@ -13,7 +13,11 @@ from typing import Any, Callable
 
 from p3_config import P3Settings
 from p3_dry_run import build_dry_summary
-from p3_live_clients import make_clob_client, parse_clob_balance_usdc, read_live_secrets
+from p3_live_clients import (
+    parse_clob_balance_usdc,
+    probe_clob_account,
+    read_live_secrets,
+)
 from p3_schema import connect_p3, ensure_p3_schema
 
 
@@ -40,36 +44,35 @@ def _allowance_ready(payload: Any) -> bool | None:
     allowances = payload.get("allowances")
     if not isinstance(allowances, dict) or not allowances:
         return None
-    positive = False
+    positives = []
     for value in allowances.values():
         try:
-            if float(value) > 0:
-                positive = True
+            positives.append(float(value) > 0)
         except (TypeError, ValueError):
             continue
-    return positive
+    return any(positives) if positives else None
 
 
 def run_live_preflight(
     settings: P3Settings,
     *,
     for_arming: bool,
-    clob_factory: Callable[..., Any] = make_clob_client,
+    account_probe: Callable[..., dict[str, Any]] = probe_clob_account,
     geoblock_opener: Callable | None = None,
+    secret_reader: Callable[[], Any] = read_live_secrets,
+    dry_summary_builder: Callable[[Any, P3Settings], dict[str, Any]] = build_dry_summary,
 ) -> dict[str, Any]:
     """Return a sanitized preflight payload.
 
     ``for_arming=False`` is a no-order connectivity/authentication test. Full arming
-    additionally requires feature enablement, configured risk gates, sufficient
-    collateral and (by default) DRY_VALIDATED readiness.
+    additionally requires feature enablement, sufficient collateral and, by default,
+    ``DRY_VALIDATED`` research readiness.
     """
     checked_at = int(time.time() * 1000)
     reasons: list[str] = []
     warnings: list[str] = []
     checks: dict[str, Any] = {}
 
-    # Jurisdiction is always checked before authenticated trading access. Fail closed
-    # if it cannot be proven clear when the policy requires it.
     try:
         geo = _geoblock(settings, opener=geoblock_opener)
         checks["geoblock"] = geo
@@ -82,11 +85,11 @@ def run_live_preflight(
         else:
             warnings.append("GEOBLOCK_CHECK_FAILED_BUT_NOT_REQUIRED")
 
-    secrets = read_live_secrets()
+    secrets = secret_reader()
     checks["credentials"] = {
-        "private_key_present": secrets.has_private_key,
+        "private_key_present": bool(secrets.has_private_key),
         "wallet_configured": bool(secrets.wallet or secrets.funder),
-        "clob_api_creds_present": secrets.has_full_clob_creds,
+        "clob_api_creds_present": bool(secrets.has_full_clob_creds),
         "signature_type": int(secrets.signature_type),
     }
     if not secrets.has_private_key:
@@ -94,50 +97,45 @@ def run_live_preflight(
 
     collateral_usdc: float | None = None
     allowance_ready: bool | None = None
-    signer_address: str | None = None
     if secrets.has_private_key and "JURISDICTION_BLOCKED" not in reasons:
         try:
-            from py_clob_client_v2 import AssetType, BalanceAllowanceParams  # type: ignore
-
-            clob = clob_factory(host=settings.live_clob_host, chain_id=settings.live_chain_id)
-            signer_address = str(clob.get_address())
-            ok_payload = clob.get_ok()
-            balance_payload = clob.get_balance_allowance(
-                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            account = account_probe(
+                host=settings.live_clob_host,
+                chain_id=settings.live_chain_id,
             )
+            balance_payload = account.get("balance_payload")
             collateral_usdc = parse_clob_balance_usdc(balance_payload)
             allowance_ready = _allowance_ready(balance_payload)
             checks["clob"] = {
                 "ok": True,
-                "server_ok": ok_payload,
-                "signer": signer_address,
+                "server_ok": account.get("server_ok"),
+                "signer": account.get("signer"),
                 "collateral_usdc": collateral_usdc,
                 "allowance_ready": allowance_ready,
             }
         except Exception as exc:  # noqa: BLE001
-            checks["clob"] = {"ok": False, "error": type(exc).__name__, "message": str(exc)[:240]}
+            checks["clob"] = {
+                "ok": False,
+                "error": type(exc).__name__,
+                "message": str(exc)[:240],
+            }
             reasons.append("CLOB_AUTH_OR_BALANCE_CHECK_FAILED")
     else:
         checks["clob"] = {"ok": False, "skipped": True}
 
-    # STRICT readiness is computed from the same isolated P3 DB used by the dashboard.
     dry_status = "UNKNOWN"
-    dry_attempts = 0
-    dry_pnl = 0.0
     try:
         conn = connect_p3(settings.p3_db_path)
         ensure_p3_schema(conn)
         try:
-            dry = build_dry_summary(conn, settings)
+            dry = dry_summary_builder(conn, settings)
         finally:
             conn.close()
         dry_status = str((dry.get("readiness") or {}).get("status") or "UNKNOWN")
-        dry_attempts = int(dry.get("attempts_executed") or 0)
-        dry_pnl = float(dry.get("cumulative_pnl_usdc") or 0.0)
         checks["strict_dry"] = {
             "status": dry_status,
-            "attempts": dry_attempts,
-            "pnl_usdc": dry_pnl,
+            "attempts": int(dry.get("attempts_executed") or 0),
+            "pnl_usdc": float(dry.get("cumulative_pnl_usdc") or 0.0),
             "pair_completion_rate": float(dry.get("pair_completion_rate") or 0.0),
             "one_leg_rate": float(dry.get("one_leg_rate") or 0.0),
         }
@@ -160,14 +158,17 @@ def run_live_preflight(
         if allowance_ready is False:
             reasons.append("TRADING_ALLOWANCE_NOT_READY")
 
-    # A connection test can be successful with zero balance because no order is posted.
+    # Connectivity-only can pass with zero collateral. It proves auth/geoblock only and
+    # intentionally never submits an order. Full arm is stricter and requires funding.
     hard_probe_reasons = {
         "JURISDICTION_BLOCKED",
         "GEOBLOCK_CHECK_FAILED",
         "PRIVATE_KEY_MISSING",
         "CLOB_AUTH_OR_BALANCE_CHECK_FAILED",
     }
-    ok = not reasons if for_arming else not any(reason in hard_probe_reasons for reason in reasons)
+    ok = not reasons if for_arming else not any(
+        reason in hard_probe_reasons for reason in reasons
+    )
     return {
         "ok": bool(ok),
         "purpose": "ARM_LIVE" if for_arming else "CONNECTIVITY_ONLY_NO_ORDER",
