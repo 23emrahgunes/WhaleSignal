@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from p26_book_store import BookSnapshotStore
 from p26_execution import OrderBookSnapshot
@@ -19,6 +20,7 @@ def _settings(tmp_path: Path) -> P3Settings:
         p3_db_path=str(tmp_path / "p3.sqlite"),
         reports_dir=str(tmp_path / "reports"),
         replay_delays_ms="10",
+        dry_latency_ms=10,
         replay_snapshot_tolerance_ms=250,
         replay_batch_size=20,
         web_port=18093,
@@ -27,7 +29,8 @@ def _settings(tmp_path: Path) -> P3Settings:
 
 def _seed_opportunity(tmp_path: Path) -> tuple[P3Settings, int, int]:
     settings = _settings(tmp_path)
-    detected = 1_000_000
+    # Give inserts room to occur before the simulated detection clock.
+    detected = int(time.time() * 1000) + 1_000
 
     fees = FeeScheduleStore(settings.p26_db_path)
     fees.upsert_market_info(
@@ -44,16 +47,12 @@ def _seed_opportunity(tmp_path: Path) -> tuple[P3Settings, int, int]:
 
     books = BookSnapshotStore(settings.p26_db_path)
     up = OrderBookSnapshot.from_levels(
-        token_id="up",
-        ts_ms=1_000,  # exchange last-change clock is intentionally ancient
-        bids=[(0.39, 20)],
-        asks=[(0.40, 20)],
+        token_id="up", ts_ms=1_000,
+        bids=[(0.39, 20)], asks=[(0.40, 20)],
     )
     down = OrderBookSnapshot.from_levels(
-        token_id="down",
-        ts_ms=1_100,
-        bids=[(0.49, 20)],
-        asks=[(0.50, 20)],
+        token_id="down", ts_ms=1_100,
+        bids=[(0.49, 20)], asks=[(0.50, 20)],
     )
     assert books.insert(
         condition_id="cond", combo_key="ETH:5m", side="UP",
@@ -63,9 +62,22 @@ def _seed_opportunity(tmp_path: Path) -> tuple[P3Settings, int, int]:
         condition_id="cond", combo_key="ETH:5m", side="DOWN",
         snapshot=down, recv_ts_ms=detected - 15,
     )
+
+    # Re-observing the exact state on reconnect advances recv_ts_ms but must not
+    # rewrite historical first availability. This was the V2 clock hazard.
+    assert not books.insert(
+        condition_id="cond", combo_key="ETH:5m", side="UP",
+        snapshot=up, recv_ts_ms=detected + 500,
+    )
+    assert not books.insert(
+        condition_id="cond", combo_key="ETH:5m", side="DOWN",
+        snapshot=down, recv_ts_ms=detected + 500,
+    )
     rows = books.conn.execute(
-        "SELECT id,side FROM p26_clob_books ORDER BY id"
+        "SELECT id,side,recv_ts_ms,inserted_at_ms FROM p26_clob_books ORDER BY id"
     ).fetchall()
+    assert all(int(row["recv_ts_ms"]) > detected for row in rows)
+    assert all(int(row["inserted_at_ms"]) < detected for row in rows)
     ids = {str(row["side"]): int(row["id"]) for row in rows}
     books.close()
 
@@ -102,7 +114,7 @@ def _seed_opportunity(tmp_path: Path) -> tuple[P3Settings, int, int]:
     return settings, opp_id, detected
 
 
-def test_recv_clock_replay_keeps_unchanged_detection_book_executable(tmp_path):
+def test_first_receive_clock_survives_later_recv_timestamp_advance(tmp_path):
     settings, opp_id, _ = _seed_opportunity(tmp_path)
     replay = ClockReplayEngine(settings)
     try:
@@ -111,16 +123,15 @@ def test_recv_clock_replay_keeps_unchanged_detection_book_executable(tmp_path):
         assert result.both_fill is True
         assert result.cycle_net_pnl_usdc == 1.0
         assert result.details["replay_version"] == REPLAY_VERSION
-        assert result.details["time_axis"] == "recv_ts_ms_asof"
+        assert result.details["time_axis"] == "inserted_at_ms_asof"
     finally:
         replay.close()
 
 
-def test_scheduler_replaces_false_no_synchronous_book_legacy_rows(tmp_path):
+def test_scheduler_replaces_rows_from_older_clock_semantics(tmp_path):
     settings, opp_id, detected = _seed_opportunity(tmp_path)
 
-    # Reproduce the production bug: detected_ts is wall-clock ~1,000,000 while
-    # source_ts is ~1,000, so the old source-time replay cannot find a future row.
+    # Old source-time replay cannot align wall-clock detection with ancient source_ts.
     legacy = LegacyReplayEngine(settings)
     try:
         old = legacy.replay_one(opp_id, 10)
