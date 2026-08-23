@@ -86,18 +86,28 @@ def run_live_preflight(
             warnings.append("GEOBLOCK_CHECK_FAILED_BUT_NOT_REQUIRED")
 
     secrets = secret_reader()
+    signature_type = int(secrets.signature_type)
+    funder_configured = bool(secrets.funder)
     checks["credentials"] = {
         "private_key_present": bool(secrets.has_private_key),
         "wallet_configured": bool(secrets.wallet or secrets.funder),
+        "funder_configured": funder_configured,
         "clob_api_creds_present": bool(secrets.has_full_clob_creds),
-        "signature_type": int(secrets.signature_type),
+        "signature_type": signature_type,
     }
     if not secrets.has_private_key:
         reasons.append("PRIVATE_KEY_MISSING")
+    if signature_type != 0 and not funder_configured:
+        reasons.append("FUNDER_REQUIRED_FOR_SIGNATURE_TYPE")
 
     collateral_usdc: float | None = None
     allowance_ready: bool | None = None
-    if secrets.has_private_key and "JURISDICTION_BLOCKED" not in reasons:
+    credential_gate_clear = (
+        secrets.has_private_key
+        and "JURISDICTION_BLOCKED" not in reasons
+        and "FUNDER_REQUIRED_FOR_SIGNATURE_TYPE" not in reasons
+    )
+    if credential_gate_clear:
         try:
             account = account_probe(
                 host=settings.live_clob_host,
@@ -164,6 +174,7 @@ def run_live_preflight(
         "JURISDICTION_BLOCKED",
         "GEOBLOCK_CHECK_FAILED",
         "PRIVATE_KEY_MISSING",
+        "FUNDER_REQUIRED_FOR_SIGNATURE_TYPE",
         "CLOB_AUTH_OR_BALANCE_CHECK_FAILED",
     }
     ok = not reasons if for_arming else not any(
