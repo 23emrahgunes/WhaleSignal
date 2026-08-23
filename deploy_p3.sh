@@ -6,8 +6,8 @@ usage() {
 Usage: ./deploy_p3.sh [--no-pull] [--skip-tests]
 
 Deploy P3 structural arbitrage. The process always starts DRY. Optional guarded
-LIVE support is installed only when P3_LIVE_FEATURE_ENABLED=true; it still requires
-a localhost operator arm action and successful preflight before execution.
+LIVE support is installed only when P3_LIVE_FEATURE_ENABLED=true; LIVE also requires
+the authenticated 8093 operator dashboard and successful preflight before execution.
 EOF
 }
 
@@ -82,10 +82,15 @@ from p3_config import get_p3_settings
 s=get_p3_settings(); s.validate_research_safety(); s.ensure_directories()
 print("p26_db=", s.p26_db_path)
 print("p3_db=", s.p3_db_path)
+print("web=", f"{s.web_host}:{s.web_port}")
+print("web_auth_required=", s.web_auth_required)
+print("web_cookie_secure=", s.web_cookie_secure)
 print("live_feature=", s.live_feature_enabled)
 print("live_auto_execute=", s.live_auto_execute_enabled)
-print("live_control=", f"{s.live_control_host}:{s.live_control_port}")
+print("live_control=authenticated_web_8093")
 assert s.p26_db_path != s.p3_db_path
+if s.live_feature_enabled:
+    assert s.web_auth_required
 PY
 
 "$PY" -m py_compile p3_*.py
@@ -140,4 +145,4 @@ $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail 
 bash scripts/smoke_p3.sh
 p25_alive || fail "P2.5 process stopped during P3 deploy"
 
-echo "P3 ARBITRAGE DEPLOY PASS | starts=DRY | live_feature=$LIVE_FEATURE | p25=process_alive"
+echo "P3 ARBITRAGE DEPLOY PASS | starts=DRY | control=authenticated_8093 | live_feature=$LIVE_FEATURE | p25=process_alive"
