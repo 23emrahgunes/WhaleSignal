@@ -46,24 +46,20 @@ print(f"P3_AWS_SMOKE_PASS starts=DRY p3=200 live_feature={s.live_feature_enabled
 conn.close()
 PY
 
-CONTROL_ENABLED="$("$PY" - <<'PY'
+AUTH_REQUIRED="$("$PY" - <<'PY'
 from p3_config import get_p3_settings
-s=get_p3_settings(); print('1' if s.live_control_enabled else '0')
+print('1' if get_p3_settings().web_auth_required else '0')
 PY
 )"
-if [[ "$CONTROL_ENABLED" == "1" ]]; then
-  CONTROL_PORT="$("$PY" - <<'PY'
-from p3_config import get_p3_settings
-print(get_p3_settings().live_control_port)
-PY
-)"
-  wait_http_200 p3-live-control "http://127.0.0.1:${CONTROL_PORT}/api/status" /tmp/p3-live-control-status.json 30 >/dev/null
+if [[ "$AUTH_REQUIRED" == "1" ]]; then
+  AUTH_CODE="$(curl -sS --connect-timeout 1 --max-time 2 -o /tmp/p3-unauth-summary.json -w '%{http_code}' http://127.0.0.1:8093/api/summary || true)"
+  [[ "$AUTH_CODE" == "401" ]] || { echo "FAIL unauthenticated_8093_api_expected_401 got=$AUTH_CODE"; exit 1; }
   "$PY" - <<'PY'
 import json
 from pathlib import Path
-j=json.loads(Path('/tmp/p3-live-control-status.json').read_text(encoding='utf-8'))
-assert j['ok'] is True
-assert j['state']['mode'] == 'DRY'
-print('P3_LIVE_CONTROL_SMOKE_PASS mode=DRY loopback=true')
+j=json.loads(Path('/tmp/p3-unauth-summary.json').read_text(encoding='utf-8'))
+assert j.get('ok') is False
+assert j.get('error') == 'AUTH_REQUIRED'
+print('P3_8093_AUTH_BOUNDARY_SMOKE_PASS health=200 protected_api=401')
 PY
 fi
