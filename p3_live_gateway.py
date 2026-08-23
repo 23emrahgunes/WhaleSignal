@@ -48,6 +48,12 @@ def _order_id(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _field(obj: Any, name: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 class PolymarketLiveGateway:
     def __init__(self, settings: P3Settings) -> None:
         self.settings = settings
@@ -75,6 +81,25 @@ class PolymarketLiveGateway:
                 pass
         payload = self.clob.get_balance_allowance(params)
         return parse_conditional_balance_shares(payload)
+
+    def buy_limit_capacity(self, *, token_id: str, limit_price: float) -> dict[str, float]:
+        """Return currently visible ask shares executable at or better than limit."""
+        book = self.clob.get_order_book(str(token_id))
+        asks = _field(book, "asks", []) or []
+        capacity = 0.0
+        for level in asks:
+            try:
+                price = float(_field(level, "price"))
+                size = float(_field(level, "size"))
+            except (TypeError, ValueError):
+                continue
+            if price <= float(limit_price) + 1e-12:
+                capacity += max(0.0, size)
+        try:
+            min_size = float(_field(book, "min_order_size", 0) or 0)
+        except (TypeError, ValueError):
+            min_size = 0.0
+        return {"capacity_shares": capacity, "min_order_size": min_size}
 
     def post_two_leg_fok(
         self,
@@ -187,6 +212,34 @@ class PolymarketLiveGateway:
             "verified": False,
             "after": last,
             "residual": max(0.0, last - float(before_entry_balance)),
+        }
+
+    def wait_for_merge(
+        self,
+        *,
+        up_token_id: str,
+        down_token_id: str,
+        before_up: float,
+        before_down: float,
+        max_residual_shares: float = 1e-5,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + float(self.settings.live_settlement_wait_sec)
+        last_up = self.conditional_balance_shares(up_token_id, refresh=True)
+        last_down = self.conditional_balance_shares(down_token_id, refresh=True)
+        while time.monotonic() <= deadline:
+            last_up = self.conditional_balance_shares(up_token_id, refresh=True)
+            last_down = self.conditional_balance_shares(down_token_id, refresh=True)
+            up_residual = max(0.0, last_up - float(before_up))
+            down_residual = max(0.0, last_down - float(before_down))
+            if up_residual <= max_residual_shares and down_residual <= max_residual_shares:
+                return {"verified": True, "up_after": last_up, "down_after": last_down}
+            time.sleep(float(self.settings.live_settlement_poll_sec))
+        return {
+            "verified": False,
+            "up_after": last_up,
+            "down_after": last_down,
+            "up_residual": max(0.0, last_up - float(before_up)),
+            "down_residual": max(0.0, last_down - float(before_down)),
         }
 
     def merge_positions(self, *, condition_id: str, quantity_shares: float) -> dict[str, Any]:
