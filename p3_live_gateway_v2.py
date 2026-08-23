@@ -17,7 +17,7 @@ from p3_live_sizing import DepthQuote, consume_depth
 
 
 class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
-    """Extends the v1 gateway with exact-share quotes and bounded exits."""
+    """Extends the v1 gateway with same-snapshot quotes and bounded exits."""
 
     @staticmethod
     def _levels(book: Any, name: str) -> list[tuple[float, float]]:
@@ -37,14 +37,24 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         except (TypeError, ValueError):
             return 0.0
 
-    def quote_buy(
+    def fetch_pair_books(self, *, up_token_id: str, down_token_id: str) -> tuple[Any, Any]:
+        """Fetch UP/DOWN books in one CLOB request so entry/unwind checks share a timestamp."""
+        from py_clob_client_v2 import BookParams  # type: ignore
+
+        raw = self.clob.get_order_books(
+            [BookParams(token_id=str(up_token_id)), BookParams(token_id=str(down_token_id))]
+        )
+        if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+            raise RuntimeError("CLOB pair-book response incomplete")
+        return raw[0], raw[1]
+
+    def quote_buy_from_book(
         self,
+        book: Any,
         *,
-        token_id: str,
         shares: float,
         max_price: float,
     ) -> DepthQuote:
-        book = self.clob.get_order_book(str(token_id))
         return consume_depth(
             self._levels(book, "asks"),
             shares=float(shares),
@@ -53,14 +63,41 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
             min_order_size=self._min_order_size(book),
         )
 
-    def buy_capacity(self, *, token_id: str, max_price: float) -> dict[str, float]:
-        book = self.clob.get_order_book(str(token_id))
+    def quote_sell_from_book(
+        self,
+        book: Any,
+        *,
+        shares: float,
+        min_price: float | None = None,
+    ) -> DepthQuote:
+        return consume_depth(
+            self._levels(book, "bids"),
+            shares=float(shares),
+            buy=False,
+            price_limit=None if min_price is None else float(min_price),
+            min_order_size=self._min_order_size(book),
+        )
+
+    def buy_capacity_from_book(self, book: Any, *, max_price: float) -> dict[str, float]:
         levels = self._levels(book, "asks")
         cap = sum(size for price, size in levels if price <= float(max_price) + 1e-12)
         return {
             "capacity_shares": max(0.0, float(cap)),
             "min_order_size": self._min_order_size(book),
         }
+
+    def quote_buy(
+        self,
+        *,
+        token_id: str,
+        shares: float,
+        max_price: float,
+    ) -> DepthQuote:
+        return self.quote_buy_from_book(
+            self.clob.get_order_book(str(token_id)),
+            shares=shares,
+            max_price=max_price,
+        )
 
     def quote_sell(
         self,
@@ -69,13 +106,10 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         shares: float,
         min_price: float | None = None,
     ) -> DepthQuote:
-        book = self.clob.get_order_book(str(token_id))
-        return consume_depth(
-            self._levels(book, "bids"),
-            shares=float(shares),
-            buy=False,
-            price_limit=None if min_price is None else float(min_price),
-            min_order_size=self._min_order_size(book),
+        return self.quote_sell_from_book(
+            self.clob.get_order_book(str(token_id)),
+            shares=shares,
+            min_price=min_price,
         )
 
     def collateral_balance_usdc(self, *, refresh: bool = False) -> float:
@@ -134,7 +168,7 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         }
 
     def emergency_unwind_fak(self, *, token_id: str, shares: float) -> dict[str, Any]:
-        """Last-resort exposure reducer: fill whatever is immediately available, never rest."""
+        """Last-resort reducer: fill immediately available bids; never leave a resting order."""
         from py_clob_client_v2 import (  # type: ignore
             MarketOrderArgs,
             OrderType,
