@@ -1,0 +1,183 @@
+"""Risk-aware Polymarket gateway for equal-share P3 LIVE v2."""
+from __future__ import annotations
+
+import math
+import time
+from decimal import Decimal, ROUND_CEILING
+from typing import Any
+
+from p3_live_gateway import (
+    PolymarketLiveGateway,
+    _field,
+    _order_id,
+    _response_list,
+    _sanitize_response,
+)
+from p3_live_sizing import DepthQuote, consume_depth
+
+
+class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
+    """Extends the v1 gateway with exact-share quotes and bounded exits."""
+
+    @staticmethod
+    def _levels(book: Any, name: str) -> list[tuple[float, float]]:
+        raw = _field(book, name, []) or []
+        out: list[tuple[float, float]] = []
+        for level in raw:
+            try:
+                out.append((float(_field(level, "price")), float(_field(level, "size"))))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    @staticmethod
+    def _min_order_size(book: Any) -> float:
+        try:
+            return max(0.0, float(_field(book, "min_order_size", 0) or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def quote_buy(
+        self,
+        *,
+        token_id: str,
+        shares: float,
+        max_price: float,
+    ) -> DepthQuote:
+        book = self.clob.get_order_book(str(token_id))
+        return consume_depth(
+            self._levels(book, "asks"),
+            shares=float(shares),
+            buy=True,
+            price_limit=float(max_price),
+            min_order_size=self._min_order_size(book),
+        )
+
+    def buy_capacity(self, *, token_id: str, max_price: float) -> dict[str, float]:
+        book = self.clob.get_order_book(str(token_id))
+        levels = self._levels(book, "asks")
+        cap = sum(size for price, size in levels if price <= float(max_price) + 1e-12)
+        return {
+            "capacity_shares": max(0.0, float(cap)),
+            "min_order_size": self._min_order_size(book),
+        }
+
+    def quote_sell(
+        self,
+        *,
+        token_id: str,
+        shares: float,
+        min_price: float | None = None,
+    ) -> DepthQuote:
+        book = self.clob.get_order_book(str(token_id))
+        return consume_depth(
+            self._levels(book, "bids"),
+            shares=float(shares),
+            buy=False,
+            price_limit=None if min_price is None else float(min_price),
+            min_order_size=self._min_order_size(book),
+        )
+
+    def collateral_balance_usdc(self, *, refresh: bool = False) -> float:
+        from py_clob_client_v2 import AssetType, BalanceAllowanceParams  # type: ignore
+        from p3_live_clients import parse_clob_balance_usdc
+
+        params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        if refresh:
+            try:
+                self.clob.update_balance_allowance(params)
+            except Exception:
+                pass
+        payload = self.clob.get_balance_allowance(params)
+        return parse_clob_balance_usdc(payload)
+
+    @staticmethod
+    def _ceil_tick(price: float, tick: str | float) -> float:
+        p = Decimal(str(max(0.0001, min(0.9999, float(price)))))
+        t = Decimal(str(tick))
+        steps = (p / t).to_integral_value(rounding=ROUND_CEILING)
+        return float(min(Decimal("0.9999"), steps * t))
+
+    def unwind_limit_fok(
+        self,
+        *,
+        token_id: str,
+        shares: float,
+        min_price: float,
+    ) -> dict[str, Any]:
+        """Price-bounded full exit. Entire exposure fills at min_price or better, or zero."""
+        from py_clob_client_v2 import (  # type: ignore
+            OrderArgs,
+            OrderType,
+            PartialCreateOrderOptions,
+            Side,
+        )
+
+        tick = self.clob.get_tick_size(str(token_id))
+        price = self._ceil_tick(float(min_price), tick)
+        raw = self.clob.create_and_post_order(
+            order_args=OrderArgs(
+                token_id=str(token_id),
+                price=price,
+                side=Side.SELL,
+                size=float(shares),
+            ),
+            options=PartialCreateOrderOptions(tick_size=str(tick)),
+            order_type=OrderType.FOK,
+        )
+        item = _response_list(raw)[0]
+        return {
+            "response": _sanitize_response(item),
+            "order_id": _order_id(item),
+            "limit_price": price,
+            "kind": "LIMIT_FOK",
+        }
+
+    def emergency_unwind_fak(self, *, token_id: str, shares: float) -> dict[str, Any]:
+        """Last-resort exposure reducer: fill whatever is immediately available, never rest."""
+        from py_clob_client_v2 import (  # type: ignore
+            MarketOrderArgs,
+            OrderType,
+            PartialCreateOrderOptions,
+            Side,
+        )
+
+        tick = self.clob.get_tick_size(str(token_id))
+        raw = self.clob.create_and_post_market_order(
+            order_args=MarketOrderArgs(
+                token_id=str(token_id),
+                amount=float(shares),
+                side=Side.SELL,
+                order_type=OrderType.FAK,
+            ),
+            options=PartialCreateOrderOptions(tick_size=str(tick)),
+            order_type=OrderType.FAK,
+        )
+        item = _response_list(raw)[0]
+        return {
+            "response": _sanitize_response(item),
+            "order_id": _order_id(item),
+            "kind": "MARKET_FAK_EMERGENCY",
+        }
+
+    def wait_for_collateral_stable(
+        self,
+        *,
+        timeout_sec: float = 3.0,
+        stable_reads: int = 2,
+    ) -> float:
+        deadline = time.monotonic() + max(0.5, float(timeout_sec))
+        previous: float | None = None
+        stable = 0
+        last = self.collateral_balance_usdc(refresh=True)
+        while time.monotonic() <= deadline:
+            last = self.collateral_balance_usdc(refresh=True)
+            if previous is not None and math.isclose(last, previous, abs_tol=1e-6):
+                stable += 1
+                if stable >= max(1, int(stable_reads)):
+                    return last
+            else:
+                stable = 0
+            previous = last
+            time.sleep(min(0.25, float(self.settings.live_settlement_poll_sec)))
+        return last
