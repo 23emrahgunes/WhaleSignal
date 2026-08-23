@@ -46,7 +46,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         return {"type": type(exc).__name__, "message": str(exc)[:200]}
 
     def fetch_pair_books(self, *, up_token_id: str, down_token_id: str) -> tuple[Any, Any]:
-        """Fetch UP/DOWN books in one CLOB request."""
         from py_clob_client_v2 import BookParams  # type: ignore
 
         raw = self.clob.get_order_books(
@@ -114,9 +113,8 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         shares: float,
         min_price: float | None = None,
     ) -> DepthQuote:
-        # This path is used after an exposure already exists. A book fetch failure
-        # must not abort the recovery chain; return an incomplete quote so the
-        # executor advances to its emergency FAK reducer.
+        # Used after exposure exists: a re-quote failure must advance to emergency
+        # reduction, not abort the exit chain before it gets there.
         try:
             return self.quote_sell_from_book(
                 self.clob.get_order_book(str(token_id)),
@@ -198,6 +196,10 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
                 if len(errors) < 5:
                     errors.append(self._error_payload(exc))
             time.sleep(float(self.settings.live_settlement_poll_sec))
+        if successful_reads == 0:
+            # Orders may have reached CLOB. Without a single post-submit balance read
+            # we cannot classify BOTH/NONE/ONE safely. The executor will halt.
+            raise RuntimeError("post-submit conditional balances could not be observed")
         up_delta = max(0.0, last_up - float(before_up))
         down_delta = max(0.0, last_down - float(before_down))
         return {
@@ -209,7 +211,6 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
             "down_delta": down_delta,
             "successful_reads": successful_reads,
             "read_errors": errors,
-            "balance_observation_uncertain": successful_reads == 0,
         }
 
     @staticmethod
@@ -226,7 +227,7 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
         shares: float,
         min_price: float,
     ) -> dict[str, Any]:
-        """Price-bounded full exit. Lost response is marked uncertain, then balance is checked."""
+        """Price-bounded full exit; response loss is reconciled by token balance."""
         from py_clob_client_v2 import (  # type: ignore
             OrderArgs,
             OrderType,
@@ -331,7 +332,7 @@ class RiskAwarePolymarketLiveGateway(PolymarketLiveGateway):
             return {
                 "verified": False,
                 "after": None,
-                "residual": None,
+                "residual": math.inf,
                 "balance_observation_uncertain": True,
                 "read_errors": errors,
             }
