@@ -11,6 +11,7 @@ P2.6 public CLOB book and fee persistence. It is **SHADOW/PAPER ONLY**.
 - **P3.3** — contiguous opportunity lifetime windows and peak profitability.
 - **P3.4** — delayed 10/25/50/100/200/500ms two-leg FOK replay, one-leg exposure and unwind loss.
 - **P3.5** — read-only dashboard/API on `127.0.0.1:8093` and systemd deployment.
+- **P3.6** — independent-window DRY bankroll, first-print survival confirmation and readiness gates.
 
 ## Structural formulas
 
@@ -41,8 +42,8 @@ value or direction predictions to decide whether structural parity exists.
 
 ## Non-atomic execution research
 
-Two separate FOK legs are **not** assumed atomic. P3.4 replays historical future
-books at configurable submission delays and records:
+Two separate FOK legs are **not** assumed atomic. P3.4 replays historical books at
+configurable submission delays and records:
 
 - both-leg completion,
 - one-leg exposure,
@@ -52,6 +53,41 @@ books at configurable submission delays and records:
 
 Current-market future books are used only ex-post in replay and never feed back
 into opportunity detection.
+
+## P3.6 entry-survival policy
+
+Observation count is not trade count. A single structural-arbitrage window can be
+observed many times while it remains open, so observation-level pair-fill statistics
+can be highly optimistic.
+
+The DRY policy therefore permits at most one simulated attempt per independent
+window and no longer assumes the first positive print is tradable. With the default:
+
+```text
+P3_DRY_ENTRY_CONFIRM_MS=250
+```
+
+the window must remain structurally positive for at least one default scanner cycle.
+The selected DRY entry is the first still-positive opportunity at or after:
+
+```text
+window.opened_ts_ms + P3_DRY_ENTRY_CONFIRM_MS
+```
+
+If a closed window dies before that point it is recorded as
+`SKIPPED_CONFIRMATION`. An open window that has not yet produced a surviving print
+is `PENDING_CONFIRMATION`.
+
+The dashboard also evaluates a same-data comparison grid:
+
+```text
+P3_DRY_SURVIVAL_DELAYS_MS=0,50,100,200,250,500
+```
+
+`0ms` is retained as the old first-print baseline. Each row reports independent
+attempt count, confirmation survival, pair completion, one-leg rate, cumulative
+PnL and maximum drawdown. This grid is research evidence only and never changes
+live execution because P3 has no live execution path.
 
 ## Deployment
 
