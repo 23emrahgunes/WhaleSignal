@@ -1,16 +1,16 @@
 """Configuration for P3 structural arbitrage DRY research and guarded LIVE mode.
 
 DRY remains the default. LIVE is a separately armed capability with conservative
-caps, localhost-only control and explicit environment gates. Secret key material is
-never modeled as a Pydantic setting; live adapters read it lazily from the process
-environment only when a connection/preflight or execution action is requested.
+caps and an authenticated 8093 operator surface. Secret trading material is never
+modeled as a setting. The dashboard password is a Pydantic SecretStr so accidental
+settings dumps redact it.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -117,15 +117,26 @@ class P3Settings(BaseSettings):
     live_require_geoblock_clear: bool = Field(
         default=True, alias="P3_LIVE_REQUIRE_GEOBLOCK_CLEAR"
     )
-    live_control_enabled: bool = Field(default=True, alias="P3_LIVE_CONTROL_ENABLED")
+
+    # Deprecated compatibility knobs from the first LIVE prototype. The daemon no
+    # longer starts a second control server; all operator actions are served on 8093.
+    live_control_enabled: bool = Field(default=False, alias="P3_LIVE_CONTROL_ENABLED")
     live_control_host: str = Field(default="127.0.0.1", alias="P3_LIVE_CONTROL_HOST")
     live_control_port: int = Field(default=8094, alias="P3_LIVE_CONTROL_PORT")
 
-    # Read-only public/main analytics dashboard.
+    # Main analytics + operator dashboard. When LIVE is enabled, authentication is
+    # mandatory. The password is redacted by SecretStr and is never returned by APIs.
     web_enabled: bool = Field(default=True, alias="P3_WEB_ENABLED")
     web_host: str = Field(default="127.0.0.1", alias="P3_WEB_HOST")
     web_port: int = Field(default=8093, alias="P3_WEB_PORT")
     web_refresh_ms: int = Field(default=3000, alias="P3_WEB_REFRESH_MS")
+    web_auth_required: bool = Field(default=False, alias="P3_WEB_AUTH_REQUIRED")
+    web_username: str = Field(default="operator", alias="P3_WEB_USERNAME")
+    web_password: SecretStr | None = Field(default=None, alias="P3_WEB_PASSWORD")
+    web_session_ttl_sec: int = Field(default=43_200, alias="P3_WEB_SESSION_TTL_SEC")
+    web_cookie_secure: bool = Field(default=False, alias="P3_WEB_COOKIE_SECURE")
+    web_login_max_failures: int = Field(default=5, alias="P3_WEB_LOGIN_MAX_FAILURES")
+    web_login_window_sec: int = Field(default=600, alias="P3_WEB_LOGIN_WINDOW_SEC")
 
     @staticmethod
     def _parse_nonnegative_ms(raw: str, *, name: str) -> tuple[int, ...]:
@@ -150,6 +161,9 @@ class P3Settings(BaseSettings):
             self.dry_survival_delays_ms,
             name="dry survival delays",
         )
+
+    def web_password_value(self) -> str:
+        return self.web_password.get_secret_value() if self.web_password is not None else ""
 
     def validate_research_safety(self) -> None:
         if Path(self.p26_db_path).resolve() == Path(self.p3_db_path).resolve():
@@ -190,6 +204,22 @@ class P3Settings(BaseSettings):
             raise ValueError("readiness drawdown cannot be negative")
         if not 1 <= self.web_port <= 65535:
             raise ValueError("invalid web port")
+        if self.web_refresh_ms < 250:
+            raise ValueError("P3_WEB_REFRESH_MS below 250ms is not supported")
+        if not self.web_username.strip():
+            raise ValueError("P3_WEB_USERNAME cannot be empty")
+        if not 300 <= self.web_session_ttl_sec <= 86_400:
+            raise ValueError("P3_WEB_SESSION_TTL_SEC must be between 300 and 86400")
+        if not 1 <= self.web_login_max_failures <= 20:
+            raise ValueError("P3_WEB_LOGIN_MAX_FAILURES must be between 1 and 20")
+        if not 60 <= self.web_login_window_sec <= 3600:
+            raise ValueError("P3_WEB_LOGIN_WINDOW_SEC must be between 60 and 3600")
+        if self.web_auth_required:
+            password = self.web_password_value()
+            if len(password) < 12:
+                raise ValueError("P3_WEB_PASSWORD must be at least 12 characters when auth is enabled")
+        if self.live_feature_enabled and not self.web_auth_required:
+            raise ValueError("P3 WEB authentication is required whenever LIVE feature is enabled")
 
         # LIVE safety contract. These checks are structural and run even while LIVE
         # is disabled, so a later env change cannot silently create an unsafe config.
@@ -207,12 +237,6 @@ class P3Settings(BaseSettings):
             raise ValueError("LIVE settlement timings must be positive")
         if self.live_chain_id != 137:
             raise ValueError("P3 LIVE v1 supports Polygon mainnet chain_id=137 only")
-        if self.live_control_host not in {"127.0.0.1", "::1", "localhost"}:
-            raise ValueError("P3 LIVE control panel must bind to loopback only")
-        if not 1 <= self.live_control_port <= 65535:
-            raise ValueError("invalid LIVE control port")
-        if self.live_control_port == self.web_port and self.live_control_host == self.web_host:
-            raise ValueError("LIVE control port must be separate from read-only dashboard")
         if not self.live_buy_merge_only:
             raise ValueError("P3 LIVE v1 only supports BUY+MERGE; SPLIT+SELL stays disabled")
         if self.live_auto_execute_enabled and not self.live_feature_enabled:
