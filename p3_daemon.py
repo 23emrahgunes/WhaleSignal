@@ -1,13 +1,8 @@
-"""P3 structural-arbitrage SHADOW daemon.
+"""P3 structural-arbitrage daemon with DRY default and guarded LIVE arming.
 
-Runs the model-free complete-set scanner, opportunity lifetime tracker, generic
-observation replay, strict confirmation-time entry replay and read-only dashboard.
-It never signs or submits orders.
-
-Historical replay can be CPU/SQLite heavy when a backlog exists. Runtime replay is
-therefore executed in a worker thread with fresh SQLite connections and a bounded
-batch. The asyncio event loop remains available for health/dashboard traffic and
-SIGTERM handling.
+Research scanner/replay always remains available. LIVE state is process-local and
+starts DRY after every restart. Optional authenticated execution runs only while a
+localhost operator has armed the process and all preflight gates remain valid.
 """
 from __future__ import annotations
 
@@ -18,6 +13,9 @@ import time
 
 from p3_config import P3Settings, get_p3_settings
 from p3_entry_replay import P3EntryReplayEngine
+from p3_live_control import run_live_control
+from p3_live_executor import P3LiveExecutor
+from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
 from p3_web import run_web
@@ -44,12 +42,6 @@ async def scanner_loop(scanner: StructuralArbScanner, interval_ms: int, stop: as
 
 
 def _run_research_backlog_once(settings: P3Settings) -> dict:
-    """Run one bounded replay slice on a worker thread.
-
-    Engines are constructed and closed inside the worker thread so sqlite3
-    connections are never moved across threads. Generic and strict-entry replay run
-    sequentially on the same worker to avoid unnecessary concurrent P3 writers.
-    """
     generic = P3ReplayEngine(settings)
     try:
         generic_result = generic.process_ready(
@@ -63,7 +55,6 @@ def _run_research_backlog_once(settings: P3Settings) -> dict:
         entry_result = entry.process_ready()
     finally:
         entry.close()
-
     return {"generic": generic_result, "entry": entry_result}
 
 
@@ -85,6 +76,31 @@ async def research_replay_loop(settings: P3Settings, stop: asyncio.Event) -> Non
             pass
 
 
+async def live_executor_loop(
+    settings: P3Settings,
+    state: LiveState,
+    stop: asyncio.Event,
+) -> None:
+    """Poll process-local LIVE state and execute at most one candidate per iteration."""
+    while not stop.is_set():
+        if state.can_auto_execute():
+            try:
+                result = await asyncio.to_thread(P3LiveExecutor(settings, state).process_once)
+                status = str(result.get("status") or "")
+                if status not in {"NO_CONFIRMED_WINDOW", "IDLE_NOT_AUTO_ARMED", "IDLE_NOT_ARMED"}:
+                    log.warning("P3 LIVE result=%s", result)
+            except Exception:  # noqa: BLE001
+                state.halt("LIVE_LOOP_EXCEPTION")
+                log.exception("P3 LIVE loop failed closed")
+        try:
+            await asyncio.wait_for(
+                stop.wait(),
+                timeout=max(0.02, settings.live_poll_interval_ms / 1000.0),
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
 def install_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -101,39 +117,52 @@ async def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s | %(message)s",
     )
+
+    live_state = LiveState(
+        live_feature_enabled=settings.live_feature_enabled,
+        auto_execute_enabled=settings.live_auto_execute_enabled,
+    )
     log.info(
-        "P3 Arbitrage Lab starting SHADOW only p26_db=%s p3_db=%s scan=%dms "
-        "web=%s:%d replay_runtime_batch=%d",
+        "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
+        "live_feature=%s live_auto=%s live_control=%s:%d",
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
         settings.web_host,
         settings.web_port,
-        settings.replay_runtime_batch_size,
+        settings.live_feature_enabled,
+        settings.live_auto_execute_enabled,
+        settings.live_control_host,
+        settings.live_control_port,
     )
+
     stop = asyncio.Event()
     install_handlers(asyncio.get_running_loop(), stop)
-
     tasks: list[asyncio.Task] = []
     scanner: StructuralArbScanner | None = None
 
-    # Bind the health/dashboard server before launching any research backlog work.
-    # The short yield gives aiohttp a chance to complete site.start() before the
-    # scanner/replay loops begin; replay itself is then offloaded from this event loop.
     if settings.web_enabled:
-        tasks.append(asyncio.create_task(run_web(settings, stop)))
+        tasks.append(asyncio.create_task(run_web(settings, stop, live_state=live_state)))
         await asyncio.sleep(0.10)
+
+    if settings.live_control_enabled:
+        tasks.append(asyncio.create_task(run_live_control(settings, live_state, stop)))
 
     if settings.scanner_enabled:
         scanner = StructuralArbScanner(settings)
         tasks.append(asyncio.create_task(scanner_loop(scanner, settings.scan_interval_ms, stop)))
         tasks.append(asyncio.create_task(research_replay_loop(settings, stop)))
 
+    # Executor loop is safe to run without optional SDK dependencies because clients
+    # are imported lazily only after LIVE is explicitly armed and auto-execution true.
+    tasks.append(asyncio.create_task(live_executor_loop(settings, live_state, stop)))
+
     if not tasks:
         raise RuntimeError("P3 has no enabled tasks")
     try:
         await asyncio.gather(*tasks)
     finally:
+        live_state.disarm("process_shutdown")
         stop.set()
         if scanner is not None:
             scanner.close()
