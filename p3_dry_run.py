@@ -1,16 +1,14 @@
-"""Window-level DRY execution analytics for P3 structural arbitrage.
+"""Independent-window DRY analytics for P3 structural arbitrage.
 
-A scanner can observe the same structural discrepancy many times while one
-opportunity window is open. Counting those observations as independent trades
-inflates sample size and PnL.
+P3.6.1 separates two evidence levels:
 
-P3.6 adds entry-survival confirmation. Instead of automatically treating the
-first positive print as a trade, the DRY policy waits for a configurable number
-of milliseconds and selects the first still-positive opportunity at/after that
-confirmation point. This rejects short-lived two-book repricing gaps while
-preserving the one-attempt-per-independent-window rule.
+- STRICT: every positive scanner touch is timestamped, confirmation must be a
+  continuous positive chain, and execution is replayed from the actual confirmed
+  observation timestamp.
+- LEGACY / INDICATIVE: pre-timeline windows can still be inspected, but they are
+  excluded from strict bankroll/readiness because continuity cannot be reconstructed.
 
-It is analytics only: no credentials, signatures or order submission exist here.
+No credentials, signatures or order submission exist here.
 """
 from __future__ import annotations
 
@@ -19,6 +17,14 @@ import sqlite3
 from typing import Any
 
 from p3_config import P3Settings
+from p3_confirmation import (
+    CONFIRMED,
+    CONFIRMATION_GAP,
+    LEGACY_CONFIRMATION_UNPROVEN,
+    PENDING_CONFIRMATION,
+    SKIPPED_CONFIRMATION,
+    select_confirmed_observation,
+)
 
 
 def wilson_lower(successes: int, total: int, z: float = 1.959963984540054) -> float:
@@ -32,48 +38,29 @@ def wilson_lower(successes: int, total: int, z: float = 1.959963984540054) -> fl
     return max(0.0, (centre - spread) / (1.0 + z2 / n))
 
 
-def _window_rows(
+def _legacy_window_rows(
     conn: sqlite3.Connection,
     replay_delay_ms: int,
     confirm_ms: int,
 ) -> list[sqlite3.Row]:
-    """Return every window and its first surviving opportunity, if one exists.
-
-    A LEFT JOIN is deliberate: windows that die before confirmation must remain in
-    the denominator and be reported as skipped/pending rather than disappearing.
-    """
+    """Old coarse confirmation model, retained only for indicative comparison."""
     return conn.execute(
         """
         SELECT
-            w.id AS window_id,
-            w.strategy,
-            w.condition_id,
-            w.combo_key,
-            w.opened_ts_ms,
-            w.last_seen_ts_ms,
-            w.closed_ts_ms,
-            w.status AS window_status,
-            o.id AS opportunity_id,
-            o.detected_ts_ms,
-            o.quantity_shares,
-            o.capital_usdc,
-            o.net_profit_usdc AS theoretical_net_profit_usdc,
-            o.net_roi AS theoretical_net_roi,
-            r.outcome,
-            r.both_fill,
-            r.cycle_net_pnl_usdc,
-            r.unwind_loss_usdc
+            w.id AS window_id,w.strategy,w.condition_id,w.combo_key,
+            w.opened_ts_ms,w.last_seen_ts_ms,w.closed_ts_ms,w.status AS window_status,
+            o.id AS opportunity_id,o.detected_ts_ms,o.quantity_shares,o.capital_usdc,
+            o.net_profit_usdc AS theoretical_net_profit_usdc,o.net_roi AS theoretical_net_roi,
+            r.outcome,r.both_fill,r.cycle_net_pnl_usdc,r.unwind_loss_usdc
         FROM p3_windows AS w
         LEFT JOIN p3_opportunities AS o
           ON o.id = (
-              SELECT o2.id
-              FROM p3_opportunities AS o2
+              SELECT o2.id FROM p3_opportunities AS o2
               WHERE o2.strategy=w.strategy
                 AND o2.condition_id=w.condition_id
                 AND o2.detected_ts_ms>=w.opened_ts_ms + ?
                 AND o2.detected_ts_ms<=w.last_seen_ts_ms
-              ORDER BY o2.detected_ts_ms,o2.id
-              LIMIT 1
+              ORDER BY o2.detected_ts_ms,o2.id LIMIT 1
           )
         LEFT JOIN p3_replays AS r
           ON r.opportunity_id=o.id AND r.delay_ms=?
@@ -83,73 +70,172 @@ def _window_rows(
     ).fetchall()
 
 
+def _build_legacy_indicative(
+    conn: sqlite3.Connection,
+    settings: P3Settings,
+    *,
+    confirm_ms: int,
+) -> dict[str, Any]:
+    rows = _legacy_window_rows(conn, settings.dry_latency_ms, confirm_ms)
+    bankroll = float(settings.dry_start_bankroll_usdc)
+    high_water = bankroll
+    cumulative = 0.0
+    max_dd = 0.0
+    executed = pair = one_leg = 0
+    for row in rows:
+        if row["opportunity_id"] is None:
+            continue
+        capital = float(row["capital_usdc"])
+        theoretical = float(row["theoretical_net_profit_usdc"])
+        roi = float(row["theoretical_net_roi"])
+        if capital > float(settings.max_capital_per_cycle_usdc) + 1e-9:
+            continue
+        if theoretical < float(settings.dry_min_net_profit_usdc) or roi < float(settings.dry_min_net_roi):
+            continue
+        if row["outcome"] is None or row["cycle_net_pnl_usdc"] is None:
+            continue
+        pnl = float(row["cycle_net_pnl_usdc"])
+        executed += 1
+        cumulative += pnl
+        bankroll += pnl
+        high_water = max(high_water, bankroll)
+        max_dd = max(max_dd, high_water - bankroll)
+        if int(row["both_fill"] or 0):
+            pair += 1
+        if str(row["outcome"] or "").startswith("ONE_LEG"):
+            one_leg += 1
+    return {
+        "evidence_level": "LEGACY_INDICATIVE_ONLY",
+        "entry_confirm_ms": int(confirm_ms),
+        "windows_seen": len(rows),
+        "attempts_executed": executed,
+        "pair_completion_rate": pair / executed if executed else 0.0,
+        "one_leg_rate": one_leg / executed if executed else 0.0,
+        "cumulative_pnl_usdc": cumulative,
+        "bankroll_usdc": bankroll,
+        "max_drawdown_usdc": max_dd,
+        "note": "Coarse pre-timeline confirmation; excluded from strict readiness.",
+    }
+
+
+def _strict_windows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT id,strategy,condition_id,combo_key,opened_ts_ms,last_seen_ts_ms,
+               closed_ts_ms,status
+        FROM p3_windows ORDER BY opened_ts_ms,id
+        """
+    ).fetchall()
+
+
 def _build_policy_summary(
     conn: sqlite3.Connection,
     settings: P3Settings,
     *,
     confirm_ms: int,
 ) -> dict[str, Any]:
-    rows = _window_rows(conn, settings.dry_latency_ms, confirm_ms)
+    windows = _strict_windows(conn)
     bankroll = float(settings.dry_start_bankroll_usdc)
     high_water = bankroll
     max_drawdown = 0.0
     cumulative_pnl = 0.0
     attempts: list[dict[str, Any]] = []
-    pair_fills = 0
-    one_leg = 0
-    positive = 0
-    negative = 0
-    pending_replay = 0
-    pending_confirmation = 0
-    skipped_confirmation = 0
-    skipped_capital = 0
-    skipped_edge = 0
-    confirmed_windows = 0
+    pair_fills = one_leg = positive = negative = 0
+    pending_replay = pending_confirmation = skipped_confirmation = 0
+    confirmation_gaps = legacy_unproven = 0
+    skipped_capital = skipped_edge = confirmed_windows = 0
+    strict_timeline_windows = 0
 
-    for row in rows:
-        window_id = int(row["window_id"])
-        opened_ts_ms = int(row["opened_ts_ms"])
-        confirmation_target_ts_ms = opened_ts_ms + int(confirm_ms)
-        opportunity_id = row["opportunity_id"]
-        window_status = str(row["window_status"])
+    for window in windows:
+        window_id = int(window["id"])
+        opened = int(window["opened_ts_ms"])
+        selection = select_confirmed_observation(
+            conn,
+            window_id=window_id,
+            confirm_ms=int(confirm_ms),
+            max_gap_ms=int(settings.dry_confirm_max_gap_ms),
+        )
 
-        if opportunity_id is None:
-            if window_status == "OPEN":
-                status = "PENDING_CONFIRMATION"
-                pending_confirmation += 1
-            else:
-                status = "SKIPPED_CONFIRMATION"
-                skipped_confirmation += 1
-            attempts.append(
-                {
-                    "window_id": window_id,
-                    "combo_key": str(row["combo_key"]),
-                    "strategy": str(row["strategy"]),
-                    "opened_ts_ms": opened_ts_ms,
-                    "window_status": window_status,
-                    "confirmation_target_ts_ms": confirmation_target_ts_ms,
-                    "entry_confirm_ms": int(confirm_ms),
-                    "entry_age_ms": None,
-                    "opportunity_id": None,
-                    "quantity_shares": None,
-                    "capital_usdc": None,
-                    "theoretical_net_profit_usdc": None,
-                    "theoretical_net_roi": None,
-                    "replay_outcome": None,
-                    "dry_status": status,
-                    "cycle_net_pnl_usdc": None,
-                    "bankroll_after_usdc": None,
-                }
-            )
+        base = {
+            "window_id": window_id,
+            "combo_key": str(window["combo_key"]),
+            "strategy": str(window["strategy"]),
+            "opened_ts_ms": opened,
+            "window_status": str(window["status"]),
+            "confirmation_target_ts_ms": int(selection.target_ts_ms),
+            "entry_confirm_ms": int(confirm_ms),
+            "max_confirmation_gap_ms": int(settings.dry_confirm_max_gap_ms),
+            "max_gap_seen_ms": selection.max_gap_seen_ms,
+            "confirmation_reason": selection.reason,
+        }
+
+        if selection.status == LEGACY_CONFIRMATION_UNPROVEN:
+            legacy_unproven += 1
+            attempts.append({
+                **base,
+                "entry_age_ms": None,
+                "observation_id": None,
+                "opportunity_id": None,
+                "quantity_shares": None,
+                "capital_usdc": None,
+                "theoretical_net_profit_usdc": None,
+                "theoretical_net_roi": None,
+                "replay_outcome": None,
+                "dry_status": LEGACY_CONFIRMATION_UNPROVEN,
+                "cycle_net_pnl_usdc": None,
+                "bankroll_after_usdc": None,
+            })
+            continue
+
+        strict_timeline_windows += 1
+        if selection.status == CONFIRMATION_GAP:
+            confirmation_gaps += 1
+        elif selection.status == PENDING_CONFIRMATION:
+            pending_confirmation += 1
+        elif selection.status == SKIPPED_CONFIRMATION:
+            skipped_confirmation += 1
+
+        if selection.status != CONFIRMED:
+            attempts.append({
+                **base,
+                "entry_age_ms": None,
+                "observation_id": None,
+                "opportunity_id": None,
+                "quantity_shares": None,
+                "capital_usdc": None,
+                "theoretical_net_profit_usdc": None,
+                "theoretical_net_roi": None,
+                "replay_outcome": None,
+                "dry_status": selection.status,
+                "cycle_net_pnl_usdc": None,
+                "bankroll_after_usdc": None,
+            })
             continue
 
         confirmed_windows += 1
-        detected_ts_ms = int(row["detected_ts_ms"])
-        capital = float(row["capital_usdc"])
-        theoretical = float(row["theoretical_net_profit_usdc"])
-        roi = float(row["theoretical_net_roi"])
-        status = "PENDING_REPLAY"
+        assert selection.opportunity_id is not None
+        assert selection.observation_id is not None
+        assert selection.entry_ts_ms is not None
+        opp = conn.execute(
+            "SELECT * FROM p3_opportunities WHERE id=?",
+            (int(selection.opportunity_id),),
+        ).fetchone()
+        if opp is None:
+            raise RuntimeError(f"confirmed opportunity missing: {selection.opportunity_id}")
+        replay = conn.execute(
+            """
+            SELECT * FROM p3_entry_replays
+            WHERE window_id=? AND confirm_ms=? AND delay_ms=?
+            """,
+            (window_id, int(confirm_ms), int(settings.dry_latency_ms)),
+        ).fetchone()
+
+        capital = float(opp["capital_usdc"])
+        theoretical = float(opp["net_profit_usdc"])
+        roi = float(opp["net_roi"])
+        status = "PENDING_ENTRY_REPLAY"
         pnl = None
+        replay_outcome = None
 
         if capital > float(settings.max_capital_per_cycle_usdc) + 1e-9:
             status = "SKIPPED_CAPITAL_LIMIT"
@@ -157,54 +243,51 @@ def _build_policy_summary(
         elif theoretical < float(settings.dry_min_net_profit_usdc) or roi < float(settings.dry_min_net_roi):
             status = "SKIPPED_EDGE_GATE"
             skipped_edge += 1
-        elif row["outcome"] is None or row["cycle_net_pnl_usdc"] is None:
+        elif replay is None or replay["cycle_net_pnl_usdc"] is None:
             pending_replay += 1
+            replay_outcome = str(replay["outcome"]) if replay is not None else None
         else:
             status = "DRY_EXECUTED"
-            pnl = float(row["cycle_net_pnl_usdc"])
+            replay_outcome = str(replay["outcome"])
+            pnl = float(replay["cycle_net_pnl_usdc"])
             cumulative_pnl += pnl
             bankroll += pnl
             high_water = max(high_water, bankroll)
             max_drawdown = max(max_drawdown, high_water - bankroll)
-            if int(row["both_fill"] or 0):
+            if int(replay["both_fill"] or 0):
                 pair_fills += 1
-            if str(row["outcome"] or "").startswith("ONE_LEG"):
+            if replay_outcome.startswith("ONE_LEG"):
                 one_leg += 1
             if pnl > 0:
                 positive += 1
             elif pnl < 0:
                 negative += 1
 
-        attempts.append(
-            {
-                "window_id": window_id,
-                "combo_key": str(row["combo_key"]),
-                "strategy": str(row["strategy"]),
-                "opened_ts_ms": opened_ts_ms,
-                "window_status": window_status,
-                "confirmation_target_ts_ms": confirmation_target_ts_ms,
-                "entry_confirm_ms": int(confirm_ms),
-                "entry_age_ms": detected_ts_ms - opened_ts_ms,
-                "opportunity_id": int(opportunity_id),
-                "quantity_shares": float(row["quantity_shares"]),
-                "capital_usdc": capital,
-                "theoretical_net_profit_usdc": theoretical,
-                "theoretical_net_roi": roi,
-                "replay_outcome": (str(row["outcome"]) if row["outcome"] is not None else None),
-                "dry_status": status,
-                "cycle_net_pnl_usdc": pnl,
-                "bankroll_after_usdc": bankroll if status == "DRY_EXECUTED" else None,
-            }
-        )
+        attempts.append({
+            **base,
+            "entry_age_ms": int(selection.entry_ts_ms) - opened,
+            "observation_id": int(selection.observation_id),
+            "opportunity_id": int(selection.opportunity_id),
+            "quantity_shares": float(opp["quantity_shares"]),
+            "capital_usdc": capital,
+            "theoretical_net_profit_usdc": theoretical,
+            "theoretical_net_roi": roi,
+            "replay_outcome": replay_outcome,
+            "dry_status": status,
+            "cycle_net_pnl_usdc": pnl,
+            "bankroll_after_usdc": bankroll if status == "DRY_EXECUTED" else None,
+        })
 
     executed = sum(1 for item in attempts if item["dry_status"] == "DRY_EXECUTED")
     pair_rate = pair_fills / executed if executed else 0.0
     one_leg_rate = one_leg / executed if executed else 0.0
     average_pnl = cumulative_pnl / executed if executed else 0.0
     wilson = wilson_lower(pair_fills, executed)
-    survival_rate = confirmed_windows / len(rows) if rows else 0.0
+    survival_rate = confirmed_windows / strict_timeline_windows if strict_timeline_windows else 0.0
 
     reasons: list[str] = []
+    if strict_timeline_windows == 0:
+        reasons.append("NO_STRICT_TIMELINE_EVIDENCE")
     if executed < settings.readiness_min_windows:
         reasons.append(f"INSUFFICIENT_INDEPENDENT_WINDOWS:{executed}/{settings.readiness_min_windows}")
     if pair_rate < settings.readiness_min_pair_completion:
@@ -222,17 +305,22 @@ def _build_policy_summary(
 
     return {
         "enabled": bool(settings.dry_enabled),
-        "policy": "ONE_CONFIRMED_ENTRY_PER_INDEPENDENT_WINDOW",
+        "evidence_level": "STRICT_CONTINUOUS_TIMELINE",
+        "policy": "ONE_STRICT_CONFIRMED_ENTRY_PER_INDEPENDENT_WINDOW",
         "entry_confirm_ms": int(confirm_ms),
+        "confirm_max_gap_ms": int(settings.dry_confirm_max_gap_ms),
         "latency_ms": int(settings.dry_latency_ms),
         "start_bankroll_usdc": float(settings.dry_start_bankroll_usdc),
         "bankroll_usdc": bankroll,
         "cumulative_pnl_usdc": cumulative_pnl,
         "average_pnl_usdc": average_pnl,
         "max_drawdown_usdc": max_drawdown,
-        "windows_seen": len(rows),
+        "windows_seen": len(windows),
+        "strict_timeline_windows": strict_timeline_windows,
+        "legacy_unproven_windows": legacy_unproven,
         "confirmed_windows": confirmed_windows,
         "confirmation_survival_rate": survival_rate,
+        "confirmation_gaps": confirmation_gaps,
         "attempts_executed": executed,
         "pair_fills": pair_fills,
         "pair_completion_rate": pair_rate,
@@ -261,28 +349,19 @@ def _build_policy_summary(
 
 
 def _compact_policy(summary: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "entry_confirm_ms": int(summary["entry_confirm_ms"]),
-        "windows_seen": int(summary["windows_seen"]),
-        "confirmed_windows": int(summary["confirmed_windows"]),
-        "confirmation_survival_rate": float(summary["confirmation_survival_rate"]),
-        "attempts_executed": int(summary["attempts_executed"]),
-        "skipped_confirmation": int(summary["skipped_confirmation"]),
-        "pending_confirmation": int(summary["pending_confirmation"]),
-        "pending_replay": int(summary["pending_replay"]),
-        "pair_fills": int(summary["pair_fills"]),
-        "pair_completion_rate": float(summary["pair_completion_rate"]),
-        "pair_completion_wilson_lower_95": float(summary["pair_completion_wilson_lower_95"]),
-        "one_leg": int(summary["one_leg"]),
-        "one_leg_rate": float(summary["one_leg_rate"]),
-        "cumulative_pnl_usdc": float(summary["cumulative_pnl_usdc"]),
-        "average_pnl_usdc": float(summary["average_pnl_usdc"]),
-        "max_drawdown_usdc": float(summary["max_drawdown_usdc"]),
-    }
+    keys = (
+        "entry_confirm_ms", "windows_seen", "strict_timeline_windows",
+        "legacy_unproven_windows", "confirmed_windows", "confirmation_survival_rate",
+        "confirmation_gaps", "attempts_executed", "skipped_confirmation",
+        "pending_confirmation", "pending_replay", "pair_fills",
+        "pair_completion_rate", "pair_completion_wilson_lower_95", "one_leg",
+        "one_leg_rate", "cumulative_pnl_usdc", "average_pnl_usdc", "max_drawdown_usdc",
+    )
+    return {key: summary[key] for key in keys}
 
 
 def build_dry_summary(conn: sqlite3.Connection, settings: P3Settings) -> dict[str, Any]:
-    """Build the active confirmed-entry DRY result plus a same-data policy grid."""
+    """Build strict active DRY evidence and keep old coarse evidence visibly separate."""
     primary_confirm = int(settings.dry_entry_confirm_ms)
     primary = _build_policy_summary(conn, settings, confirm_ms=primary_confirm)
 
@@ -291,10 +370,9 @@ def build_dry_summary(conn: sqlite3.Connection, settings: P3Settings) -> dict[st
     confirms.add(primary_confirm)
     survival: dict[str, dict[str, Any]] = {}
     for confirm_ms in sorted(confirms):
-        if confirm_ms == primary_confirm:
-            summary = primary
-        else:
-            summary = _build_policy_summary(conn, settings, confirm_ms=confirm_ms)
+        summary = primary if confirm_ms == primary_confirm else _build_policy_summary(
+            conn, settings, confirm_ms=confirm_ms
+        )
         survival[str(confirm_ms)] = _compact_policy(summary)
 
     baseline = survival.get("0")
@@ -305,8 +383,7 @@ def build_dry_summary(conn: sqlite3.Connection, settings: P3Settings) -> dict[st
                 - float(baseline["cumulative_pnl_usdc"])
             )
             item["one_leg_rate_delta_vs_0"] = (
-                float(item["one_leg_rate"])
-                - float(baseline["one_leg_rate"])
+                float(item["one_leg_rate"]) - float(baseline["one_leg_rate"])
             )
             item["pair_completion_delta_vs_0"] = (
                 float(item["pair_completion_rate"])
@@ -314,4 +391,7 @@ def build_dry_summary(conn: sqlite3.Connection, settings: P3Settings) -> dict[st
             )
 
     primary["survival_by_confirm_ms"] = survival
+    primary["legacy_indicative"] = _build_legacy_indicative(
+        conn, settings, confirm_ms=primary_confirm
+    )
     return primary
