@@ -1,9 +1,9 @@
 """Polymarket LIVE gateway for P3 BUY+MERGE v1.
 
 Two exact-share limit orders are posted as FOK in one CLOB batch request. The batch
-is not assumed atomic: on-chain/conditional balances are verified afterwards. Both
-verified legs are merged back to collateral; a verified single leg is unwound with
-a FOK market sell and the caller is expected to halt if that unwind fails.
+is not assumed atomic: conditional balances are verified afterwards. Both verified
+legs are merged back to collateral; a verified single leg is unwound with a FOK
+market sell and the unwind is balance-verified before execution may continue.
 """
 from __future__ import annotations
 
@@ -72,7 +72,6 @@ class PolymarketLiveGateway:
             try:
                 self.clob.update_balance_allowance(params)
             except Exception:
-                # The subsequent authenticated GET is authoritative for this decision.
                 pass
         payload = self.clob.get_balance_allowance(params)
         return parse_conditional_balance_shares(payload)
@@ -86,29 +85,14 @@ class PolymarketLiveGateway:
         up_limit_price: float,
         down_limit_price: float,
     ) -> dict[str, Any]:
-        from py_clob_client_v2 import (  # type: ignore
-            OrderArgs,
-            OrderType,
-            PostOrdersV2Args,
-            Side,
-        )
+        from py_clob_client_v2 import OrderArgs, OrderType, PostOrdersV2Args, Side  # type: ignore
 
         q = float(quantity_shares)
         up_signed = self.clob.create_order(
-            OrderArgs(
-                token_id=str(up_token_id),
-                price=float(up_limit_price),
-                side=Side.BUY,
-                size=q,
-            )
+            OrderArgs(token_id=str(up_token_id), price=float(up_limit_price), side=Side.BUY, size=q)
         )
         down_signed = self.clob.create_order(
-            OrderArgs(
-                token_id=str(down_token_id),
-                price=float(down_limit_price),
-                side=Side.BUY,
-                size=q,
-            )
+            OrderArgs(token_id=str(down_token_id), price=float(down_limit_price), side=Side.BUY, size=q)
         )
         raw = self.clob.post_orders(
             [
@@ -148,18 +132,15 @@ class PolymarketLiveGateway:
             down_delta = max(0.0, last_down - float(before_down))
             up_ok = up_delta + epsilon >= q
             down_ok = down_delta + epsilon >= q
-            if up_ok or down_ok:
-                # If only one is visible, keep polling through the settlement window
-                # in case the other leg settles a moment later.
-                if up_ok and down_ok:
-                    return {
-                        "up_verified": True,
-                        "down_verified": True,
-                        "up_after": last_up,
-                        "down_after": last_down,
-                        "up_delta": up_delta,
-                        "down_delta": down_delta,
-                    }
+            if up_ok and down_ok:
+                return {
+                    "up_verified": True,
+                    "down_verified": True,
+                    "up_after": last_up,
+                    "down_after": last_down,
+                    "up_delta": up_delta,
+                    "down_delta": down_delta,
+                }
             time.sleep(float(self.settings.live_settlement_poll_sec))
         up_delta = max(0.0, last_up - float(before_up))
         down_delta = max(0.0, last_down - float(before_down))
@@ -187,13 +168,40 @@ class PolymarketLiveGateway:
         item = _response_list(raw)[0]
         return {"response": _sanitize_response(item), "order_id": _order_id(item)}
 
-    def merge_positions(self, *, condition_id: str, quantity_shares: float) -> str | None:
+    def wait_for_unwind(
+        self,
+        *,
+        token_id: str,
+        before_entry_balance: float,
+        max_residual_shares: float = 1e-5,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + float(self.settings.live_settlement_wait_sec)
+        last = self.conditional_balance_shares(token_id, refresh=True)
+        while time.monotonic() <= deadline:
+            last = self.conditional_balance_shares(token_id, refresh=True)
+            residual = max(0.0, last - float(before_entry_balance))
+            if residual <= float(max_residual_shares):
+                return {"verified": True, "after": last, "residual": residual}
+            time.sleep(float(self.settings.live_settlement_poll_sec))
+        return {
+            "verified": False,
+            "after": last,
+            "residual": max(0.0, last - float(before_entry_balance)),
+        }
+
+    def merge_positions(self, *, condition_id: str, quantity_shares: float) -> dict[str, Any]:
         client = make_secure_sdk_client()
         try:
             amount = int(round(float(quantity_shares) * 1_000_000))
             handle = client.merge_positions(condition_id=str(condition_id), amount=amount)
-            tx_hash = getattr(handle, "transaction_hash", None)
-            return str(tx_hash) if tx_hash else None
+            broadcast_hash = getattr(handle, "transaction_hash", None)
+            outcome = handle.wait()
+            final_hash = getattr(outcome, "transaction_hash", None) or broadcast_hash
+            return {
+                "verified": bool(final_hash),
+                "transaction_hash": str(final_hash) if final_hash else None,
+                "transaction_id": getattr(outcome, "transaction_id", None),
+            }
         finally:
             close = getattr(client, "close", None)
             if callable(close):
