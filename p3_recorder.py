@@ -62,7 +62,32 @@ class P3Recorder:
             raise RuntimeError("opportunity insert lookup failed")
         return int(row["id"]), created
 
+    def _record_window_observation(
+        self,
+        *,
+        window_id: int,
+        opportunity_id: int,
+        observed_ts_ms: int,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO p3_window_observations(
+                window_id,opportunity_id,observed_ts_ms,created_at_ms
+            ) VALUES(?,?,?,?)
+            """,
+            (
+                int(window_id), int(opportunity_id), int(observed_ts_ms),
+                int(time.time() * 1000),
+            ),
+        )
+
     def touch_window(self, opportunity_id: int, opp: StructuralOpportunity) -> int:
+        """Touch/create a window and persist the actual positive scanner observation.
+
+        Opportunity rows are intentionally deduplicated by book state, but confirmation
+        needs every positive scan timestamp. p3_window_observations therefore records
+        the scan clock even when opportunity_id points to an older deduplicated row.
+        """
         row = self.conn.execute(
             """
             SELECT * FROM p3_windows
@@ -86,11 +111,18 @@ class P3Recorder:
                     float(opp.quantity_shares), int(opportunity_id),
                 ),
             )
+            window_id = int(cur.lastrowid)
+            self._record_window_observation(
+                window_id=window_id,
+                opportunity_id=opportunity_id,
+                observed_ts_ms=int(opp.detected_ts_ms),
+            )
             self.conn.commit()
-            return int(cur.lastrowid)
+            return window_id
 
         peak_profit = float(row["peak_net_profit_usdc"])
         is_peak = opp.net_profit_usdc > peak_profit
+        window_id = int(row["id"])
         self.conn.execute(
             """
             UPDATE p3_windows SET
@@ -104,11 +136,16 @@ class P3Recorder:
             (
                 int(opp.detected_ts_ms), int(is_peak), float(opp.net_profit_usdc),
                 int(is_peak), float(opp.net_roi), int(is_peak), float(opp.quantity_shares),
-                int(is_peak), int(opportunity_id), int(row["id"]),
+                int(is_peak), int(opportunity_id), window_id,
             ),
         )
+        self._record_window_observation(
+            window_id=window_id,
+            opportunity_id=opportunity_id,
+            observed_ts_ms=int(opp.detected_ts_ms),
+        )
         self.conn.commit()
-        return int(row["id"])
+        return window_id
 
     def close_stale_windows(
         self,

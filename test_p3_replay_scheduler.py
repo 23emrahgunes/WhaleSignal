@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
-from pathlib import Path
 
 from p3_config import P3Settings
 from p3_models import ARB_BUY_MERGE, StructuralOpportunity
 from p3_recorder import P3Recorder
+from p3_replay_clock import REPLAY_VERSION
 from p3_replay_scheduler import P3ReplayEngine
 
 
@@ -53,6 +54,9 @@ def test_scheduler_does_not_starve_later_opportunities(tmp_path, monkeypatch):
     recorder = P3Recorder(str(p3))
     first_id, _ = recorder.record_opportunity(_opp("c1", 1000))
     second_id, _ = recorder.record_opportunity(_opp("c2", 1000))
+    details = json.dumps(
+        {"replay_version": REPLAY_VERSION, "time_axis": "inserted_at_ms_asof"}
+    )
     for delay in (10, 20):
         recorder.conn.execute(
             """
@@ -62,7 +66,10 @@ def test_scheduler_does_not_starve_later_opportunities(tmp_path, monkeypatch):
                 details_json,created_at_ms
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (first_id, delay, 1000 + delay, None, ARB_BUY_MERGE, 1.0, 0, 0, 0, "DONE", "{}", 1),
+            (
+                first_id, delay, 1000 + delay, None, ARB_BUY_MERGE,
+                1.0, 0, 0, 0, "DONE", details, 1,
+            ),
         )
     recorder.conn.commit()
     recorder.close()
@@ -71,6 +78,7 @@ def test_scheduler_does_not_starve_later_opportunities(tmp_path, monkeypatch):
     calls: list[tuple[int, int]] = []
     monkeypatch.setattr(engine, "replay_one", lambda oid, delay: calls.append((oid, delay)))
     result = engine.process_ready(now_ms=5000)
+    assert result["legacy_replays_purged"] == 0
     assert result["opportunities_scanned"] == 1
     assert calls == [(second_id, 10), (second_id, 20)]
     engine.close()

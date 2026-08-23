@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 
-P3_SCHEMA_VERSION = 1
+P3_SCHEMA_VERSION = 2
 
 DDL = """
 CREATE TABLE IF NOT EXISTS p3_meta (
@@ -71,6 +71,21 @@ CREATE TABLE IF NOT EXISTS p3_windows (
 CREATE INDEX IF NOT EXISTS idx_p3_windows_status
 ON p3_windows(status,strategy,condition_id,last_seen_ts_ms);
 
+-- Every positive scanner touch is persisted, including unchanged/deduplicated
+-- book states. This is the strict continuity clock for P3.6.1 confirmation.
+CREATE TABLE IF NOT EXISTS p3_window_observations (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    window_id           INTEGER NOT NULL,
+    opportunity_id      INTEGER NOT NULL,
+    observed_ts_ms      INTEGER NOT NULL,
+    created_at_ms       INTEGER NOT NULL,
+    UNIQUE(window_id,observed_ts_ms),
+    FOREIGN KEY(window_id) REFERENCES p3_windows(id) ON DELETE CASCADE,
+    FOREIGN KEY(opportunity_id) REFERENCES p3_opportunities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_p3_window_obs_window_time
+ON p3_window_observations(window_id,observed_ts_ms,id);
+
 CREATE TABLE IF NOT EXISTS p3_replays (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     opportunity_id          INTEGER NOT NULL,
@@ -98,6 +113,42 @@ CREATE TABLE IF NOT EXISTS p3_replays (
 );
 CREATE INDEX IF NOT EXISTS idx_p3_replays_delay_outcome
 ON p3_replays(delay_ms,outcome);
+
+-- Confirmation-time replay is keyed to the actual scanner observation timestamp,
+-- not the deduplicated opportunity's original detection timestamp.
+CREATE TABLE IF NOT EXISTS p3_entry_replays (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    window_id               INTEGER NOT NULL,
+    confirm_ms              INTEGER NOT NULL,
+    observation_id          INTEGER NOT NULL,
+    opportunity_id          INTEGER NOT NULL,
+    entry_ts_ms             INTEGER NOT NULL,
+    delay_ms                INTEGER NOT NULL,
+    target_ts_ms            INTEGER NOT NULL,
+    observed_ts_ms          INTEGER,
+    strategy                TEXT NOT NULL,
+    quantity_shares         REAL NOT NULL,
+    up_fill                 INTEGER NOT NULL DEFAULT 0,
+    down_fill               INTEGER NOT NULL DEFAULT 0,
+    both_fill               INTEGER NOT NULL DEFAULT 0,
+    outcome                 TEXT NOT NULL,
+    up_exec_price           REAL,
+    down_exec_price         REAL,
+    gross_profit_usdc       REAL,
+    unwind_side             TEXT,
+    unwind_price            REAL,
+    unwind_fee_usdc         REAL,
+    unwind_loss_usdc        REAL,
+    cycle_net_pnl_usdc      REAL,
+    details_json            TEXT NOT NULL,
+    created_at_ms           INTEGER NOT NULL,
+    UNIQUE(window_id,confirm_ms,delay_ms),
+    FOREIGN KEY(window_id) REFERENCES p3_windows(id) ON DELETE CASCADE,
+    FOREIGN KEY(observation_id) REFERENCES p3_window_observations(id) ON DELETE CASCADE,
+    FOREIGN KEY(opportunity_id) REFERENCES p3_opportunities(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_p3_entry_replays_policy
+ON p3_entry_replays(confirm_ms,delay_ms,outcome);
 
 CREATE TABLE IF NOT EXISTS p3_health_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
