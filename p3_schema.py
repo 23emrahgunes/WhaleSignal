@@ -1,4 +1,4 @@
-"""SQLite schema for the isolated P3 arbitrage research database."""
+"""SQLite schema for P3 arbitrage research and sanitized LIVE audit records."""
 from __future__ import annotations
 
 import sqlite3
@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 
-P3_SCHEMA_VERSION = 2
+P3_SCHEMA_VERSION = 3
 
 DDL = """
 CREATE TABLE IF NOT EXISTS p3_meta (
@@ -71,8 +71,6 @@ CREATE TABLE IF NOT EXISTS p3_windows (
 CREATE INDEX IF NOT EXISTS idx_p3_windows_status
 ON p3_windows(status,strategy,condition_id,last_seen_ts_ms);
 
--- Every positive scanner touch is persisted, including unchanged/deduplicated
--- book states. This is the strict continuity clock for P3.6.1 confirmation.
 CREATE TABLE IF NOT EXISTS p3_window_observations (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     window_id           INTEGER NOT NULL,
@@ -114,8 +112,6 @@ CREATE TABLE IF NOT EXISTS p3_replays (
 CREATE INDEX IF NOT EXISTS idx_p3_replays_delay_outcome
 ON p3_replays(delay_ms,outcome);
 
--- Confirmation-time replay is keyed to the actual scanner observation timestamp,
--- not the deduplicated opportunity's original detection timestamp.
 CREATE TABLE IF NOT EXISTS p3_entry_replays (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     window_id               INTEGER NOT NULL,
@@ -149,6 +145,44 @@ CREATE TABLE IF NOT EXISTS p3_entry_replays (
 );
 CREATE INDEX IF NOT EXISTS idx_p3_entry_replays_policy
 ON p3_entry_replays(confirm_ms,delay_ms,outcome);
+
+-- LIVE v1 audit trail. It stores sanitized order/transaction identifiers and status
+-- only. Private keys, API secrets, passphrases and signatures are never persisted.
+CREATE TABLE IF NOT EXISTS p3_live_cycles (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id              TEXT NOT NULL,
+    window_id               INTEGER NOT NULL,
+    observation_id          INTEGER,
+    opportunity_id          INTEGER NOT NULL,
+    strategy                TEXT NOT NULL,
+    condition_id            TEXT NOT NULL,
+    combo_key               TEXT NOT NULL,
+    entry_ts_ms             INTEGER NOT NULL,
+    quantity_shares         REAL NOT NULL,
+    capital_usdc            REAL NOT NULL,
+    up_token_id             TEXT NOT NULL,
+    down_token_id           TEXT NOT NULL,
+    up_limit_price          REAL NOT NULL,
+    down_limit_price        REAL NOT NULL,
+    status                  TEXT NOT NULL,
+    up_order_id             TEXT,
+    down_order_id           TEXT,
+    up_fill_verified        INTEGER NOT NULL DEFAULT 0,
+    down_fill_verified      INTEGER NOT NULL DEFAULT 0,
+    merge_tx_hash           TEXT,
+    unwind_side             TEXT,
+    unwind_order_id         TEXT,
+    error_code              TEXT,
+    details_json            TEXT NOT NULL DEFAULT '{}',
+    created_at_ms           INTEGER NOT NULL,
+    updated_at_ms           INTEGER NOT NULL,
+    UNIQUE(session_id,window_id),
+    FOREIGN KEY(window_id) REFERENCES p3_windows(id),
+    FOREIGN KEY(observation_id) REFERENCES p3_window_observations(id),
+    FOREIGN KEY(opportunity_id) REFERENCES p3_opportunities(id)
+);
+CREATE INDEX IF NOT EXISTS idx_p3_live_cycles_status_time
+ON p3_live_cycles(status,created_at_ms DESC);
 
 CREATE TABLE IF NOT EXISTS p3_health_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

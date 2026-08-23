@@ -266,28 +266,53 @@ def test_p34_replay_does_not_call_one_leg_atomic(tmp_path):
     replay.close()
 
 
-def test_p35_summary_is_read_only_and_reports_replay(tmp_path):
+def test_p35_summary_defaults_to_dry_and_reports_replay(tmp_path):
     s = settings(tmp_path)
     conn = connect_p3(s.p3_db_path); ensure_p3_schema(conn); conn.close()
     summary = build_summary(s)
     assert summary["ok"] is True
-    assert summary["mode"] == "SHADOW_PAPER_ONLY"
+    assert summary["mode"] == "DRY"
     assert summary["execution_enabled"] is False
     assert summary["order_submission_enabled"] is False
+    assert summary["live"]["live_feature_enabled"] is False
 
 
 def test_p3_static_safety_and_shell_syntax():
-    source = "\n".join(path.read_text(encoding="utf-8") for path in Path(".").glob("p3_*.py"))
+    # Keep the DRY research core execution-client-free. Actual live integrations are
+    # isolated in p3_live_*.py, opt-in, and default disabled.
+    core_paths = [
+        path
+        for path in Path(".").glob("p3_*.py")
+        if not path.name.startswith("p3_live_")
+        and path.name not in {"p3_daemon.py", "p3_web.py", "p3_config.py"}
+    ]
+    core_source = "\n".join(path.read_text(encoding="utf-8") for path in core_paths)
     forbidden = (
         "py_clob_client",
         "submit_order(",
         "create_order(",
         "place_order(",
-        "PRIVATE_KEY=",
+        "POLYMARKET_PRIVATE_KEY",
         "private_key =",
     )
     for token in forbidden:
-        assert token not in source
+        assert token not in core_source
+
+    config = Path("p3_config.py").read_text(encoding="utf-8")
+    assert "live_feature_enabled: bool = Field(default=False" in config
+    assert "P3_LIVE_AUTO_EXECUTE_ENABLED" in config
+    assert 'live_control_host: str = Field(default="127.0.0.1"' in config
+    assert "P3 LIVE v1 only supports BUY+MERGE" in config
+
+    public_web = Path("p3_web.py").read_text(encoding="utf-8")
+    assert 'web.post("/api/arm"' not in public_web
+    assert 'web.post("/api/disarm"' not in public_web
+
+    control = Path("p3_live_control.py").read_text(encoding="utf-8")
+    assert "X-P3-Control-Token" in control
+    assert 'web.post("/api/arm"' in control
+    assert 'web.post("/api/disarm"' in control
+
     deploy = Path("deploy_p3.sh").read_text(encoding="utf-8")
     assert "systemctl stop direction-engine-p25" not in deploy
     assert "systemctl stop direction-engine-p26" not in deploy
