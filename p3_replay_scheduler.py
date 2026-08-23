@@ -10,15 +10,27 @@ from p3_replay_clock import P3ReplayEngine as _BaseReplayEngine
 class P3ReplayEngine(_BaseReplayEngine):
     """Replay engine whose queue advances past already-complete opportunities."""
 
-    def process_ready(self, *, now_ms: Optional[int] = None) -> dict:
-        # One-time research repair: source-time replay rows were false negatives for
-        # unchanged resting books. Remove only legacy-version rows so the corrected
-        # recv-time engine can regenerate them.
+    def process_ready(
+        self,
+        *,
+        now_ms: Optional[int] = None,
+        batch_size: Optional[int] = None,
+    ) -> dict:
+        # One-time research repair: old replay-clock rows are false historical
+        # artifacts under the current immutable first-receive clock. Remove only
+        # those legacy-version rows so corrected replay can regenerate them.
         legacy_purged = self.purge_legacy_replays()
 
         now = int(time.time() * 1000) if now_ms is None else int(now_ms)
         delays = self.settings.replay_delays()
         max_delay = max(delays) + self.settings.replay_snapshot_tolerance_ms
+        effective_batch = (
+            int(self.settings.replay_batch_size)
+            if batch_size is None
+            else int(batch_size)
+        )
+        if effective_batch < 1:
+            raise ValueError("replay batch_size must be positive")
         rows = self.p3.execute(
             """
             SELECT o.id
@@ -33,7 +45,7 @@ class P3ReplayEngine(_BaseReplayEngine):
             (
                 now - max_delay,
                 len(delays),
-                int(self.settings.replay_batch_size),
+                effective_batch,
             ),
         ).fetchall()
         created = 0
@@ -55,4 +67,5 @@ class P3ReplayEngine(_BaseReplayEngine):
             "opportunities_scanned": len(rows),
             "replays_created": created,
             "legacy_replays_purged": legacy_purged,
+            "batch_size": effective_batch,
         }
