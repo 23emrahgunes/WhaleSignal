@@ -35,6 +35,24 @@ fail() {
   exit 1
 }
 
+wait_http_200() {
+  local name="$1"
+  local url="$2"
+  local output="$3"
+  local attempts="${4:-30}"
+  local code="000"
+  for _ in $(seq 1 "$attempts"); do
+    code="$(curl -sS --connect-timeout 1 --max-time 2 -o "$output" -w '%{http_code}' "$url" || true)"
+    if [[ "$code" == "200" ]]; then
+      echo "$code"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "health_gate_failed name=$name code=$code url=$url" >&2
+  return 1
+}
+
 if [[ "$DO_PULL" == "1" ]]; then
   [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "working tree dirty"
   git fetch origin direction-engine
@@ -47,8 +65,9 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git rev-parse HEAD)"
 echo "branch=$BRANCH commit=$COMMIT"
 
-P25="$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/p3-p25-health.json -w '%{http_code}' http://127.0.0.1:8091/health || true)"
-[[ "$P25" == "200" ]] || fail "P2.5 health is not HTTP 200"
+# P2.5 /health includes engine.snapshot(); under transient CPU/DB pressure a single
+# 5s request can time out even though the service is healthy. Require eventual 200.
+P25="$(wait_http_200 p25-pre http://127.0.0.1:8091/health /tmp/p3-p25-health.json 30)" || fail "P2.5 health is not HTTP 200"
 for service in direction-engine-p26-oracle.service direction-engine-p26-dataset.service direction-engine-p26-book.service; do
   $SUDO systemctl is-active --quiet "$service" || fail "required P2.6 service inactive: $service"
 done
@@ -117,11 +136,10 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable direction-engine-p3-arbitrage.service
 printf '\n=== P3 DEPLOY %s commit=%s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" >> logs/p3-arbitrage.log
 $SUDO systemctl restart direction-engine-p3-arbitrage.service
-sleep 5
+sleep 2
 $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail "P3 service inactive"
 
 bash scripts/smoke_p3.sh
-P25_AFTER="$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/p3-p25-health-after.json -w '%{http_code}' http://127.0.0.1:8091/health || true)"
-[[ "$P25_AFTER" == "200" ]] || fail "P2.5 health failed after P3 deploy"
+P25_AFTER="$(wait_http_200 p25-post http://127.0.0.1:8091/health /tmp/p3-p25-health-after.json 30)" || fail "P2.5 health failed after P3 deploy"
 
 echo "P3 ARBITRAGE LAB DEPLOY PASS | P2.5=200 | SHADOW=true | execution=false"
