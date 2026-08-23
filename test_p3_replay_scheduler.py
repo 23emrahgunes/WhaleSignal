@@ -80,5 +80,34 @@ def test_scheduler_does_not_starve_later_opportunities(tmp_path, monkeypatch):
     result = engine.process_ready(now_ms=5000)
     assert result["legacy_replays_purged"] == 0
     assert result["opportunities_scanned"] == 1
+    assert result["batch_size"] == 1
     assert calls == [(second_id, 10), (second_id, 20)]
     engine.close()
+
+
+def test_scheduler_runtime_batch_override_caps_work(tmp_path, monkeypatch):
+    p26 = tmp_path / "p26.sqlite"
+    sqlite3.connect(p26).close()
+    p3 = tmp_path / "p3.sqlite"
+    settings = P3Settings(
+        p26_db_path=str(p26),
+        p3_db_path=str(p3),
+        replay_delays_ms="10,20",
+        replay_snapshot_tolerance_ms=5,
+        replay_batch_size=200,
+        replay_runtime_batch_size=20,
+        web_port=18094,
+    )
+    recorder = P3Recorder(str(p3))
+    ids = [recorder.record_opportunity(_opp(f"c{i}", 1000))[0] for i in range(3)]
+    recorder.close()
+
+    engine = P3ReplayEngine(settings)
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(engine, "replay_one", lambda oid, delay: calls.append((oid, delay)))
+    result = engine.process_ready(now_ms=5000, batch_size=1)
+    engine.close()
+
+    assert result["opportunities_scanned"] == 1
+    assert result["batch_size"] == 1
+    assert calls == [(ids[0], 10), (ids[0], 20)]
