@@ -1,25 +1,47 @@
-"""Read-only Turkish dashboard/API for P3 DRY research and guarded LIVE status.
+"""Authenticated Turkish dashboard and guarded LIVE operator control on port 8093.
 
-The main dashboard never exposes mutating LIVE endpoints. Operator arm/disarm actions
-live on the separate loopback-only control plane (default 127.0.0.1:8094).
+/health stays deliberately minimal and unauthenticated for local systemd/smoke checks.
+All dashboard data and all LIVE mutations are behind the operator session whenever
+P3_WEB_AUTH_REQUIRED=true. LIVE feature enablement structurally requires that auth.
 """
 from __future__ import annotations
 
 import asyncio
+from html import escape
 import json
 import math
 import statistics
 import time
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 
 from p3_config import P3Settings
 from p3_dry_run import build_dry_summary
+from p3_live_preflight import run_live_preflight
 from p3_live_state import LiveState, MODE_DRY
 from p3_schema import connect_p3, ensure_p3_schema, integrity_check
+from p3_web_auth import (
+    AuthenticationError,
+    LoginRateLimited,
+    OperatorSession,
+    SESSION_COOKIE,
+    WebAuthManager,
+)
 
 LATEST_SCAN_META_KEY = "latest_scan_stats_json"
+
+_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "form-action 'self'"
+    ),
+}
 
 
 def _latest_scan(conn) -> dict:  # noqa: ANN001
@@ -53,12 +75,12 @@ def _live_status(settings: P3Settings, live_state: LiveState | None) -> dict[str
             "preflight_ok": None,
             "preflight_checked_at_ms": None,
             "preflight_reasons": [],
-            "control": f"{settings.live_control_host}:{settings.live_control_port}",
-            "control_loopback_only": True,
+            "control": f"{settings.web_host}:{settings.web_port}",
+            "control_authenticated": bool(settings.web_auth_required),
         }
     payload = live_state.public_dict()
-    payload["control"] = f"{settings.live_control_host}:{settings.live_control_port}"
-    payload["control_loopback_only"] = True
+    payload["control"] = f"{settings.web_host}:{settings.web_port}"
+    payload["control_authenticated"] = bool(settings.web_auth_required)
     return payload
 
 
@@ -165,7 +187,7 @@ def build_summary(settings: P3Settings, live_state: LiveState | None = None) -> 
             "wallet_required": mode != MODE_DRY,
             "wallet_loaded": False,
             "wallet_note": (
-                "DRY modunda cüzdan gerekmez. LIVE kimlik/bakiye ayrıntıları yalnız yerel kontrol panelinde doğrulanır."
+                "DRY modunda cüzdan gerekmez. LIVE kimlik/bakiye kontrolleri şifreli 8093 oturumundan çalıştırılır."
             ),
             "live": live,
             "db_integrity": integrity_check(conn),
@@ -187,29 +209,113 @@ def build_summary(settings: P3Settings, live_state: LiveState | None = None) -> 
         conn.close()
 
 
-async def run_web(
+def _apply_security_headers(response: web.StreamResponse) -> web.StreamResponse:
+    for key, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    return response
+
+
+def _login_html(*, error: str = "") -> str:
+    error_html = f'<div class="err">{escape(error)}</div>' if error else ""
+    return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>P3 Giriş</title>
+<style>body{{margin:0;background:#07101b;color:#eef5ff;font:14px Arial,sans-serif;display:grid;place-items:center;min-height:100vh}}.card{{width:min(410px,92vw);background:#101c2c;border:1px solid #29415f;border-radius:14px;padding:24px}}h1{{font-size:20px;color:#65a9ff}}label{{display:block;margin:14px 0 5px;color:#9bb0ca}}input{{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #35506f;background:#07101b;color:#fff}}button{{width:100%;margin-top:18px;padding:12px;border:0;border-radius:8px;background:#315c8f;color:#fff;font-weight:800;cursor:pointer}}.err{{background:#491d26;color:#ffb4bb;padding:9px;border-radius:7px;margin:8px 0}}.mut{{color:#8ea5c3;font-size:12px;line-height:1.5}}</style></head><body><form class="card" method="post" action="/login" autocomplete="off"><h1>P3 Operatör Girişi</h1>{error_html}<div class="mut">Dashboard verileri ve LIVE kontrolleri bu oturumun arkasındadır. Parola hiçbir API yanıtına yazılmaz.</div><label>Kullanıcı adı</label><input name="username" autocomplete="username" required autofocus><label>Parola</label><input name="password" type="password" autocomplete="current-password" required><button type="submit">GİRİŞ YAP</button></form></body></html>"""
+
+
+def build_web_app(
     settings: P3Settings,
-    stop: asyncio.Event,
     *,
     live_state: LiveState | None = None,
-) -> None:
-    app = web.Application()
+    auth_manager: WebAuthManager | None = None,
+    preflight_fn: Callable[..., dict[str, Any]] = run_live_preflight,
+) -> web.Application:
+    auth = auth_manager or WebAuthManager(settings)
 
-    async def index(_request: web.Request) -> web.Response:
-        return web.Response(text=_HTML, content_type="text/html")
+    @web.middleware
+    async def security_and_auth(request: web.Request, handler):  # noqa: ANN001
+        public = request.path in {"/health", "/login"}
+        session: OperatorSession | None = None
+        if auth.enabled and not public:
+            session = auth.session_from_request(request)
+            if session is None:
+                if request.path.startswith("/api/"):
+                    return _apply_security_headers(
+                        web.json_response({"ok": False, "error": "AUTH_REQUIRED"}, status=401)
+                    )
+                return _apply_security_headers(web.HTTPSeeOther("/login"))
+            request["p3_operator_session"] = session
+        response = await handler(request)
+        return _apply_security_headers(response)
+
+    app = web.Application(middlewares=[security_and_auth], client_max_size=16 * 1024)
+    app["p3_auth_manager"] = auth
+
+    async def login_get(request: web.Request) -> web.Response:
+        if not auth.enabled:
+            return web.HTTPSeeOther("/")
+        if auth.session_from_request(request) is not None:
+            return web.HTTPSeeOther("/")
+        return web.Response(text=_login_html(), content_type="text/html")
+
+    async def login_post(request: web.Request) -> web.Response:
+        if not auth.enabled:
+            return web.HTTPSeeOther("/")
+        remote = request.remote or "unknown"
+        try:
+            form = await request.post()
+            username = str(form.get("username") or "")
+            password = str(form.get("password") or "")
+            session = auth.authenticate(username, password, remote=remote)
+        except LoginRateLimited:
+            return web.Response(
+                text=_login_html(error="Çok fazla hatalı giriş. Bir süre sonra tekrar dene."),
+                content_type="text/html",
+                status=429,
+            )
+        except AuthenticationError:
+            return web.Response(
+                text=_login_html(error="Kullanıcı adı veya parola hatalı."),
+                content_type="text/html",
+                status=401,
+            )
+        response = web.HTTPSeeOther("/")
+        response.set_cookie(
+            SESSION_COOKIE,
+            session.token,
+            max_age=int(settings.web_session_ttl_sec),
+            httponly=True,
+            secure=bool(settings.web_cookie_secure),
+            samesite="Strict",
+            path="/",
+        )
+        return response
+
+    def _session(request: web.Request) -> OperatorSession | None:
+        value = request.get("p3_operator_session")
+        return value if isinstance(value, OperatorSession) else None
+
+    def _csrf_ok(request: web.Request) -> bool:
+        if not auth.enabled:
+            return False
+        return auth.validate_csrf(_session(request), request.headers.get("X-P3-CSRF"))
+
+    async def index(request: web.Request) -> web.Response:
+        session = _session(request)
+        csrf = session.csrf_token if session is not None else ""
+        username = settings.web_username if session is not None else ""
+        html = _HTML.replace("__P3_CSRF__", csrf).replace(
+            "__P3_OPERATOR__", escape(username)
+        ).replace("__P3_REFRESH_MS__", str(int(settings.web_refresh_ms)))
+        return web.Response(text=html, content_type="text/html")
 
     async def health(_request: web.Request) -> web.Response:
+        # Deliberately no wallet, key, detailed LIVE state, username or DB payload here.
         live = _live_status(settings, live_state)
         executing = bool(live_state and live_state.can_auto_execute())
         return web.json_response({
             "ok": True,
             "mode": live.get("mode", MODE_DRY),
             "execution_enabled": executing,
-            "private_key_loaded": False,
-            "signing_enabled": executing,
             "order_submission_enabled": executing,
-            "wallet_required": live.get("mode") != MODE_DRY,
-            "wallet_loaded": False,
             "live_feature_enabled": bool(settings.live_feature_enabled),
         })
 
@@ -221,40 +327,129 @@ async def run_web(
         payload = build_summary(settings, live_state)
         return web.json_response({"readOnly": True, "rows": payload["recent"][:limit]})
 
+    async def session_status(request: web.Request) -> web.Response:
+        session = _session(request)
+        if auth.enabled and session is None:
+            return web.json_response({"ok": False, "error": "AUTH_REQUIRED"}, status=401)
+        return web.json_response({
+            "ok": True,
+            "authenticated": bool(session) if auth.enabled else False,
+            "session": auth.public_session(session) if session is not None else None,
+            "auth_required": bool(auth.enabled),
+        })
+
+    async def live_probe(request: web.Request) -> web.Response:
+        if not auth.enabled:
+            return web.json_response({"ok": False, "error": "AUTH_REQUIRED_FOR_LIVE_CONTROL"}, status=403)
+        if not _csrf_ok(request):
+            return web.json_response({"ok": False, "error": "CSRF_REJECTED"}, status=403)
+        if live_state is None:
+            return web.json_response({"ok": False, "error": "LIVE_STATE_UNAVAILABLE"}, status=503)
+        result = await asyncio.to_thread(preflight_fn, settings, for_arming=False)
+        live_state.remember_preflight(result)
+        return web.json_response(result)
+
+    async def live_arm(request: web.Request) -> web.Response:
+        if not auth.enabled:
+            return web.json_response({"ok": False, "error": "AUTH_REQUIRED_FOR_LIVE_CONTROL"}, status=403)
+        if not _csrf_ok(request):
+            return web.json_response({"ok": False, "error": "CSRF_REJECTED"}, status=403)
+        if live_state is None:
+            return web.json_response({"ok": False, "error": "LIVE_STATE_UNAVAILABLE"}, status=503)
+        result = await asyncio.to_thread(preflight_fn, settings, for_arming=True)
+        live_state.remember_preflight(result)
+        if not result.get("ok"):
+            return web.json_response(
+                {"ok": False, "armed": False, "preflight": result, "state": live_state.public_dict()},
+                status=409,
+            )
+        snapshot = live_state.arm(result)
+        return web.json_response({
+            "ok": True,
+            "armed": True,
+            "state": live_state.public_dict(),
+            "armed_at_ms": snapshot.armed_at_ms,
+        })
+
+    async def live_disarm(request: web.Request) -> web.Response:
+        if not auth.enabled:
+            return web.json_response({"ok": False, "error": "AUTH_REQUIRED_FOR_LIVE_CONTROL"}, status=403)
+        if not _csrf_ok(request):
+            return web.json_response({"ok": False, "error": "CSRF_REJECTED"}, status=403)
+        if live_state is None:
+            return web.json_response({"ok": False, "error": "LIVE_STATE_UNAVAILABLE"}, status=503)
+        live_state.disarm("operator_8093")
+        return web.json_response({"ok": True, "state": live_state.public_dict()})
+
+    async def logout(request: web.Request) -> web.Response:
+        if auth.enabled and not _csrf_ok(request):
+            return web.json_response({"ok": False, "error": "CSRF_REJECTED"}, status=403)
+        if live_state is not None and live_state.snapshot().mode != MODE_DRY:
+            live_state.disarm("operator_logout")
+        auth.revoke_request(request)
+        response = web.json_response({"ok": True, "redirect": "/login"})
+        response.del_cookie(SESSION_COOKIE, path="/")
+        return response
+
     app.add_routes([
-        web.get("/", index), web.get("/health", health),
-        web.get("/api/summary", summary), web.get("/api/opportunities", opportunities),
+        web.get("/login", login_get),
+        web.post("/login", login_post),
+        web.get("/", index),
+        web.get("/health", health),
+        web.get("/api/summary", summary),
+        web.get("/api/opportunities", opportunities),
+        web.get("/api/session", session_status),
+        web.post("/api/live/probe", live_probe),
+        web.post("/api/live/arm", live_arm),
+        web.post("/api/live/disarm", live_disarm),
+        web.post("/logout", logout),
     ])
-    runner = web.AppRunner(app)
+    return app
+
+
+async def run_web(
+    settings: P3Settings,
+    stop: asyncio.Event,
+    *,
+    live_state: LiveState | None = None,
+) -> None:
+    app = build_web_app(settings, live_state=live_state)
+    runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, settings.web_host, settings.web_port)
     await site.start()
     try:
         await stop.wait()
     finally:
+        if live_state is not None:
+            live_state.disarm("web_shutdown")
         await runner.cleanup()
 
 
-_HTML = r"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>P3 Arbitraj Laboratuvarı</title>
-<style>:root{--bg:#07101b;--panel:#101c2c;--line:#233650;--text:#eef5ff;--mut:#8ea5c3;--green:#20d095;--red:#f06b72;--blue:#65a9ff;--amber:#f1bd58}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px Inter,Arial,sans-serif}header{padding:14px 18px;border-bottom:1px solid var(--line);background:#0a1523;display:flex;gap:10px;align-items:center;flex-wrap:wrap}h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:5px 8px;border-radius:6px;background:#17375d;font-weight:800}.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}.wrap{max-width:1700px;margin:auto;padding:14px}.notice,.box,.metric{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px}.notice{color:#ffe1a0;margin-bottom:10px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:10px}.metric b{display:block;font-size:19px}.metric span,.mut{color:var(--mut)}.box{margin-top:12px}.box h2{font-size:14px;margin:0 0 8px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #1e3048;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th{color:var(--mut)}.scroll{overflow:auto;max-height:420px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}</style></head><body>
-<header><h1>P3 Arbitraj Laboratuvarı</h1><span class="pill">YAPISAL ARBİTRAJ</span><span id="modepill" class="pill">DRY / SHADOW</span><span id="state" class="mut">yükleniyor…</span></header><div class="wrap">
-<div id="notice" class="notice"><b>Şu an DRY/SHADOW modundayız.</b> DRY modunda gerçek emir gönderilmez ve cüzdan gerekmez. LIVE kontrolü ana panelde yoktur; yalnız VPS içindeki yerel kontrol panelinden yapılır.</div>
+_HTML = r"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="p3-csrf" content="__P3_CSRF__"><title>P3 Arbitraj Laboratuvarı</title>
+<style>:root{--bg:#07101b;--panel:#101c2c;--line:#233650;--text:#eef5ff;--mut:#8ea5c3;--green:#20d095;--red:#f06b72;--blue:#65a9ff;--amber:#f1bd58}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px Inter,Arial,sans-serif}header{padding:14px 18px;border-bottom:1px solid var(--line);background:#0a1523;display:flex;gap:10px;align-items:center;flex-wrap:wrap}h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:5px 8px;border-radius:6px;background:#17375d;font-weight:800}.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}.wrap{max-width:1700px;margin:auto;padding:14px}.notice,.box,.metric{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px}.notice{color:#ffe1a0;margin-bottom:10px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:10px}.metric b{display:block;font-size:19px}.metric span,.mut{color:var(--mut)}.box{margin-top:12px}.box h2{font-size:14px;margin:0 0 8px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #1e3048;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th{color:var(--mut)}.scroll{overflow:auto;max-height:420px}.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}button{border:0;border-radius:8px;padding:10px 13px;font-weight:800;margin:3px;cursor:pointer}.probe{background:#315c8f;color:#fff}.live{background:#b91c1c;color:#fff}.dry{background:#177f62;color:#fff}.logout{margin-left:auto;background:#26384e;color:#d9e6f7}.actions{display:flex;flex-wrap:wrap;gap:5px;align-items:center}.liveout{white-space:pre-wrap;background:#07101b;padding:10px;border-radius:7px;max-height:300px;overflow:auto;margin-top:8px}</style></head><body>
+<header><h1>P3 Arbitraj Laboratuvarı</h1><span class="pill">YAPISAL ARBİTRAJ</span><span id="modepill" class="pill">DRY / SHADOW</span><span id="state" class="mut">yükleniyor…</span><span class="mut">Operatör: __P3_OPERATOR__</span><button class="logout" onclick="logoutNow()">ÇIKIŞ</button></header><div class="wrap">
+<div id="notice" class="notice"><b>Şu an DRY/SHADOW modundayız.</b> DRY modunda gerçek emir gönderilmez ve cüzdan gerekmez. LIVE kontrolü bu şifreli 8093 operatör oturumundadır.</div>
+<div class="box"><h2>LIVE Kontrol — 8093</h2><div class="actions"><button class="probe" onclick="liveAct('/api/live/probe')">BAĞLANTI / KİMLİK TESTİ (EMİR YOK)</button><button class="live" onclick="confirmLive()">CANLIYA GEÇ</button><button class="dry" onclick="liveAct('/api/live/disarm')">DRY'A DÖN</button></div><div class="mut">CANLIYA GEÇ yalnız preflight kapıları geçerse arm eder. Restart ve servis kapanışı DRY'a döner.</div><pre id="liveout" class="liveout mono">Henüz operatör işlemi yapılmadı.</pre></div>
 <div class="box"><h2>Güvenlik ve Çalışma Modu</h2><div class="grid" id="safety"></div></div>
 <div class="box"><h2>STRICT DRY — Ana Sonuçlar</h2><div class="grid" id="dry"></div><div id="reasons" class="mono warn"></div></div>
-<div class="box"><h2>Canlı İşlem Günlüğü (salt okunur)</h2><div class="scroll"><table><thead><tr><th>ID</th><th>Market</th><th>Durum</th><th>Miktar</th><th>Sermaye</th><th>UP</th><th>DOWN</th><th>Merge TX</th><th>Hata</th></tr></thead><tbody id="livecycles"></tbody></table></div></div>
+<div class="box"><h2>Canlı İşlem Günlüğü</h2><div class="scroll"><table><thead><tr><th>ID</th><th>Market</th><th>Durum</th><th>Miktar</th><th>Sermaye</th><th>UP</th><th>DOWN</th><th>Merge TX</th><th>Hata</th></tr></thead><tbody id="livecycles"></tbody></table></div></div>
 <div class="box"><h2>Son Bağımsız STRICT DRY İşlemler</h2><div class="scroll"><table><thead><tr><th>Window</th><th>Market</th><th>Durum</th><th>Teorik</th><th>Replay</th><th>İşlem K/Z</th><th>Bakiye</th></tr></thead><tbody id="attempts"></tbody></table></div></div>
 <div class="box"><h2>Eski / Gösterge Niteliğindeki Sonuçlar</h2><div class="grid" id="legacy"></div></div>
 <div class="box"><h2>Tarayıcı ve Emir Defteri Sağlığı</h2><div class="grid" id="scanner"></div></div>
 </div><script>
-const $=x=>document.getElementById(x),n=(v,d=4)=>v==null?'—':Number(v).toFixed(d),pc=v=>v==null?'—':(Number(v)*100).toFixed(2)+'%',m=(v,l,c='')=>`<div class="metric"><b class="${c}">${v??'—'}</b><span>${l}</span></div>`,cls=v=>Number(v||0)>=0?'ok':'bad';
+const CSRF=document.querySelector('meta[name="p3-csrf"]').content,$=x=>document.getElementById(x),n=(v,d=4)=>v==null?'—':Number(v).toFixed(d),pc=v=>v==null?'—':(Number(v)*100).toFixed(2)+'%',m=(v,l,c='')=>`<div class="metric"><b class="${c}">${v??'—'}</b><span>${l}</span></div>`,cls=v=>Number(v||0)>=0?'ok':'bad';
 const durum={DRY_EXECUTED:'DRY İŞLEM YAPILDI',SKIPPED_CONFIRMATION:'ONAY SÜRESİNİ GEÇEMEDİ',CONFIRMATION_GAP:'ONAY ZİNCİRİ KOPTU',LEGACY_CONFIRMATION_UNPROVEN:'ESKİ / STRICT KANITSIZ',SKIPPED_EDGE_GATE:'KÂR EŞİĞİ ALTINDA',SKIPPED_CAPITAL_LIMIT:'SERMAYE LİMİTİ',PENDING_ENTRY_REPLAY:'REPLAY BEKLENİYOR',PENDING_CONFIRMATION:'ONAY BEKLENİYOR'};
 const replayDurum={BOTH_FILLED:'İKİ BACAK DOLDU',ONE_LEG_FILLED_UNWIND:'TEK BACAK DOLDU / KAPATILDI',ONE_LEG_UNWIND_FAILED:'TEK BACAK / KAPATMA BAŞARISIZ',NONE_FILLED:'HİÇBİR BACAK DOLMADI'};
 function trReason(r){if(!r)return'';if(r.startsWith('INSUFFICIENT_INDEPENDENT_WINDOWS:'))return'Yeterli bağımsız STRICT işlem yok: '+r.split(':')[1];if(r.startsWith('PAIR_COMPLETION_TOO_LOW:'))return'İki bacak dolum oranı düşük: '+r.split(':')[1];if(r.startsWith('PAIR_WILSON_LOWER_TOO_LOW:'))return'Wilson güven alt sınırı düşük: '+r.split(':')[1];if(r.startsWith('ONE_LEG_RATE_TOO_HIGH:'))return'Tek bacak oranı yüksek: '+r.split(':')[1];if(r.startsWith('CUMULATIVE_PNL_NOT_POSITIVE:'))return'Toplam K/Z pozitif değil';if(r.startsWith('AVERAGE_PNL_NOT_POSITIVE:'))return'Ortalama K/Z pozitif değil';return r}
-async function tick(){try{const d=await(await fetch('/api/summary',{cache:'no-store'})).json(),x=d.dry_run||{},rd=x.readiness||{},lg=x.legacy_indicative||{},s=d.scanner||{},t=s.book_transport||{},lv=d.live||{};$('state').textContent='OK · '+new Date().toLocaleTimeString();$('modepill').textContent=lv.mode==='LIVE_ARMED'?'LIVE ARMED':lv.mode==='LIVE_HALTED'?'LIVE HALTED':'DRY / SHADOW';$('modepill').className='pill '+(lv.mode==='LIVE_ARMED'?'bad':lv.mode==='LIVE_HALTED'?'warn':'ok');
-$('notice').innerHTML=lv.mode==='LIVE_ARMED'?'<b>CANLI MOD ARM EDİLDİ.</b> Gerçek emir yolu yalnız yerel 8094 kontrolü ve preflight kapıları üzerinden açıktır.':'<b>Şu an DRY/SHADOW modundayız.</b> DRY modunda gerçek emir gönderilmez ve cüzdan gerekmez. LIVE kontrolü yalnız '+(lv.control||'127.0.0.1:8094')+' yerel panelindedir.';
+async function liveAct(path){try{const r=await fetch(path,{method:'POST',headers:{'X-P3-CSRF':CSRF},cache:'no-store'});let j={};try{j=await r.json()}catch(e){j={ok:false,error:'INVALID_RESPONSE'}};$('liveout').textContent=JSON.stringify(j,null,2);if(r.status===401){location='/login';return}await tick();}catch(e){$('liveout').textContent='HATA: '+e}}
+function confirmLive(){if(confirm('CANLI moda geçilsin mi? Başarılı preflight sonrası gerçek emir yolu açılır.'))liveAct('/api/live/arm')}
+async function logoutNow(){try{await fetch('/logout',{method:'POST',headers:{'X-P3-CSRF':CSRF}})}finally{location='/login'}}
+async function tick(){try{const r=await fetch('/api/summary',{cache:'no-store'});if(r.status===401){location='/login';return}const d=await r.json(),x=d.dry_run||{},rd=x.readiness||{},lg=x.legacy_indicative||{},s=d.scanner||{},t=s.book_transport||{},lv=d.live||{};$('state').textContent='OK · '+new Date().toLocaleTimeString();$('modepill').textContent=lv.mode==='LIVE_ARMED'?'LIVE ARMED':lv.mode==='LIVE_HALTED'?'LIVE HALTED':'DRY / SHADOW';$('modepill').className='pill '+(lv.mode==='LIVE_ARMED'?'bad':lv.mode==='LIVE_HALTED'?'warn':'ok');
+$('notice').innerHTML=lv.mode==='LIVE_ARMED'?'<b>CANLI MOD ARM EDİLDİ.</b> Gerçek emir yolu preflight ve risk kapılarıyla bu 8093 oturumundan açılmıştır.':'<b>Şu an DRY/SHADOW modundayız.</b> DRY modunda gerçek emir gönderilmez ve cüzdan gerekmez. LIVE kontrolü şifreli 8093 operatör panelindedir.';
 $('safety').innerHTML=m(lv.mode||'DRY','Çalışma modu',lv.mode==='LIVE_ARMED'?'bad':'ok')+m(lv.live_feature_enabled?'AÇIK':'KAPALI','LIVE özellik',lv.live_feature_enabled?'warn':'ok')+m(lv.auto_execute_enabled?'AÇIK':'KAPALI','Otomatik emir',lv.auto_execute_enabled?'warn':'ok')+m(lv.preflight_ok===true?'GEÇTİ':lv.preflight_ok===false?'KALDI':'YAPILMADI','LIVE ön kontrol',lv.preflight_ok===true?'ok':'warn')+m(d.order_submission_enabled?'AÇIK':'KAPALI','Emir gönderimi',d.order_submission_enabled?'bad':'ok')+m(d.signing_enabled?'AÇIK':'KAPALI','İmza',d.signing_enabled?'bad':'ok')+m(d.wallet_required?'GEREKLİ':'GEREKLİ DEĞİL','Cüzdan (DRY)',d.wallet_required?'warn':'ok')+m(d.db_integrity==='ok'?'SAĞLAM':d.db_integrity,'Veritabanı',d.db_integrity==='ok'?'ok':'bad');
 $('dry').innerHTML=m('$'+n(x.cumulative_pnl_usdc),'STRICT toplam K/Z',cls(x.cumulative_pnl_usdc))+m('$'+n(x.bankroll_usdc),'STRICT sanal bakiye')+m(x.attempts_executed??0,'STRICT işlem')+m(pc(x.pair_completion_rate),'İki bacak dolum')+m(pc(x.one_leg_rate),'Tek bacak oranı')+m('$'+n(x.max_drawdown_usdc),'Maks. düşüş')+m(x.confirmed_windows??0,'Onaylanan fırsat')+m(x.skipped_edge??0,'Edge yetersiz')+m(rd.status==='DRY_VALIDATED'?'DRY DOĞRULANDI':'HENÜZ HAZIR DEĞİL','Hazırlık',rd.status==='DRY_VALIDATED'?'ok':'warn');$('reasons').textContent=(rd.reasons||[]).map(trReason).join(' | ');
 $('livecycles').innerHTML=(d.live_cycles||[]).map(v=>`<tr><td>${v.id}</td><td>${v.combo_key}</td><td>${v.status}</td><td>${n(v.quantity_shares,3)}</td><td>$${n(v.capital_usdc)}</td><td>${v.up_fill_verified?'✓':'—'}</td><td>${v.down_fill_verified?'✓':'—'}</td><td class="mono">${v.merge_tx_hash?String(v.merge_tx_hash).slice(0,12)+'…':'—'}</td><td>${v.error_code||'—'}</td></tr>`).join('');
 $('attempts').innerHTML=(x.recent_attempts||[]).map(v=>`<tr><td>${v.window_id}</td><td>${v.combo_key}</td><td>${durum[v.dry_status]||v.dry_status}</td><td>${v.theoretical_net_profit_usdc==null?'—':'$'+n(v.theoretical_net_profit_usdc)}</td><td>${replayDurum[v.replay_outcome]||v.replay_outcome||'—'}</td><td class="${cls(v.cycle_net_pnl_usdc)}">${v.cycle_net_pnl_usdc==null?'—':'$'+n(v.cycle_net_pnl_usdc)}</td><td>${v.bankroll_after_usdc==null?'—':'$'+n(v.bankroll_after_usdc)}</td></tr>`).join('');
 $('legacy').innerHTML=m('$'+n(lg.cumulative_pnl_usdc),'Eski toplam K/Z',cls(lg.cumulative_pnl_usdc))+m(lg.attempts_executed??0,'Eski işlem')+m(pc(lg.pair_completion_rate),'Eski iki bacak dolum')+m(pc(lg.one_leg_rate),'Eski tek bacak');$('scanner').innerHTML=m(s.conditions??0,'Aktif market')+m(s.valid_pairs??0,'Geçerli book çifti')+m(s.missing_book??0,'Eksik book',s.missing_book?'bad':'ok')+m(s.transport_stale??0,'Transport stale',s.transport_stale?'bad':'ok')+m(s.missing_fee??0,'Eksik komisyon',s.missing_fee?'bad':'ok')+m(t.connected?'CANLI':'KAPALI','Book socket',t.connected?'ok':'bad');}catch(e){$('state').textContent='HATA · '+e}}
-setInterval(tick,3000);tick();</script></body></html>"""
+setInterval(tick,__P3_REFRESH_MS__);tick();</script></body></html>"""
