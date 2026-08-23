@@ -63,20 +63,16 @@ def build_summary(settings: P3Settings) -> dict:
         ).fetchall()
         closed_lifetimes = [
             int(row["closed_ts_ms"]) - int(row["opened_ts_ms"])
-            for row in window_rows
-            if row["closed_ts_ms"] is not None
+            for row in window_rows if row["closed_ts_ms"] is not None
         ]
-        recent = [
-            dict(row)
-            for row in conn.execute(
-                """
-                SELECT id,strategy,condition_id,combo_key,detected_ts_ms,quantity_shares,
-                       capital_usdc,net_profit_usdc,net_roi,source_skew_ms,max_book_age_ms,
-                       up_vwap,down_vwap,up_fee_usdc,down_fee_usdc
-                FROM p3_opportunities ORDER BY detected_ts_ms DESC,id DESC LIMIT 100
-                """
-            ).fetchall()
-        ]
+        recent = [dict(row) for row in conn.execute(
+            """
+            SELECT id,strategy,condition_id,combo_key,detected_ts_ms,quantity_shares,
+                   capital_usdc,net_profit_usdc,net_roi,source_skew_ms,max_book_age_ms,
+                   up_vwap,down_vwap,up_fee_usdc,down_fee_usdc
+            FROM p3_opportunities ORDER BY detected_ts_ms DESC,id DESC LIMIT 100
+            """
+        ).fetchall()]
         strategies = {
             str(row["strategy"]): {
                 "opportunities": int(row["opportunities"]),
@@ -91,15 +87,9 @@ def build_summary(settings: P3Settings) -> dict:
             str(int(row["delay_ms"])): {
                 "n": int(row["n"]),
                 "both_fill": int(row["both_fill"] or 0),
-                "pair_completion_rate": (
-                    float(row["both_fill"] or 0) / int(row["n"])
-                    if int(row["n"])
-                    else 0.0
-                ),
+                "pair_completion_rate": float(row["both_fill"] or 0) / int(row["n"]) if int(row["n"]) else 0.0,
                 "one_leg": int(row["one_leg"] or 0),
-                "avg_cycle_pnl_usdc": (
-                    float(row["avg_pnl"]) if row["avg_pnl"] is not None else None
-                ),
+                "avg_cycle_pnl_usdc": float(row["avg_pnl"]) if row["avg_pnl"] is not None else None,
             }
             for row in replay_rows
         }
@@ -136,7 +126,9 @@ def build_summary(settings: P3Settings) -> dict:
             "db_integrity": integrity_check(conn),
             "opportunities": int(conn.execute("SELECT COUNT(*) FROM p3_opportunities").fetchone()[0]),
             "windows": int(conn.execute("SELECT COUNT(*) FROM p3_windows").fetchone()[0]),
+            "window_observations": int(conn.execute("SELECT COUNT(*) FROM p3_window_observations").fetchone()[0]),
             "replays": int(conn.execute("SELECT COUNT(*) FROM p3_replays").fetchone()[0]),
+            "entry_replays": int(conn.execute("SELECT COUNT(*) FROM p3_entry_replays").fetchone()[0]),
             "strategies": strategies,
             "lifetime": lifetime,
             "replay_by_delay": replays,
@@ -156,16 +148,10 @@ async def run_web(settings: P3Settings, stop: asyncio.Event) -> None:
         return web.Response(text=_HTML, content_type="text/html")
 
     async def health(_request: web.Request) -> web.Response:
-        return web.json_response(
-            {
-                "ok": True,
-                "mode": "SHADOW_PAPER_ONLY",
-                "execution_enabled": False,
-                "private_key_loaded": False,
-                "signing_enabled": False,
-                "order_submission_enabled": False,
-            }
-        )
+        return web.json_response({
+            "ok": True, "mode": "SHADOW_PAPER_ONLY", "execution_enabled": False,
+            "private_key_loaded": False, "signing_enabled": False, "order_submission_enabled": False,
+        })
 
     async def summary(_request: web.Request) -> web.Response:
         return web.json_response(build_summary(settings))
@@ -175,14 +161,10 @@ async def run_web(settings: P3Settings, stop: asyncio.Event) -> None:
         payload = build_summary(settings)
         return web.json_response({"paperOnly": True, "rows": payload["recent"][:limit]})
 
-    app.add_routes(
-        [
-            web.get("/", index),
-            web.get("/health", health),
-            web.get("/api/summary", summary),
-            web.get("/api/opportunities", opportunities),
-        ]
-    )
+    app.add_routes([
+        web.get("/", index), web.get("/health", health),
+        web.get("/api/summary", summary), web.get("/api/opportunities", opportunities),
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, settings.web_host, settings.web_port)
@@ -194,80 +176,31 @@ async def run_web(settings: P3Settings, stop: asyncio.Event) -> None:
 
 
 _HTML = r"""<!doctype html>
-<html lang="tr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>P3 Arbitrage Lab</title>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>P3 Arbitrage Lab</title>
 <style>
 :root{--bg:#07101b;--panel:#101c2c;--line:#233650;--text:#eef5ff;--mut:#8ea5c3;--green:#20d095;--red:#f06b72;--blue:#65a9ff;--amber:#f1bd58}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px Inter,Arial,sans-serif}
-header{padding:14px 18px;border-bottom:1px solid var(--line);background:#0a1523;display:flex;gap:10px;align-items:center}
-h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:5px 8px;border-radius:6px;background:#17375d;font-weight:800}
-.wrap{max-width:1700px;margin:auto;padding:14px}.notice{border:1px solid #5f4a19;background:#251d09;padding:10px;border-radius:8px;color:#ffe1a0}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:12px}.metric,.box{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px}
-.metric b{display:block;font-size:20px}.metric span{color:var(--mut)}.boxes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
-.box h2{font-size:14px;margin:0 0 8px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #1e3048;text-align:right;white-space:nowrap}
-th:first-child,td:first-child{text-align:left}th{color:var(--mut)}.pos{color:var(--green)}.neg{color:var(--red)}.warn{color:var(--amber)}.mut{color:var(--mut)}
-.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}@media(max-width:900px){.boxes{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<header><h1>P3 Arbitrage Lab</h1><span class="pill">STRUCTURAL</span><span class="pill">DRY / SHADOW ONLY</span><span id="state" class="mut">yükleniyor…</span></header>
-<div class="wrap">
-<div class="notice"><b>Confirmed-entry DRY araştırması.</b> Observation sayısı trade sayısı değildir. Her bağımsız window en fazla bir DRY attempt üretir; window varsayılan 250 ms yaşamadan ilk-print fırsatı trade sayılmaz. Gerçek emir yoktur.</div>
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px Inter,Arial,sans-serif}header{padding:14px 18px;border-bottom:1px solid var(--line);background:#0a1523;display:flex;gap:10px;align-items:center}h1{font-size:18px;margin:0;color:var(--blue)}.pill{padding:5px 8px;border-radius:6px;background:#17375d;font-weight:800}.wrap{max-width:1700px;margin:auto;padding:14px}.notice{border:1px solid #5f4a19;background:#251d09;padding:10px;border-radius:8px;color:#ffe1a0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin-top:12px}.metric,.box{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px}.metric b{display:block;font-size:20px}.metric span{color:var(--mut)}.boxes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.box h2{font-size:14px;margin:0 0 8px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #1e3048;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th{color:var(--mut)}.pos{color:var(--green)}.neg{color:var(--red)}.warn{color:var(--amber)}.mut{color:var(--mut)}.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}@media(max-width:900px){.boxes{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>P3 Arbitrage Lab</h1><span class="pill">STRUCTURAL</span><span class="pill">STRICT DRY / SHADOW ONLY</span><span id="state" class="mut">yükleniyor…</span></header><div class="wrap">
+<div class="notice"><b>Strict confirmed-entry araştırması.</b> Trade confirmation artık window grace'e dayanmaz. Her pozitif scanner touch ayrı kaydedilir; 250 ms confirmation boyunca pozitif-scan zincirinde 400 ms'den büyük boşluk varsa window trade edilmez. Eski timeline öncesi sonuçlar yalnız Legacy/Indicative olarak gösterilir. Gerçek emir yoktur.</div>
 <div class="grid" id="metrics"></div>
-<div class="box" style="margin-top:12px"><h2>DRY Bankroll / Readiness</h2><div class="grid" id="dry"></div><div id="reasons" class="mono warn" style="margin-top:10px"></div></div>
-<div class="box" style="margin-top:12px"><h2>Entry Survival Grid — independent-window</h2><div style="overflow:auto"><table><thead><tr><th>Confirm</th><th>Survived</th><th>Executed</th><th>Skipped</th><th>Pair Fill</th><th>One Leg</th><th>PnL</th><th>Δ PnL vs 0</th><th>Max DD</th></tr></thead><tbody id="survival"></tbody></table></div></div>
+<div class="box" style="margin-top:12px"><h2>STRICT DRY Bankroll / Readiness</h2><div class="grid" id="dry"></div><div id="reasons" class="mono warn" style="margin-top:10px"></div></div>
+<div class="box" style="margin-top:12px"><h2>Legacy / Indicative — Readiness'e Dahil Değil</h2><div class="grid" id="legacy"></div><div class="mono mut" style="margin-top:8px">Bu blok deploy öncesi/coarse confirmation sonucunu korur; strict kanıt yerine kullanılamaz.</div></div>
+<div class="box" style="margin-top:12px"><h2>STRICT Entry Survival Grid — independent-window</h2><div style="overflow:auto"><table><thead><tr><th>Confirm</th><th>Strict Timeline</th><th>Survived</th><th>Gaps</th><th>Legacy Excl.</th><th>Executed</th><th>Pair Fill</th><th>One Leg</th><th>PnL</th><th>Δ PnL vs 0</th><th>Max DD</th></tr></thead><tbody id="survival"></tbody></table></div></div>
 <div class="box" style="margin-top:12px"><h2>Scanner Funnel / Book Transport</h2><div class="grid" id="scanner"></div></div>
-<div class="boxes">
-<div class="box"><h2>Stratejiler</h2><table><thead><tr><th>Strateji</th><th>Observation</th><th>Peak PnL</th><th>Avg ROI</th></tr></thead><tbody id="strategies"></tbody></table></div>
-<div class="box"><h2>İki-Bacak Replay — observation-level</h2><table><thead><tr><th>Delay</th><th>N</th><th>Pair Fill</th><th>One Leg</th><th>Avg PnL</th></tr></thead><tbody id="replays"></tbody></table></div>
-</div>
-<div class="box" style="margin-top:12px"><h2>Bağımsız DRY Attempts</h2><div style="overflow:auto;max-height:380px"><table><thead><tr><th>Window</th><th>Combo</th><th>Status</th><th>Entry Age</th><th>Capital</th><th>Theoretical</th><th>Replay</th><th>Cycle PnL</th><th>Bankroll</th></tr></thead><tbody id="attempts"></tbody></table></div></div>
+<div class="boxes"><div class="box"><h2>Stratejiler</h2><table><thead><tr><th>Strateji</th><th>Observation</th><th>Peak PnL</th><th>Avg ROI</th></tr></thead><tbody id="strategies"></tbody></table></div><div class="box"><h2>İki-Bacak Replay — observation-level</h2><table><thead><tr><th>Delay</th><th>N</th><th>Pair Fill</th><th>One Leg</th><th>Avg PnL</th></tr></thead><tbody id="replays"></tbody></table></div></div>
+<div class="box" style="margin-top:12px"><h2>Bağımsız STRICT DRY Attempts</h2><div style="overflow:auto;max-height:380px"><table><thead><tr><th>Window</th><th>Combo</th><th>Status</th><th>Entry Age</th><th>Max Gap</th><th>Capital</th><th>Theoretical</th><th>Replay</th><th>Cycle PnL</th><th>Bankroll</th></tr></thead><tbody id="attempts"></tbody></table></div></div>
 <div class="box" style="margin-top:12px"><h2>Son Fırsat Gözlemleri</h2><div style="overflow:auto;max-height:420px"><table><thead><tr><th>Combo</th><th>q</th><th>Capital</th><th>Net PnL</th><th>ROI</th><th>Last-change Skew</th></tr></thead><tbody id="recent"></tbody></table></div></div>
-</div>
-<script>
-const $=id=>document.getElementById(id);
-const n=(v,d=4)=>v==null?'—':Number(v).toFixed(d);
-const pc=v=>v==null?'—':(Number(v)*100).toFixed(2)+'%';
-const m=(v,l,k='')=>`<div class="metric"><b class="${k}">${v??0}</b><span>${l}</span></div>`;
-const cls=v=>Number(v||0)>=0?'pos':'neg';
-async function tick(){
-  try{
-    const d=await(await fetch('/api/summary',{cache:'no-store'})).json();
-    const s=d.scanner||{},t=s.book_transport||{},x=d.dry_run||{},rd=x.readiness||{};
-    $('state').textContent='OK · '+new Date().toLocaleTimeString();
-    $('metrics').innerHTML=m(d.opportunities,'Observation')+m(d.windows,'Independent Window')+m(d.replays,'Replay')+m(n(d.lifetime?.median_ms,0)+' ms','Median lifetime')+m(n(d.lifetime?.p90_ms,0)+' ms','P90 lifetime');
-    $('dry').innerHTML=
-      m('$'+n(x.cumulative_pnl_usdc),'Cumulative DRY PnL',cls(x.cumulative_pnl_usdc))+
-      m('$'+n(x.bankroll_usdc),'DRY Bankroll')+
-      m(x.attempts_executed??0,'Independent Attempts')+
-      m(pc(x.confirmation_survival_rate),'Confirm Survival')+
-      m(pc(x.pair_completion_rate),'Pair Fill')+
-      m(pc(x.pair_completion_wilson_lower_95),'Wilson Lower 95%')+
-      m(pc(x.one_leg_rate),'One-leg Rate',Number(x.one_leg_rate||0)>0.03?'warn':'')+
-      m(x.skipped_confirmation??0,'Skipped first-print')+
-      m('$'+n(x.max_drawdown_usdc),'Max Drawdown')+
-      m(rd.status||'NOT_READY','Readiness',rd.status==='DRY_VALIDATED'?'pos':'warn')+
-      m((x.entry_confirm_ms??0)+' ms','Entry confirm')+
-      m((x.latency_ms??0)+' ms','DRY latency')+
-      m('$'+n(x.max_capital_per_cycle_usdc,2),'Cycle Cap');
-    $('reasons').textContent=(rd.reasons||[]).join(' | ')||'Readiness gates passed.';
-
-    const grid=x.survival_by_confirm_ms||{};
-    $('survival').innerHTML=Object.entries(grid)
-      .sort((a,b)=>Number(a[0])-Number(b[0]))
-      .map(([k,v])=>`<tr><td class="${Number(k)===Number(x.entry_confirm_ms)?'pos':''}">${k}ms${Number(k)===Number(x.entry_confirm_ms)?' · ACTIVE':''}</td><td>${v.confirmed_windows}/${v.windows_seen} (${pc(v.confirmation_survival_rate)})</td><td>${v.attempts_executed}</td><td>${v.skipped_confirmation}</td><td>${pc(v.pair_completion_rate)}</td><td class="${Number(v.one_leg_rate||0)>0.03?'warn':''}">${v.one_leg} (${pc(v.one_leg_rate)})</td><td class="${cls(v.cumulative_pnl_usdc)}">$${n(v.cumulative_pnl_usdc)}</td><td class="${cls(v.pnl_delta_vs_0_usdc)}">$${n(v.pnl_delta_vs_0_usdc)}</td><td>$${n(v.max_drawdown_usdc)}</td></tr>`).join('');
-
-    $('scanner').innerHTML=m(s.conditions??0,'Aktif condition')+m(s.valid_pairs??0,'Geçerli book pair',s.valid_pairs?'pos':'warn')+m(s.missing_book??0,'Missing book',s.missing_book?'neg':'')+m(s.transport_stale??0,'Transport stale',s.transport_stale?'neg':'')+m(s.session_incomplete??0,'Session incomplete',s.session_incomplete?'warn':'')+m(s.missing_fee??0,'Missing fee',s.missing_fee?'neg':'')+m(t.connected?'LIVE':'DOWN','Book socket',t.connected?'pos':'neg')+m(t.subscribed_tokens??0,'Subscribed token');
-    $('strategies').innerHTML=Object.entries(d.strategies||{}).map(([k,v])=>`<tr><td class="mono">${k}</td><td>${v.opportunities}</td><td class="pos">$${n(v.peak_profit_usdc)}</td><td>${pc(v.avg_roi)}</td></tr>`).join('');
-    $('replays').innerHTML=Object.entries(d.replay_by_delay||{}).map(([k,v])=>`<tr><td>${k}ms</td><td>${v.n}</td><td>${pc(v.pair_completion_rate)}</td><td>${v.one_leg}</td><td class="${cls(v.avg_cycle_pnl_usdc)}">$${n(v.avg_cycle_pnl_usdc)}</td></tr>`).join('');
-    $('attempts').innerHTML=(x.recent_attempts||[]).map(v=>`<tr><td>${v.window_id}</td><td>${v.combo_key}</td><td>${v.dry_status}</td><td>${v.entry_age_ms==null?'—':v.entry_age_ms+'ms'}</td><td>${v.capital_usdc==null?'—':'$'+n(v.capital_usdc)}</td><td>${v.theoretical_net_profit_usdc==null?'—':'$'+n(v.theoretical_net_profit_usdc)}</td><td>${v.replay_outcome||'—'}</td><td class="${cls(v.cycle_net_pnl_usdc)}">${v.cycle_net_pnl_usdc==null?'—':'$'+n(v.cycle_net_pnl_usdc)}</td><td>${v.bankroll_after_usdc==null?'—':'$'+n(v.bankroll_after_usdc)}</td></tr>`).join('');
-    $('recent').innerHTML=(d.recent||[]).map(v=>`<tr><td>${v.combo_key}</td><td>${n(v.quantity_shares,2)}</td><td>$${n(v.capital_usdc)}</td><td class="pos">$${n(v.net_profit_usdc)}</td><td>${pc(v.net_roi)}</td><td>${v.source_skew_ms}ms</td></tr>`).join('');
-  }catch(e){$('state').textContent='HATA '+e}
-}
-setInterval(tick,3000);tick();
-</script>
-</body>
-</html>"""
+</div><script>
+const $=id=>document.getElementById(id),n=(v,d=4)=>v==null?'—':Number(v).toFixed(d),pc=v=>v==null?'—':(Number(v)*100).toFixed(2)+'%',m=(v,l,k='')=>`<div class="metric"><b class="${k}">${v??0}</b><span>${l}</span></div>`,cls=v=>Number(v||0)>=0?'pos':'neg';
+async function tick(){try{const d=await(await fetch('/api/summary',{cache:'no-store'})).json(),s=d.scanner||{},t=s.book_transport||{},x=d.dry_run||{},rd=x.readiness||{},lg=x.legacy_indicative||{};$('state').textContent='OK · '+new Date().toLocaleTimeString();
+$('metrics').innerHTML=m(d.opportunities,'Opportunity states')+m(d.windows,'Independent Window')+m(d.window_observations??0,'Strict timeline obs')+m(d.entry_replays??0,'Strict entry replay')+m(d.replays,'Generic replay')+m(n(d.lifetime?.median_ms,0)+' ms','Median lifetime');
+$('dry').innerHTML=m('$'+n(x.cumulative_pnl_usdc),'STRICT Cumulative PnL',cls(x.cumulative_pnl_usdc))+m('$'+n(x.bankroll_usdc),'STRICT Bankroll')+m(x.attempts_executed??0,'Strict Attempts')+m(x.strict_timeline_windows??0,'Strict timeline windows')+m(x.legacy_unproven_windows??0,'Legacy excluded','warn')+m(x.confirmation_gaps??0,'Confirmation gaps',x.confirmation_gaps?'warn':'')+m(pc(x.confirmation_survival_rate),'Confirm Survival')+m(pc(x.pair_completion_rate),'Pair Fill')+m(pc(x.pair_completion_wilson_lower_95),'Wilson Lower 95%')+m(pc(x.one_leg_rate),'One-leg Rate',Number(x.one_leg_rate||0)>0.03?'warn':'')+m('$'+n(x.max_drawdown_usdc),'Max Drawdown')+m(rd.status||'NOT_READY','Readiness',rd.status==='DRY_VALIDATED'?'pos':'warn')+m((x.entry_confirm_ms??0)+' ms','Entry confirm')+m((x.confirm_max_gap_ms??0)+' ms','Max confirm gap')+m((x.latency_ms??0)+' ms','DRY latency');
+$('reasons').textContent=(rd.reasons||[]).join(' | ')||'Readiness gates passed.';
+$('legacy').innerHTML=m('$'+n(lg.cumulative_pnl_usdc),'Legacy PnL',cls(lg.cumulative_pnl_usdc))+m('$'+n(lg.bankroll_usdc),'Legacy Bankroll')+m(lg.attempts_executed??0,'Legacy Attempts')+m(pc(lg.pair_completion_rate),'Legacy Pair Fill')+m(pc(lg.one_leg_rate),'Legacy One-leg')+m('$'+n(lg.max_drawdown_usdc),'Legacy Max DD');
+const grid=x.survival_by_confirm_ms||{};$('survival').innerHTML=Object.entries(grid).sort((a,b)=>Number(a[0])-Number(b[0])).map(([k,v])=>`<tr><td class="${Number(k)===Number(x.entry_confirm_ms)?'pos':''}">${k}ms${Number(k)===Number(x.entry_confirm_ms)?' · ACTIVE':''}</td><td>${v.strict_timeline_windows}</td><td>${v.confirmed_windows} (${pc(v.confirmation_survival_rate)})</td><td class="${v.confirmation_gaps?'warn':''}">${v.confirmation_gaps}</td><td class="${v.legacy_unproven_windows?'warn':''}">${v.legacy_unproven_windows}</td><td>${v.attempts_executed}</td><td>${pc(v.pair_completion_rate)}</td><td class="${Number(v.one_leg_rate||0)>0.03?'warn':''}">${v.one_leg} (${pc(v.one_leg_rate)})</td><td class="${cls(v.cumulative_pnl_usdc)}">$${n(v.cumulative_pnl_usdc)}</td><td class="${cls(v.pnl_delta_vs_0_usdc)}">$${n(v.pnl_delta_vs_0_usdc)}</td><td>$${n(v.max_drawdown_usdc)}</td></tr>`).join('');
+$('scanner').innerHTML=m(s.conditions??0,'Aktif condition')+m(s.valid_pairs??0,'Geçerli book pair',s.valid_pairs?'pos':'warn')+m(s.missing_book??0,'Missing book',s.missing_book?'neg':'')+m(s.transport_stale??0,'Transport stale',s.transport_stale?'neg':'')+m(s.session_incomplete??0,'Session incomplete',s.session_incomplete?'warn':'')+m(s.missing_fee??0,'Missing fee',s.missing_fee?'neg':'')+m(t.connected?'LIVE':'DOWN','Book socket',t.connected?'pos':'neg')+m(t.subscribed_tokens??0,'Subscribed token');
+$('strategies').innerHTML=Object.entries(d.strategies||{}).map(([k,v])=>`<tr><td class="mono">${k}</td><td>${v.opportunities}</td><td class="pos">$${n(v.peak_profit_usdc)}</td><td>${pc(v.avg_roi)}</td></tr>`).join('');$('replays').innerHTML=Object.entries(d.replay_by_delay||{}).map(([k,v])=>`<tr><td>${k}ms</td><td>${v.n}</td><td>${pc(v.pair_completion_rate)}</td><td>${v.one_leg}</td><td class="${cls(v.avg_cycle_pnl_usdc)}">$${n(v.avg_cycle_pnl_usdc)}</td></tr>`).join('');
+$('attempts').innerHTML=(x.recent_attempts||[]).map(v=>`<tr><td>${v.window_id}</td><td>${v.combo_key}</td><td>${v.dry_status}</td><td>${v.entry_age_ms==null?'—':v.entry_age_ms+'ms'}</td><td>${v.max_gap_seen_ms==null?'—':v.max_gap_seen_ms+'ms'}</td><td>${v.capital_usdc==null?'—':'$'+n(v.capital_usdc)}</td><td>${v.theoretical_net_profit_usdc==null?'—':'$'+n(v.theoretical_net_profit_usdc)}</td><td>${v.replay_outcome||'—'}</td><td class="${cls(v.cycle_net_pnl_usdc)}">${v.cycle_net_pnl_usdc==null?'—':'$'+n(v.cycle_net_pnl_usdc)}</td><td>${v.bankroll_after_usdc==null?'—':'$'+n(v.bankroll_after_usdc)}</td></tr>`).join('');
+$('recent').innerHTML=(d.recent||[]).map(v=>`<tr><td>${v.combo_key}</td><td>${n(v.quantity_shares,2)}</td><td>$${n(v.capital_usdc)}</td><td class="pos">$${n(v.net_profit_usdc)}</td><td>${pc(v.net_roi)}</td><td>${v.source_skew_ms}ms</td></tr>`).join('');}catch(e){$('state').textContent='HATA '+e}}
+setInterval(tick,3000);tick();</script></body></html>"""
