@@ -1,8 +1,8 @@
 """Lazy Polymarket client adapters used only by guarded P3 LIVE workflows.
 
-Importing this module does not require the optional LIVE dependencies. SDK imports
-occur inside factory functions so the normal DRY service remains dependency-light.
-Secrets are read from process environment and are never returned in status payloads.
+Importing this module does not require optional LIVE dependencies. SDK imports occur
+inside functions, so normal DRY startup stays dependency-light. Secret values are
+read from the process environment and are never returned by the public dashboard.
 """
 from __future__ import annotations
 
@@ -68,11 +68,7 @@ def require_live_dependency(module_name: str, install_hint: str) -> None:
 
 
 def make_clob_client(*, host: str, chain_id: int):
-    """Build an authenticated py-clob-client-v2 client.
-
-    Existing L2 credentials are preferred. When absent, Polymarket derives/creates
-    them from L1 signing once and keeps them only in this process.
-    """
+    """Build an authenticated py-clob-client-v2 client."""
     require_live_dependency(
         "py_clob_client_v2", "./.venv/bin/pip install -r requirements-live.txt"
     )
@@ -105,6 +101,29 @@ def make_clob_client(*, host: str, chain_id: int):
     return ClobClient(**kwargs)
 
 
+def probe_clob_account(*, host: str, chain_id: int) -> dict[str, Any]:
+    """Authenticated no-order account probe used by LIVE preflight.
+
+    The returned payload is deliberately small and contains no credential material.
+    ``balance_payload`` is retained in-memory only so the preflight can normalize the
+    collateral balance and allowance; it is never exposed verbatim by the dashboard.
+    """
+    require_live_dependency(
+        "py_clob_client_v2", "./.venv/bin/pip install -r requirements-live.txt"
+    )
+    from py_clob_client_v2 import AssetType, BalanceAllowanceParams  # type: ignore
+
+    client = make_clob_client(host=host, chain_id=chain_id)
+    balance_payload = client.get_balance_allowance(
+        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+    )
+    return {
+        "signer": str(client.get_address()),
+        "server_ok": client.get_ok(),
+        "balance_payload": balance_payload,
+    }
+
+
 def make_secure_sdk_client():
     """Build the official unified SDK client for CTF merge workflows."""
     require_live_dependency(
@@ -122,11 +141,7 @@ def make_secure_sdk_client():
 
 
 def parse_clob_balance_usdc(payload: Any) -> float:
-    """Normalize CLOB collateral balance to human USDC.
-
-    CLOB balance responses normally use 6-decimal integer base units. A decimal
-    string is accepted as already-human for compatibility with future SDK shapes.
-    """
+    """Normalize CLOB collateral balance to human USDC (6-decimal base units)."""
     if isinstance(payload, dict):
         raw = payload.get("balance", 0)
     else:
@@ -142,7 +157,7 @@ def parse_clob_balance_usdc(payload: Any) -> float:
 
 
 def parse_conditional_balance_shares(payload: Any) -> float:
-    """Normalize conditional-token balance to shares (6 decimal base units)."""
+    """Normalize conditional-token balance to shares (6-decimal base units)."""
     if isinstance(payload, dict):
         raw = payload.get("balance", 0)
     else:
