@@ -49,6 +49,12 @@ class P3Settings(BaseSettings):
         default=250, alias="P3_REPLAY_SNAPSHOT_TOLERANCE_MS"
     )
     replay_batch_size: int = Field(default=200, alias="P3_REPLAY_BATCH_SIZE")
+    # Runtime replay is deliberately sliced into small batches and executed off the
+    # asyncio event loop. This prevents historical replay backlog from starving the
+    # health/dashboard socket or delaying SIGTERM handling.
+    replay_runtime_batch_size: int = Field(
+        default=20, alias="P3_REPLAY_RUNTIME_BATCH_SIZE"
+    )
 
     # DRY policy: one independent simulated attempt per opportunity window.
     dry_enabled: bool = Field(default=True, alias="P3_DRY_ENABLED")
@@ -119,6 +125,8 @@ class P3Settings(BaseSettings):
             raise ValueError("execution buffer cannot be negative")
         if self.max_quantity_shares <= 0 or self.max_capital_per_cycle_usdc <= 0:
             raise ValueError("quantity and capital limits must be positive")
+        if self.replay_batch_size < 1 or self.replay_runtime_batch_size < 1:
+            raise ValueError("replay batch sizes must be positive")
         if self.dry_latency_ms not in self.replay_delays():
             raise ValueError("P3_DRY_LATENCY_MS must exist in P3_REPLAY_DELAYS_MS")
         if self.dry_entry_confirm_ms < 0:
