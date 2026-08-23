@@ -16,9 +16,10 @@ def test_p3_deploy_installs_live_sdk_only_when_feature_enabled() -> None:
     assert "requirements-live.txt" in text
     assert "live_feature_enabled" in text
     assert "P3 ARBITRAGE DEPLOY PASS | starts=DRY" in text
+    assert "control=authenticated_8093" in text
 
 
-def test_p3_smoke_requires_dry_start_p3_http_and_local_control() -> None:
+def test_p3_smoke_requires_dry_start_and_authenticated_8093_boundary() -> None:
     text = Path("scripts/smoke_p3.sh").read_text(encoding="utf-8")
     assert "wait_http_200()" in text
     assert "wait_http_200 p3 http://127.0.0.1:8093/health" in text
@@ -26,4 +27,6 @@ def test_p3_smoke_requires_dry_start_p3_http_and_local_control() -> None:
     assert "pgrep -f 'p25_main\\.py'" in text
     assert "assert health['mode'] == 'DRY'" in text
     assert "execution_enabled'] is False" in text
-    assert "P3_LIVE_CONTROL_SMOKE_PASS mode=DRY" in text
+    assert "P3_8093_AUTH_BOUNDARY_SMOKE_PASS health=200 protected_api=401" in text
+    assert "http://127.0.0.1:8093/api/summary" in text
+    assert '[[ "$AUTH_CODE" == "401" ]]' in text
