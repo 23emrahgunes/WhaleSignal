@@ -40,21 +40,30 @@ def _env_first(*names: str) -> str | None:
 
 
 def read_live_secrets() -> LiveSecretConfig:
-    signature_raw = _env_first("POLYMARKET_SIGNATURE_TYPE") or "0"
+    # WhaleSignal uses Polymarket's deposit-wallet flow by default. In the official
+    # py-clob-client-v2 this is SignatureTypeV2.POLY_1271 == 3 and requires a funder.
+    signature_raw = _env_first("POLYMARKET_SIGNATURE_TYPE") or "3"
     try:
         signature_type = int(signature_raw)
     except ValueError as exc:
         raise ValueError("POLYMARKET_SIGNATURE_TYPE must be an integer") from exc
+    if signature_type not in {0, 1, 2, 3}:
+        raise ValueError("POLYMARKET_SIGNATURE_TYPE must be one of 0,1,2,3")
+
+    wallet = _env_first("POLYMARKET_WALLET", "POLYMARKET_DEPOSIT_WALLET")
+    funder = _env_first(
+        "POLYMARKET_FUNDER", "POLYMARKET_DEPOSIT_WALLET", "POLYMARKET_WALLET"
+    )
     return LiveSecretConfig(
         private_key=_env_first("POLYMARKET_PRIVATE_KEY", "PK"),
-        wallet=_env_first("POLYMARKET_WALLET", "POLYMARKET_DEPOSIT_WALLET"),
+        wallet=wallet,
         api_key=_env_first("POLYMARKET_CLOB_API_KEY", "CLOB_API_KEY"),
         api_secret=_env_first("POLYMARKET_CLOB_API_SECRET", "CLOB_SECRET"),
         api_passphrase=_env_first(
             "POLYMARKET_CLOB_API_PASSPHRASE", "CLOB_PASS_PHRASE"
         ),
         signature_type=signature_type,
-        funder=_env_first("POLYMARKET_FUNDER", "POLYMARKET_DEPOSIT_WALLET"),
+        funder=funder,
     )
 
 
@@ -77,6 +86,8 @@ def make_clob_client(*, host: str, chain_id: int):
     secrets = read_live_secrets()
     if not secrets.private_key:
         raise RuntimeError("POLYMARKET_PRIVATE_KEY/PK is not configured")
+    if secrets.signature_type != 0 and not secrets.funder:
+        raise RuntimeError("POLYMARKET_FUNDER/deposit wallet is required for signature type 1/2/3")
 
     kwargs: dict[str, Any] = {
         "host": host,
