@@ -5,9 +5,9 @@ usage() {
   cat <<'EOF'
 Usage: ./deploy_p3.sh [--no-pull] [--skip-tests]
 
-Deploy the isolated P3 structural-arbitrage SHADOW lab. P3 reads P2.6 public
-book/fee data and writes data/p3_arbitrage.sqlite. It never stops/replaces P2.5,
-never changes P2.6 runtime flags, and contains no signing/order submission.
+Deploy P3 structural arbitrage. The process always starts DRY. Optional guarded
+LIVE support is installed only when P3_LIVE_FEATURE_ENABLED=true; it still requires
+a localhost operator arm action and successful preflight before execution.
 EOF
 }
 
@@ -51,9 +51,6 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git rev-parse HEAD)"
 echo "branch=$BRANCH commit=$COMMIT"
 
-# P3 does not consume P2.5 web/API data. P2.5 can temporarily block its aiohttp
-# loop during research work, so P3 deployment must not fail on P2.5 HTTP latency.
-# We still fail closed if the P2.5 process itself is gone.
 p25_alive || fail "P2.5 process is not running"
 for service in direction-engine-p26-oracle.service direction-engine-p26-dataset.service direction-engine-p26-book.service; do
   $SUDO systemctl is-active --quiet "$service" || fail "required P2.6 service inactive: $service"
@@ -65,15 +62,29 @@ PIP="$REPO_DIR/.venv/bin/pip"
 mkdir -p data logs reports/p3
 if [[ ! -f .env.p3 ]]; then
   cp .env.p3.example .env.p3
-  chmod 600 .env.p3
 fi
+chmod 600 .env.p3
 
 "$PIP" install -q -r requirements.txt
+LIVE_FEATURE="$("$PY" - <<'PY'
+from p3_config import get_p3_settings
+s=get_p3_settings(); s.validate_research_safety(); s.ensure_directories()
+print("1" if s.live_feature_enabled else "0")
+PY
+)"
+if [[ "$LIVE_FEATURE" == "1" ]]; then
+  [[ -f requirements-live.txt ]] || fail "requirements-live.txt missing"
+  "$PIP" install -q -r requirements-live.txt
+fi
+
 "$PY" - <<'PY'
 from p3_config import get_p3_settings
 s=get_p3_settings(); s.validate_research_safety(); s.ensure_directories()
 print("p26_db=", s.p26_db_path)
 print("p3_db=", s.p3_db_path)
+print("live_feature=", s.live_feature_enabled)
+print("live_auto_execute=", s.live_auto_execute_enabled)
+print("live_control=", f"{s.live_control_host}:{s.live_control_port}")
 assert s.p26_db_path != s.p3_db_path
 PY
 
@@ -92,7 +103,7 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 cat > "$TMP" <<EOF
 [Unit]
-Description=Direction Engine P3 Structural Arbitrage Lab (SHADOW ONLY)
+Description=Direction Engine P3 Structural Arbitrage (DRY default / guarded LIVE)
 After=network-online.target direction-engine-p26-book.service
 Wants=network-online.target direction-engine-p26-book.service
 
@@ -129,4 +140,4 @@ $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail 
 bash scripts/smoke_p3.sh
 p25_alive || fail "P2.5 process stopped during P3 deploy"
 
-echo "P3 ARBITRAGE LAB DEPLOY PASS | P2.5=process_alive | SHADOW=true | execution=false"
+echo "P3 ARBITRAGE DEPLOY PASS | starts=DRY | live_feature=$LIVE_FEATURE | p25=process_alive"
