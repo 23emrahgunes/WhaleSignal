@@ -109,4 +109,5 @@ jobs:
           test_p3_live_guard.py
           test_p3_live_executor.py
           test_p3_live_equal_share_risk.py
+          test_p3_live_network_uncertainty.py
           test_p3_panel_tr.py
