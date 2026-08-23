@@ -40,22 +40,23 @@ def _settings(tmp_path, **overrides) -> P3Settings:
         "live_auto_execute_enabled": True,
         "live_require_dry_validated": False,
         "live_max_capital_per_cycle_usdc": 1.0,
-        "live_control_host": "127.0.0.1",
-        "live_control_port": 18094,
         "web_host": "127.0.0.1",
         "web_port": 18093,
+        "web_auth_required": True,
+        "web_username": "operator",
+        "web_password": "test-password-12345",
     }
     values.update(overrides)
     return P3Settings(**values)
 
 
-def _secret(*, has_key: bool = True):
+def _secret(*, has_key: bool = True, signature_type: int = 0, funder=None):
     return SimpleNamespace(
         has_private_key=has_key,
         wallet="0xabc" if has_key else None,
-        funder=None,
+        funder=funder,
         has_full_clob_creds=True if has_key else False,
-        signature_type=0,
+        signature_type=signature_type,
     )
 
 
@@ -166,6 +167,48 @@ def test_missing_private_key_fails_even_connectivity_only(tmp_path) -> None:
     assert "PRIVATE_KEY_MISSING" in result["reasons"]
 
 
+def test_signature_type_3_requires_funder_before_clob_probe(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    called = False
+
+    def account_probe(**_kwargs):
+        nonlocal called
+        called = True
+        return {}
+
+    result = run_live_preflight(
+        settings,
+        for_arming=False,
+        account_probe=account_probe,
+        geoblock_opener=_geo({"blocked": False}),
+        secret_reader=lambda: _secret(signature_type=3, funder=None),
+        dry_summary_builder=_dry_validated,
+    )
+    assert result["ok"] is False
+    assert "FUNDER_REQUIRED_FOR_SIGNATURE_TYPE" in result["reasons"]
+    assert result["checks"]["credentials"]["signature_type"] == 3
+    assert called is False
+
+
+def test_signature_type_3_with_funder_can_reach_clob_probe(tmp_path) -> None:
+    settings = _settings(tmp_path)
+
+    result = run_live_preflight(
+        settings,
+        for_arming=False,
+        account_probe=lambda **_: {
+            "signer": "0x123",
+            "server_ok": {"ok": True},
+            "balance_payload": {"balance": "0", "allowances": {"exchange": "1"}},
+        },
+        geoblock_opener=_geo({"blocked": False}),
+        secret_reader=lambda: _secret(signature_type=3, funder="0xdeposit"),
+        dry_summary_builder=_dry_validated,
+    )
+    assert result["ok"] is True
+    assert result["checks"]["credentials"]["funder_configured"] is True
+
+
 def test_default_dry_validation_gate_blocks_early_live_arm(tmp_path) -> None:
     settings = _settings(tmp_path, live_require_dry_validated=True)
 
@@ -197,9 +240,15 @@ def test_default_dry_validation_gate_blocks_early_live_arm(tmp_path) -> None:
     assert "STRICT_DRY_NOT_VALIDATED" in result["reasons"]
 
 
-def test_live_config_rejects_public_control_plane(tmp_path) -> None:
-    settings = _settings(tmp_path, live_control_host="0.0.0.0")
-    with pytest.raises(ValueError, match="loopback"):
+def test_live_config_requires_8093_authentication(tmp_path) -> None:
+    settings = _settings(tmp_path, web_auth_required=False)
+    with pytest.raises(ValueError, match="authentication is required"):
+        settings.validate_research_safety()
+
+
+def test_web_auth_requires_strong_password(tmp_path) -> None:
+    settings = _settings(tmp_path, web_password="short")
+    with pytest.raises(ValueError, match="at least 12 characters"):
         settings.validate_research_safety()
 
 

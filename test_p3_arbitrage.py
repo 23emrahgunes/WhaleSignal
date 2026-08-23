@@ -301,22 +301,27 @@ def test_p3_static_safety_and_shell_syntax():
     config = Path("p3_config.py").read_text(encoding="utf-8")
     assert "live_feature_enabled: bool = Field(default=False" in config
     assert "P3_LIVE_AUTO_EXECUTE_ENABLED" in config
-    assert 'live_control_host: str = Field(default="127.0.0.1"' in config
+    assert "P3_WEB_AUTH_REQUIRED" in config
+    assert "P3 WEB authentication is required whenever LIVE feature is enabled" in config
     assert "P3 LIVE v1 only supports BUY+MERGE" in config
 
-    public_web = Path("p3_web.py").read_text(encoding="utf-8")
-    assert 'web.post("/api/arm"' not in public_web
-    assert 'web.post("/api/disarm"' not in public_web
+    operator_web = Path("p3_web.py").read_text(encoding="utf-8")
+    assert 'web.post("/api/live/arm"' in operator_web
+    assert 'web.post("/api/live/disarm"' in operator_web
+    assert "X-P3-CSRF" in operator_web
+    assert 'public = request.path in {"/health", "/login"}' in operator_web
+    assert '"private_key_loaded": False' in operator_web
+    assert '"wallet_loaded": False' in operator_web
 
-    control = Path("p3_live_control.py").read_text(encoding="utf-8")
-    assert "X-P3-Control-Token" in control
-    assert 'web.post("/api/arm"' in control
-    assert 'web.post("/api/disarm"' in control
+    daemon = Path("p3_daemon.py").read_text(encoding="utf-8")
+    assert "run_live_control" not in daemon
+    assert "control=web8093" in daemon
 
     deploy = Path("deploy_p3.sh").read_text(encoding="utf-8")
     assert "systemctl stop direction-engine-p25" not in deploy
     assert "systemctl stop direction-engine-p26" not in deploy
     assert "p3_daemon.py" in deploy
+    assert "authenticated_8093" in deploy
     for script in ("deploy_p3.sh", "scripts/status_p3.sh", "scripts/stop_p3.sh", "scripts/smoke_p3.sh"):
         result = subprocess.run(["bash", "-n", script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr

@@ -22,7 +22,9 @@ print("live_config=", {
     "auto_execute_enabled": s.live_auto_execute_enabled,
     "require_dry_validated": s.live_require_dry_validated,
     "max_cycle_usdc": s.live_max_capital_per_cycle_usdc,
-    "control": f"{s.live_control_host}:{s.live_control_port}",
+    "control": f"authenticated_web:{s.web_host}:{s.web_port}",
+    "web_auth_required": s.web_auth_required,
+    "web_cookie_secure": s.web_cookie_secure,
 })
 health_path=Path('/tmp/p3-health.json')
 if health_path.exists():
@@ -68,18 +70,12 @@ print("recent_live_cycles=", [dict(row) for row in recent])
 conn.close()
 PY
 
-CONTROL_ENABLED="$("$PY" - <<'PY'
+AUTH_REQUIRED="$("$PY" - <<'PY'
 from p3_config import get_p3_settings
-print('1' if get_p3_settings().live_control_enabled else '0')
+print('1' if get_p3_settings().web_auth_required else '0')
 PY
 )"
-if [[ "$CONTROL_ENABLED" == "1" ]]; then
-  CONTROL_PORT="$("$PY" - <<'PY'
-from p3_config import get_p3_settings
-print(get_p3_settings().live_control_port)
-PY
-)"
-  echo "live_control_status:"
-  curl -sS --connect-timeout 1 --max-time 2 "http://127.0.0.1:${CONTROL_PORT}/api/status" || true
-  echo
+if [[ "$AUTH_REQUIRED" == "1" ]]; then
+  CODE="$(curl -sS --connect-timeout 1 --max-time 2 -o /tmp/p3-status-unauth.json -w '%{http_code}' http://127.0.0.1:8093/api/session || true)"
+  echo "unauthenticated_8093_session_http=$CODE expected=401"
 fi

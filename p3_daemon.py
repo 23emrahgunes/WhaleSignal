@@ -1,8 +1,8 @@
 """P3 structural-arbitrage daemon with DRY default and guarded LIVE arming.
 
 Research scanner/replay always remains available. LIVE state is process-local and
-starts DRY after every restart. Optional authenticated execution runs only while a
-localhost operator has armed the process and all preflight gates remain valid.
+starts DRY after every restart. Authenticated operator actions and analytics share
+the 8093 web process; there is no second LIVE control listener.
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import time
 
 from p3_config import P3Settings, get_p3_settings
 from p3_entry_replay import P3EntryReplayEngine
-from p3_live_control import run_live_control
 from p3_live_executor_resolved import P3LiveExecutor
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
@@ -121,16 +120,15 @@ async def run() -> None:
     )
     log.info(
         "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
-        "live_feature=%s live_auto=%s live_control=%s:%d",
+        "web_auth=%s live_feature=%s live_auto=%s control=web8093",
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
         settings.web_host,
         settings.web_port,
+        settings.web_auth_required,
         settings.live_feature_enabled,
         settings.live_auto_execute_enabled,
-        settings.live_control_host,
-        settings.live_control_port,
     )
     stop = asyncio.Event()
     install_handlers(asyncio.get_running_loop(), stop)
@@ -140,8 +138,6 @@ async def run() -> None:
     if settings.web_enabled:
         tasks.append(asyncio.create_task(run_web(settings, stop, live_state=live_state)))
         await asyncio.sleep(0.10)
-    if settings.live_control_enabled:
-        tasks.append(asyncio.create_task(run_live_control(settings, live_state, stop)))
     if settings.scanner_enabled:
         scanner = StructuralArbScanner(settings)
         tasks.append(asyncio.create_task(scanner_loop(scanner, settings.scan_interval_ms, stop)))
