@@ -35,22 +35,8 @@ fail() {
   exit 1
 }
 
-wait_http_200() {
-  local name="$1"
-  local url="$2"
-  local output="$3"
-  local attempts="${4:-30}"
-  local code="000"
-  for _ in $(seq 1 "$attempts"); do
-    code="$(curl -sS --connect-timeout 1 --max-time 2 -o "$output" -w '%{http_code}' "$url" || true)"
-    if [[ "$code" == "200" ]]; then
-      echo "$code"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "health_gate_failed name=$name code=$code url=$url" >&2
-  return 1
+p25_alive() {
+  pgrep -f 'p25_main\.py' >/dev/null 2>&1
 }
 
 if [[ "$DO_PULL" == "1" ]]; then
@@ -65,9 +51,10 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 COMMIT="$(git rev-parse HEAD)"
 echo "branch=$BRANCH commit=$COMMIT"
 
-# P2.5 /health includes engine.snapshot(); under transient CPU/DB pressure a single
-# 5s request can time out even though the service is healthy. Require eventual 200.
-P25="$(wait_http_200 p25-pre http://127.0.0.1:8091/health /tmp/p3-p25-health.json 30)" || fail "P2.5 health is not HTTP 200"
+# P3 does not consume P2.5 web/API data. P2.5 can temporarily block its aiohttp
+# loop during research work, so P3 deployment must not fail on P2.5 HTTP latency.
+# We still fail closed if the P2.5 process itself is gone.
+p25_alive || fail "P2.5 process is not running"
 for service in direction-engine-p26-oracle.service direction-engine-p26-dataset.service direction-engine-p26-book.service; do
   $SUDO systemctl is-active --quiet "$service" || fail "required P2.6 service inactive: $service"
 done
@@ -140,6 +127,6 @@ sleep 2
 $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail "P3 service inactive"
 
 bash scripts/smoke_p3.sh
-P25_AFTER="$(wait_http_200 p25-post http://127.0.0.1:8091/health /tmp/p3-p25-health-after.json 30)" || fail "P2.5 health failed after P3 deploy"
+p25_alive || fail "P2.5 process stopped during P3 deploy"
 
-echo "P3 ARBITRAGE LAB DEPLOY PASS | P2.5=200 | SHADOW=true | execution=false"
+echo "P3 ARBITRAGE LAB DEPLOY PASS | P2.5=process_alive | SHADOW=true | execution=false"

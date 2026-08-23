@@ -23,18 +23,20 @@ wait_http_200() {
   return 1
 }
 
-# P2.5 /health calls engine.snapshot(), so a busy research loop can make a single
-# 5s curl a false negative. Require eventual HTTP 200 instead of one-shot timing.
-P25="$(wait_http_200 p25 http://127.0.0.1:8091/health /tmp/p3-smoke-p25.json 30)" || exit 1
+# P2.5 is a sibling research service, not a P3 runtime dependency. Its aiohttp
+# loop can be temporarily busy, so only require the process to remain alive here.
+pgrep -f 'p25_main\.py' >/dev/null 2>&1 || { echo "FAIL p25_process_missing"; exit 1; }
 
-# P3 should stay responsive even while replay backlog drains. Give startup a bounded
-# retry window so imports/schema setup do not cause a false deployment failure.
+# P3 itself must provide a responsive health endpoint while backlog drains.
 if ! P3="$(wait_http_200 p3 http://127.0.0.1:8093/health /tmp/p3-smoke-health.json 30)"; then
   systemctl --no-pager --full status direction-engine-p3-arbitrage.service || true
   tail -n 120 logs/p3-arbitrage.log || true
   exit 1
 fi
 systemctl is-active --quiet direction-engine-p3-arbitrage.service || { echo "FAIL p3 service inactive"; exit 1; }
+for service in direction-engine-p26-oracle.service direction-engine-p26-dataset.service direction-engine-p26-book.service; do
+  systemctl is-active --quiet "$service" || { echo "FAIL required service inactive: $service"; exit 1; }
+done
 
 "$PY" - <<'PY'
 from p3_config import get_p3_settings
@@ -43,6 +45,6 @@ s=get_p3_settings(); s.validate_research_safety()
 conn=connect_p3(s.p3_db_path); ensure_p3_schema(conn)
 assert integrity_check(conn)=="ok"
 assert s.p26_db_path != s.p3_db_path
-print("P3_AWS_SMOKE_PASS p25=200 p3=200 shadow=true execution=false signing=false private_key=false orders=false")
+print("P3_AWS_SMOKE_PASS p25_process=true p3=200 shadow=true execution=false signing=false private_key=false orders=false")
 conn.close()
 PY
