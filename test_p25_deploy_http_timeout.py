@@ -19,13 +19,15 @@ def test_p25_deploy_http_probes_are_bounded_and_health_first():
     assert health < state < paper_page < paper_api < paper_summary
 
 
-def test_p25_deploy_has_no_unbounded_endpoint_curl():
+def test_p25_deploy_has_one_bounded_curl_implementation():
     text = Path("deploy_p25.sh").read_text(encoding="utf-8")
-    endpoint_curls = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip().startswith("curl ")
-    ]
-    # All endpoint curls live inside wait_http_200 and therefore include the
-    # continuation carrying --max-time on the following lines.
-    assert endpoint_curls == ["curl -sS \\"]
+
+    # Endpoint probes are centralized in exactly one curl implementation and every
+    # endpoint is invoked through wait_http_200 rather than ad-hoc curl assignments.
+    assert text.count("curl -sS") == 1
+    assert text.count("wait_http_200 \"") >= 5
+    assert 'state_code="$(curl' not in text
+    assert 'health_code="$(curl' not in text
+    assert 'paper_page_code="$(curl' not in text
+    assert 'paper_api_code="$(curl' not in text
+    assert 'paper_summary_code="$(curl' not in text
