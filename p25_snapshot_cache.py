@@ -1,6 +1,6 @@
 """Thread-safe stale-while-revalidate cache for heavy P2.5 dashboard snapshots.
 
-P2.5's full snapshot includes SQLite analytics/count scans.  Those scans are useful
+P2.5's full snapshot includes SQLite analytics/count scans. Those scans are useful
 for the dashboard but must never make every HTTP poll recompute the same payload.
 This helper keeps one completed snapshot, serves stale data immediately after TTL,
 and refreshes it in exactly one background thread.
@@ -23,6 +23,7 @@ class SnapshotCache:
         self.source = source
         self.ttl_sec = max(0.5, float(ttl_sec))
         self._lock = threading.Lock()
+        self._ready = threading.Event()
         self._value: Optional[dict] = None
         self._completed_at = 0.0
         self._refreshing = False
@@ -35,7 +36,7 @@ class SnapshotCache:
             with self._lock:
                 self._value = value
                 # Freshness starts when the expensive snapshot FINISHES, not when
-                # it starts.  This prevents a 30s calculation from being born stale.
+                # it starts. This prevents a 30s calculation from being born stale.
                 self._completed_at = completed
                 self._last_error = None
         except Exception as exc:  # noqa: BLE001
@@ -45,45 +46,59 @@ class SnapshotCache:
         finally:
             with self._lock:
                 self._refreshing = False
+            # Wake a first request that arrived while prewarm was still running.
+            self._ready.set()
 
-    def prewarm(self) -> None:
-        """Start the first heavy snapshot in a daemon thread without blocking asyncio."""
-        with self._lock:
-            if self._value is not None or self._refreshing:
-                return
-            self._refreshing = True
+    def _start_refresh_locked(self) -> None:
+        self._refreshing = True
+        self._ready.clear()
         threading.Thread(
             target=self._refresh,
             name="p25-snapshot-cache",
             daemon=True,
         ).start()
 
+    def prewarm(self) -> None:
+        """Start the first heavy snapshot in a daemon thread without blocking asyncio."""
+        with self._lock:
+            if self._value is not None or self._refreshing:
+                return
+            self._start_refresh_locked()
+
     def get(self) -> dict:
-        """Return fresh/stale cache immediately; only first-ever miss may block.
+        """Return fresh/stale cache; only an initial prewarm wait may block.
 
         Once a value exists, an expired value is returned immediately and exactly one
-        background refresh is launched.  That makes dashboard polling independent of
+        background refresh is launched. That makes dashboard polling independent of
         SQLite scan duration.
         """
         now = time.monotonic()
+        wait_for_initial = False
         with self._lock:
             value = self._value
             age = now - self._completed_at if value is not None else None
-            refreshing = self._refreshing
             if value is not None and age is not None and age < self.ttl_sec:
                 return value
             if value is not None:
-                if not refreshing:
-                    self._refreshing = True
-                    threading.Thread(
-                        target=self._refresh,
-                        name="p25-snapshot-cache",
-                        daemon=True,
-                    ).start()
+                if not self._refreshing:
+                    self._start_refresh_locked()
                 return value
+            if self._refreshing:
+                wait_for_initial = True
+            else:
+                self._start_refresh_locked()
+                wait_for_initial = True
 
-        # A prewarm normally means this path is rare.  On the first request before
-        # prewarm finishes, compute synchronously in the worker thread used by web.
+        if wait_for_initial:
+            # Web calls get() via asyncio.to_thread, so waiting here never blocks
+            # discovery/CLOB/Chainlink. The deploy probe is separately bounded.
+            self._ready.wait(timeout=60.0)
+            with self._lock:
+                if self._value is not None:
+                    return self._value
+
+        # Prewarm failed or exceeded the wait bound. Keep behavior fail-visible by
+        # doing one direct build in this worker thread rather than returning junk.
         value = self.source()
         completed = time.monotonic()
         with self._lock:
@@ -91,6 +106,7 @@ class SnapshotCache:
             self._completed_at = completed
             self._last_error = None
             self._refreshing = False
+        self._ready.set()
         return value
 
     def status(self) -> dict[str, Any]:
