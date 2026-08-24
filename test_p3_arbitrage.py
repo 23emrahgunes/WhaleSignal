@@ -48,6 +48,8 @@ def pair(*, ts: int = 1000, up_asks=((0.40, 10),), down_asks=((0.50, 10),), up_b
 
 
 def settings(tmp_path: Path, **kwargs) -> P3Settings:
+    # Unit tests must not inherit the operator's real VPS .env.p3. In production
+    # LIVE may intentionally be enabled, while these fixtures validate safe defaults.
     values = dict(
         p26_db_path=str(tmp_path / "p26.sqlite"),
         p3_db_path=str(tmp_path / "p3.sqlite"),
@@ -60,7 +62,7 @@ def settings(tmp_path: Path, **kwargs) -> P3Settings:
         web_port=18093,
     )
     values.update(kwargs)
-    return P3Settings(**values)
+    return P3Settings(_env_file=None, **values)
 
 
 def seed_p26(
@@ -117,7 +119,7 @@ def test_p30_schema_isolated_and_integrity(tmp_path):
     assert {"p3_opportunities", "p3_windows", "p3_replays", "p3_health_events"} <= tables
     conn.close()
     with pytest.raises(ValueError, match="separate"):
-        P3Settings(p26_db_path="same.sqlite", p3_db_path="same.sqlite").validate_research_safety()
+        P3Settings(_env_file=None, p26_db_path="same.sqlite", p3_db_path="same.sqlite").validate_research_safety()
 
 
 def test_p31_buy_merge_is_model_free_and_profitable_after_depth():
