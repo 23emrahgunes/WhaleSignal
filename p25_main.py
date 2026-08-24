@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import aiohttp
 
@@ -28,10 +29,19 @@ from p25_paper_config import PaperSettings as Settings
 from p25_paper_reconcile import PaperTradeReconciler
 from p25_reconciled_paper_engine import P25Engine
 from p25_reconciling_recorder import P25ReconcilingPaperRecorder
+from p25_snapshot_cache import SnapshotCache
 from p25_web_records import run_web
 from reference import ReferenceRouter
 
 log = logging.getLogger("direction_engine.p25_main")
+
+
+def _state_cache_ttl_sec() -> float:
+    raw = os.getenv("P25_WEB_STATE_CACHE_SEC", "5")
+    try:
+        return max(0.5, float(raw))
+    except ValueError:
+        return 5.0
 
 
 async def run() -> None:
@@ -90,6 +100,14 @@ async def run() -> None:
         engine = P25Engine(cfg, hub, recorder, model, calibration)
         engine.attach_session(session)
         discovery.on_resolved(engine.on_market_resolved)
+
+        # Full dashboard snapshots include SQLite analytics.  Wrap them in a
+        # stale-while-revalidate cache before the web task starts.  The first heavy
+        # build is prewarmed in a daemon thread; after that, expired snapshots are
+        # served stale immediately while one background refresh runs.
+        snapshot_cache = SnapshotCache(engine.snapshot, ttl_sec=_state_cache_ttl_sec())
+        engine.snapshot = snapshot_cache.get  # type: ignore[method-assign]
+        snapshot_cache.prewarm()
 
         paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
         engine.attach_paper_reconciler(paper_reconciler)
