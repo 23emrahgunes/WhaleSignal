@@ -22,7 +22,7 @@ from main import (
     build_combos,
 )
 from p25_calibration import CalibrationBook
-from p25_discovery import P25MarketDiscovery
+from p25_short_rollover import P25MarketDiscovery
 from p25_model import DirectionModel
 from p25_paper_config import PaperSettings as Settings
 from p25_paper_reconcile import PaperTradeReconciler
