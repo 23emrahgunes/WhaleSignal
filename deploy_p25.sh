@@ -98,21 +98,22 @@ wait_http_200() {
   local endpoint="$1"
   local output="$2"
   local attempts="${3:-24}"
+  local max_time="${4:-5}"
   local code="000"
   local i
 
   for ((i=1; i<=attempts; i++)); do
     code="$(curl -sS \
       --connect-timeout 1 \
-      --max-time 5 \
+      --max-time "$max_time" \
       -o "$output" \
       -w '%{http_code}' \
       "$base_url$endpoint" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then
-      echo "HTTP PASS endpoint=$endpoint attempt=$i code=200"
+      echo "HTTP PASS endpoint=$endpoint attempt=$i code=200 max_time=${max_time}s"
       return 0
     fi
-    echo "HTTP WAIT endpoint=$endpoint attempt=$i/$attempts code=${code:-000}"
+    echo "HTTP WAIT endpoint=$endpoint attempt=$i/$attempts code=${code:-000} max_time=${max_time}s"
     if ! kill -0 "$new_pid" 2>/dev/null; then
       echo "ERROR: P2.5 process HTTP beklerken durdu endpoint=$endpoint" >&2
       tail -n 150 engine.log >&2 || true
@@ -126,14 +127,13 @@ wait_http_200() {
   return 1
 }
 
-# /health is intentionally the cheap liveness probe.  Heavier analytics routes are
-# checked only after the aiohttp server is demonstrably responsive.  Every request
-# is bounded so a busy event loop can delay deploy, never hang it forever.
-wait_http_200 "/health" /tmp/direction-p25-health.json 30
-wait_http_200 "/api/state" /tmp/direction-p25-state.json 24
-wait_http_200 "/paper-trades" /tmp/direction-p25-paper.html 24
-wait_http_200 "/api/paper-trades?limit=1" /tmp/direction-p25-paper-api.json 24
-wait_http_200 "/api/paper-summary" /tmp/direction-p25-paper-summary.json 24
+# /health is intentionally cheap. /api/state can legitimately need a longer first
+# warm-up on a large SQLite dataset; it remains bounded and runs off the aiohttp loop.
+wait_http_200 "/health" /tmp/direction-p25-health.json 30 5
+wait_http_200 "/api/state" /tmp/direction-p25-state.json 3 45
+wait_http_200 "/paper-trades" /tmp/direction-p25-paper.html 24 5
+wait_http_200 "/api/paper-trades?limit=1" /tmp/direction-p25-paper-api.json 24 10
+wait_http_200 "/api/paper-summary" /tmp/direction-p25-paper-summary.json 6 20
 
 if ! grep -q 'Paper Kayıtları' /tmp/direction-p25-paper.html; then
   echo "ERROR: /paper-trades eski router veya yanlis HTML dondu" >&2

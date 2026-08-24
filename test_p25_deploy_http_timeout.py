@@ -7,7 +7,8 @@ def test_p25_deploy_http_probes_are_bounded_and_health_first():
 
     assert "wait_http_200()" in text
     assert "--connect-timeout 1" in text
-    assert "--max-time 5" in text
+    assert '--max-time "$max_time"' in text
+    assert 'local max_time="${4:-5}"' in text
     assert "kill -0 \"$new_pid\"" in text
 
     health = text.index('wait_http_200 "/health"')
@@ -17,6 +18,13 @@ def test_p25_deploy_http_probes_are_bounded_and_health_first():
     paper_summary = text.index('wait_http_200 "/api/paper-summary"')
 
     assert health < state < paper_page < paper_api < paper_summary
+
+
+def test_p25_state_gets_bounded_long_first_warmup():
+    text = Path("deploy_p25.sh").read_text(encoding="utf-8")
+    assert 'wait_http_200 "/health" /tmp/direction-p25-health.json 30 5' in text
+    assert 'wait_http_200 "/api/state" /tmp/direction-p25-state.json 3 45' in text
+    assert 'wait_http_200 "/api/paper-summary" /tmp/direction-p25-paper-summary.json 6 20' in text
 
 
 def test_p25_deploy_has_one_bounded_curl_implementation():
