@@ -1,0 +1,33 @@
+"""Regression checks for bounded P2.5 deploy HTTP verification."""
+from pathlib import Path
+
+
+def test_p25_deploy_http_probes_are_bounded_and_health_first():
+    text = Path("deploy_p25.sh").read_text(encoding="utf-8")
+
+    assert "wait_http_200()" in text
+    assert "--connect-timeout 1" in text
+    assert "--max-time 5" in text
+    assert "kill -0 \"$new_pid\"" in text
+
+    health = text.index('wait_http_200 "/health"')
+    state = text.index('wait_http_200 "/api/state"')
+    paper_page = text.index('wait_http_200 "/paper-trades"')
+    paper_api = text.index('wait_http_200 "/api/paper-trades?limit=1"')
+    paper_summary = text.index('wait_http_200 "/api/paper-summary"')
+
+    assert health < state < paper_page < paper_api < paper_summary
+
+
+def test_p25_deploy_has_one_bounded_curl_implementation():
+    text = Path("deploy_p25.sh").read_text(encoding="utf-8")
+
+    # Endpoint probes are centralized in exactly one curl implementation and every
+    # endpoint is invoked through wait_http_200 rather than ad-hoc curl assignments.
+    assert text.count("curl -sS") == 1
+    assert text.count("wait_http_200 \"") >= 5
+    assert 'state_code="$(curl' not in text
+    assert 'health_code="$(curl' not in text
+    assert 'paper_page_code="$(curl' not in text
+    assert 'paper_api_code="$(curl' not in text
+    assert 'paper_summary_code="$(curl' not in text
