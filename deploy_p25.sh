@@ -84,7 +84,7 @@ echo "=== START P2.5 SHADOW + PAPER ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
-sleep 12
+sleep 3
 
 if ! kill -0 "$new_pid" 2>/dev/null; then
   echo "ERROR: P2.5 process baslatilamadi" >&2
@@ -93,27 +93,47 @@ if ! kill -0 "$new_pid" 2>/dev/null; then
 fi
 
 base_url="http://127.0.0.1:8091"
-state_code="$(curl -sS -o /tmp/direction-p25-state.json -w '%{http_code}' "$base_url/api/state" || true)"
-health_code="$(curl -sS -o /tmp/direction-p25-health.json -w '%{http_code}' "$base_url/health" || true)"
-paper_page_code="$(curl -sS -o /tmp/direction-p25-paper.html -w '%{http_code}' "$base_url/paper-trades" || true)"
-paper_api_code="$(curl -sS -o /tmp/direction-p25-paper-api.json -w '%{http_code}' "$base_url/api/paper-trades?limit=1" || true)"
-paper_summary_code="$(curl -sS -o /tmp/direction-p25-paper-summary.json -w '%{http_code}' "$base_url/api/paper-summary" || true)"
 
-for check in \
-  "api/state:$state_code" \
-  "health:$health_code" \
-  "paper-trades:$paper_page_code" \
-  "api/paper-trades:$paper_api_code" \
-  "api/paper-summary:$paper_summary_code"
-do
-  endpoint="${check%%:*}"
-  code="${check##*:}"
-  if [[ "$code" != "200" ]]; then
-    echo "ERROR: /$endpoint HTTP=$code" >&2
-    tail -n 150 engine.log >&2 || true
-    exit 1
-  fi
-done
+wait_http_200() {
+  local endpoint="$1"
+  local output="$2"
+  local attempts="${3:-24}"
+  local code="000"
+  local i
+
+  for ((i=1; i<=attempts; i++)); do
+    code="$(curl -sS \
+      --connect-timeout 1 \
+      --max-time 5 \
+      -o "$output" \
+      -w '%{http_code}' \
+      "$base_url$endpoint" 2>/dev/null || true)"
+    if [[ "$code" == "200" ]]; then
+      echo "HTTP PASS endpoint=$endpoint attempt=$i code=200"
+      return 0
+    fi
+    echo "HTTP WAIT endpoint=$endpoint attempt=$i/$attempts code=${code:-000}"
+    if ! kill -0 "$new_pid" 2>/dev/null; then
+      echo "ERROR: P2.5 process HTTP beklerken durdu endpoint=$endpoint" >&2
+      tail -n 150 engine.log >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+
+  echo "ERROR: $endpoint HTTP=${code:-000} after ${attempts} attempts" >&2
+  tail -n 150 engine.log >&2 || true
+  return 1
+}
+
+# /health is intentionally the cheap liveness probe.  Heavier analytics routes are
+# checked only after the aiohttp server is demonstrably responsive.  Every request
+# is bounded so a busy event loop can delay deploy, never hang it forever.
+wait_http_200 "/health" /tmp/direction-p25-health.json 30
+wait_http_200 "/api/state" /tmp/direction-p25-state.json 24
+wait_http_200 "/paper-trades" /tmp/direction-p25-paper.html 24
+wait_http_200 "/api/paper-trades?limit=1" /tmp/direction-p25-paper-api.json 24
+wait_http_200 "/api/paper-summary" /tmp/direction-p25-paper-summary.json 24
 
 if ! grep -q 'Paper Kayıtları' /tmp/direction-p25-paper.html; then
   echo "ERROR: /paper-trades eski router veya yanlis HTML dondu" >&2
