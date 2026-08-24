@@ -155,7 +155,10 @@ async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
             ):
                 return cached
             try:
-                payload = engine.snapshot()
+                # engine.snapshot() performs several SQLite analytics/count scans.
+                # Keep that synchronous work off aiohttp's event loop so discovery,
+                # CLOB, Chainlink and /health remain responsive while it runs.
+                payload = await asyncio.to_thread(engine.snapshot)
             except Exception:
                 if isinstance(cached, dict):
                     return cached
