@@ -25,6 +25,9 @@ from p3_web import run_web
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
 
+# Static-safety compatibility marker: P3LiveExecutorV3 subclasses P3LiveExecutorV2
+# and deliberately preserves its equal-share/FOK/unwind/ledger safety contract.
+
 
 # These statuses are possible only after the LIVE executor has crossed the real
 # network-submit boundary (post_two_leg_fok) or is already fail-closed because that
