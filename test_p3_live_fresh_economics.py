@@ -4,6 +4,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import pytest
+
 from p3_live_executor_v3 import P3LiveExecutorV3
 from p3_live_gateway_fresh import FreshEconomicPolymarketLiveGateway
 from p3_live_gateway_v2 import RiskAwarePolymarketLiveGateway
@@ -36,8 +38,8 @@ def test_fresh_gateway_accepts_profitable_pair_even_if_one_leg_moved_above_old_l
 
     assert up.complete is True
     assert down.complete is True
-    assert up.worst_price == 0.41
-    assert down.worst_price == 0.53
+    assert up.worst_price == pytest.approx(0.41)
+    assert down.worst_price == pytest.approx(0.53)
 
     metrics = buy_merge_metrics(
         quantity_shares=5.0,
@@ -48,7 +50,7 @@ def test_fresh_gateway_accepts_profitable_pair_even_if_one_leg_moved_above_old_l
         execution_buffer_per_share=0.0,
     )
     assert metrics["net_profit_usdc"] > 0.0
-    assert metrics["net_profit_usdc"] == 0.3
+    assert metrics["net_profit_usdc"] == pytest.approx(0.3)
 
 
 def test_fresh_gateway_does_not_force_bad_pair_through_edge_gate():
