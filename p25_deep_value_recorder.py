@@ -1,9 +1,11 @@
 """Deep-value paper recorder for low-price directional reversal research.
 
-This layer is simulation-only.  In DEEP_VALUE_WATCH mode it observes every existing
-forecast checkpoint for a market and opens at most one paper trade when the forecast
-side first becomes eligible inside the configured price band.  Temporary misses do
-not consume the market; only the final checkpoint persists a terminal SKIPPED row.
+DEEP_VALUE_WATCH is simulation-only.  The normal P2.5 engine already rebuilds the
+current market snapshot + research forecast every SNAPSHOT_LOOP_MS (500ms default).
+This recorder observes those in-memory ticks and writes NOTHING for ordinary misses.
+It persists at most one $-stake paper entry per market, then normal authoritative
+settlement records the result.  This lets us study very short 3c/5c/15c dislocations
+without turning SQLite into a tick database.
 
 No credentials, signing, order construction or execution exists here.
 """
@@ -38,47 +40,53 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
     def __init__(self, db_path: str, cfg) -> None:  # noqa: ANN001
         self.paper_cfg = cfg
         super().__init__(db_path, cfg)
+        rows = self.conn.execute(
+            "SELECT condition_id FROM paper_trades WHERE strategy_version=?",
+            (self.paper_policy.strategy_version,),
+        ).fetchall()
+        self._deep_value_consumed = {str(row[0]) for row in rows if row[0]}
 
     def _deep_value_enabled(self) -> bool:
         return self.paper_cfg.paper_entry_mode_normalized() == "DEEP_VALUE_WATCH"
 
-    def _decision_for_checkpoint(
+    def _decision_for_tick(
         self,
         *,
         ref: MarketRef,
         snap: FeatureSnapshot,
-        checkpoint: int,
         trace: dict,
     ) -> Optional[PaperEntryDecision]:
-        horizon = ref.combo.horizon.value
-        if int(checkpoint) not in set(self.paper_cfg.paper_watch_checkpoints(horizon)):
+        tte = snap.tte_sec if snap.tte_sec is not None else snap.seconds_remaining
+        if tte is None or float(tte) <= 0:
             return None
+        marker = max(0, int(round(float(tte))))
+        horizon = ref.combo.horizon.value
 
-        # Re-use the canonical policy evaluator by making the current observed
-        # checkpoint canonical for this one pure evaluation call.
+        # Re-use the canonical pure evaluator by making this observed TTE marker the
+        # canonical checkpoint for this one call.  Nothing is persisted unless the
+        # decision is actually eligible.
         entry_checkpoints = dict(self.paper_policy.entry_checkpoints)
-        entry_checkpoints[horizon] = int(checkpoint)
+        entry_checkpoints[horizon] = marker
         policy = replace(self.paper_policy, entry_checkpoints=entry_checkpoints)
         return evaluate_paper_entry(
             ref=ref,
             snap=snap,
-            checkpoint=int(checkpoint),
+            checkpoint=marker,
             trace=trace,
             policy=policy,
             available_bankroll_usdc=self.available_paper_bankroll(),
         )
 
-    def _persist_paper_decision(
+    def _persist_open(
         self,
         *,
         ref: MarketRef,
         snap: FeatureSnapshot,
-        checkpoint: int,
         trace: dict,
         decision: PaperEntryDecision,
     ) -> bool:
-        status = "OPEN" if decision.eligible else "SKIPPED"
-        skip_reason = None if decision.eligible else decision.reason
+        tte = snap.tte_sec if snap.tte_sec is not None else snap.seconds_remaining
+        marker = max(0, int(round(float(tte or 0.0))))
         before = self.conn.total_changes
         self.conn.execute(
             """
@@ -99,9 +107,9 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
                 ref.combo.horizon.value,
                 ref.slug,
                 self.paper_policy.strategy_version,
-                int(checkpoint),
+                marker,
                 snap.ts,
-                snap.tte_sec,
+                float(tte or 0.0),
                 decision.side,
                 trace.get("forecast_p_up"),
                 decision.selected_probability,
@@ -117,43 +125,59 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
                 decision.shares,
                 decision.slippage,
                 decision.fee_usdc,
-                status,
-                skip_reason,
+                "OPEN",
+                None,
             ),
         )
         self.conn.commit()
         created = self.conn.total_changes > before
+        self._deep_value_consumed.add(str(ref.condition_id))
         if created:
-            if status == "OPEN":
-                log.info(
-                    "DEEP VALUE PAPER OPEN %s %s stake=%.2f ask=%.3f fill=%.3f edge=%+.3f checkpoint=T-%s",
-                    ref.combo.key,
-                    decision.side,
-                    decision.stake_usdc,
-                    decision.entry_ask or 0.0,
-                    decision.fill_price or 0.0,
-                    decision.forecast_edge or 0.0,
-                    checkpoint,
-                )
-            else:
-                log.info(
-                    "DEEP VALUE PAPER FINAL SKIP %s reason=%s checkpoint=T-%s",
-                    ref.combo.key,
-                    skip_reason,
-                    checkpoint,
-                )
+            multiple = (
+                float(decision.selected_probability) / float(decision.fill_price)
+                if decision.selected_probability is not None
+                and decision.fill_price not in (None, 0)
+                else None
+            )
+            log.info(
+                "DEEP VALUE PAPER OPEN %s %s stake=%.2f ask=%.4f fill=%.4f "
+                "model_p=%.4f p/price=%s shares=%.3f tte=%.1fs",
+                ref.combo.key,
+                decision.side,
+                decision.stake_usdc,
+                decision.entry_ask or 0.0,
+                decision.fill_price or 0.0,
+                decision.selected_probability or 0.0,
+                f"{multiple:.2f}x" if multiple is not None else "NA",
+                decision.shares or 0.0,
+                float(tte or 0.0),
+            )
         return created
 
-    @staticmethod
-    def _update_trace_from_row(trace: dict, current: dict) -> None:
-        trace.update(
-            {
-                "paper_trade_status": current.get("status"),
-                "paper_trade_side": current.get("side"),
-                "paper_trade_fill": current.get("fill_price"),
-                "paper_trade_skip_reason": current.get("skip_reason"),
-                "paper_trade_checkpoint": current.get("checkpoint_sec"),
-            }
+    def observe_paper_tick(
+        self,
+        *,
+        ref: MarketRef,
+        snap: FeatureSnapshot,
+        trace: dict,
+        data_ready: bool,
+    ) -> bool:
+        """Watch the live in-memory P2.5 state; persist only the first eligible dip."""
+        if not self._deep_value_enabled() or not self.paper_policy.enabled:
+            return False
+        if not data_ready or not ref.condition_id:
+            return False
+        if str(ref.condition_id) in self._deep_value_consumed:
+            return False
+
+        decision = self._decision_for_tick(ref=ref, snap=snap, trace=trace)
+        if decision is None or not decision.eligible:
+            return False
+        return self._persist_open(
+            ref=ref,
+            snap=snap,
+            trace=trace,
+            decision=decision,
         )
 
     def record_forecast(
@@ -166,74 +190,15 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
         if not self._deep_value_enabled():
             return super().record_forecast(ref, snap, checkpoint, trace)
 
-        # Record the research forecast exactly once via the non-paper parent layer.
-        inserted = P25ResearchRecorder.record_forecast(
+        # Deep-value entries are handled by observe_paper_tick every 500ms.  Keep
+        # normal sparse checkpoint forecasts for model evaluation/calibration only.
+        return P25ResearchRecorder.record_forecast(
             self,
             ref,
             snap,
             checkpoint,
             trace,
         )
-        if not inserted:
-            return False
-
-        if not ref.condition_id:
-            return True
-
-        current = self.paper_trade_for_condition(ref.condition_id)
-        if current is not None:
-            self._update_trace_from_row(trace, current)
-            return True
-
-        decision = self._decision_for_checkpoint(
-            ref=ref,
-            snap=snap,
-            checkpoint=checkpoint,
-            trace=trace,
-        )
-        if decision is None:
-            return True
-
-        watch = self.paper_cfg.paper_watch_checkpoints(ref.combo.horizon.value)
-        final_checkpoint = min(watch)
-
-        if decision.eligible:
-            self._persist_paper_decision(
-                ref=ref,
-                snap=snap,
-                checkpoint=checkpoint,
-                trace=trace,
-                decision=decision,
-            )
-            current = self.paper_trade_for_condition(ref.condition_id)
-            if current:
-                self._update_trace_from_row(trace, current)
-            return True
-
-        # A cheap-price watch must not be consumed by an early transient miss.  Keep
-        # observing later checkpoints and only persist one terminal SKIPPED row at the
-        # final checkpoint if no entry ever qualified.
-        trace.update(
-            {
-                "paper_trade_status": "WATCHING_DEEP_VALUE",
-                "paper_trade_side": decision.side,
-                "paper_trade_fill": decision.fill_price,
-                "paper_trade_skip_reason": decision.reason,
-                "paper_trade_checkpoint": checkpoint,
-            }
-        )
-        if int(checkpoint) == int(final_checkpoint):
-            self._persist_paper_decision(
-                ref=ref,
-                snap=snap,
-                checkpoint=checkpoint,
-                trace=trace,
-                decision=decision,
-            )
-            current = self.paper_trade_for_condition(ref.condition_id)
-            if current:
-                self._update_trace_from_row(trace, current)
-        return True
 
     @staticmethod
     def _bucket_label(fill_price: float) -> str:
@@ -260,9 +225,31 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             label = self._bucket_label(float(row["fill_price"]))
             if label in grouped:
                 grouped[label].append(row)
+
+        bucket_metrics = {}
+        for label, bucket_rows in grouped.items():
+            metrics = self._paper_metrics(bucket_rows)
+            prices = [float(row["fill_price"]) for row in bucket_rows if row["fill_price"] is not None]
+            probabilities = [
+                float(row["selected_probability"])
+                for row in bucket_rows
+                if row["selected_probability"] is not None
+            ]
+            metrics.update(
+                {
+                    "avg_break_even_hit_rate": (
+                        round(sum(prices) / len(prices), 4) if prices else None
+                    ),
+                    "avg_model_probability": (
+                        round(sum(probabilities) / len(probabilities), 4)
+                        if probabilities
+                        else None
+                    ),
+                }
+            )
+            bucket_metrics[label] = metrics
+
         result["entry_mode"] = self.paper_cfg.paper_entry_mode_normalized()
-        result["price_buckets"] = {
-            label: self._paper_metrics(bucket_rows)
-            for label, bucket_rows in grouped.items()
-        }
+        result["price_buckets"] = bucket_metrics
+        result["db_policy"] = "SPARSE_ONLY_ACTUAL_DEEP_VALUE_ENTRIES"
         return result
