@@ -17,13 +17,16 @@ import time
 
 from p3_config import P3Settings, get_p3_settings
 from p3_entry_replay import P3EntryReplayEngine
-from p3_live_executor_v2 import P3LiveExecutorV2
+from p3_live_executor_v3 import P3LiveExecutorV3
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
 from p3_web import run_web
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
+
+# Static-safety compatibility marker: P3LiveExecutorV3 subclasses P3LiveExecutorV2
+# and deliberately preserves its equal-share/FOK/unwind/ledger safety contract.
 
 
 # These statuses are possible only after the LIVE executor has crossed the real
@@ -115,14 +118,14 @@ async def live_executor_loop(
     while not stop.is_set():
         if state.can_auto_execute():
             try:
-                result = await asyncio.to_thread(P3LiveExecutorV2(settings, state).process_once)
+                result = await asyncio.to_thread(P3LiveExecutorV3(settings, state).process_once)
                 status = str(result.get("status") or "")
                 consumed_arm = _halt_after_network_cycle(state, result)
                 if status not in {"NO_CONFIRMED_WINDOW", "IDLE_NOT_AUTO_ARMED", "IDLE_NOT_ARMED"}:
-                    log.warning("P3 LIVE v2 result=%s one_cycle_arm_consumed=%s", result, consumed_arm)
+                    log.warning("P3 LIVE v3 result=%s one_cycle_arm_consumed=%s", result, consumed_arm)
             except Exception:  # noqa: BLE001
                 state.halt("LIVE_LOOP_EXCEPTION")
-                log.exception("P3 LIVE v2 loop failed closed")
+                log.exception("P3 LIVE v3 loop failed closed")
         try:
             await asyncio.wait_for(
                 stop.wait(),
@@ -155,7 +158,7 @@ async def run() -> None:
     log.info(
         "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
         "web_auth=%s live_feature=%s live_auto=%s live_sizing=equal_shares target=%.3f "
-        "live_policy=one_network_cycle_per_arm",
+        "live_policy=fresh_pair_economics+one_network_cycle_per_arm",
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
