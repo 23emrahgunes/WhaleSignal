@@ -15,9 +15,26 @@ from p25_safety_engine import P25Engine as _BaseP25Engine
 class P25Engine(_BaseP25Engine):
     def _card_p25(self, ref, snap, q, bundle, fv) -> dict:  # noqa: ANN001
         card = super()._card_p25(ref, snap, q, bundle, fv)
+
+        # Optional paper-only high-frequency observer.  The engine already builds a
+        # fresh snapshot/forecast every SNAPSHOT_LOOP_MS (500ms by default), so a
+        # deep-value paper strategy can watch transient 3c/5c/15c dips without
+        # persisting a snapshot or forecast row on every tick.  Canonical paper mode
+        # has no observer and keeps its historical behavior.
+        observer = getattr(self.recorder, "observe_paper_tick", None)
+        if callable(observer):
+            observer(
+                ref=ref,
+                snap=snap,
+                trace=bundle.trace,
+                data_ready=self._data_ready(q),
+            )
+
         getter = getattr(self.recorder, "paper_trade_for_condition", None)
         paper = getter(ref.condition_id) if callable(getter) else None
         card["paper_trade"] = paper
+        if hasattr(self.cfg, "paper_entry_mode_normalized"):
+            card["paper_entry_mode"] = self.cfg.paper_entry_mode_normalized()
         if hasattr(self.cfg, "paper_entry_checkpoint"):
             card["paper_entry_checkpoint"] = self.cfg.paper_entry_checkpoint(
                 ref.combo.horizon.value
