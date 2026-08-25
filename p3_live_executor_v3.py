@@ -1,7 +1,7 @@
 """P3 LIVE V3: fresh pair economics + newest-confirmed candidate selection.
 
 V3 intentionally subclasses the battle-tested V2 execution/verification/unwind
-pipeline. It changes three pre-submit behaviours:
+pipeline. It changes four pre-submit behaviours:
 
 1. the gateway reprices the current UP+DOWN pair from fresh full-depth books instead
    of enforcing historical per-leg scanner prices;
@@ -9,13 +9,17 @@ pipeline. It changes three pre-submit behaviours:
    large prefix of unconfirmed windows cannot starve a newer confirmed opportunity;
 3. a small historical STRICT quantity does not permanently cap LIVE below the market
    minimum order size. The current target quantity is allowed to be revalidated from
-   fresh depth/economics, while hard max, edge, notional and unwind gates still apply.
+   fresh depth/economics, while hard max, edge, notional and unwind gates still apply;
+4. the V2 confirmation-age formula receives an executor-only 1.5s budget by default.
+   This is not stale-price execution: the current pair book is always re-fetched and
+   must pass fresh economics and unwind gates before submit.
 
 All V2 FOK submission, one-leg unwind, rolling loss, preflight, collateral and
 one-network-cycle-per-arm behaviour remain unchanged.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 from p3_confirmation import CONFIRMED, select_confirmed_observation
@@ -24,6 +28,19 @@ from p3_live_executor_v2 import P3LiveExecutorV2
 from p3_live_gateway_fresh import FreshEconomicPolymarketLiveGateway
 from p3_live_preflight import run_live_preflight
 from p3_live_state import LiveState
+
+
+DEFAULT_V3_CONFIRMATION_AGE_BUDGET_MS = 1_500
+
+
+def _confirmation_age_budget_ms() -> int:
+    raw = os.getenv("P3_LIVE_V3_MAX_CONFIRMATION_AGE_MS")
+    if raw is None:
+        return DEFAULT_V3_CONFIRMATION_AGE_BUDGET_MS
+    try:
+        return max(500, int(raw))
+    except ValueError:
+        return DEFAULT_V3_CONFIRMATION_AGE_BUDGET_MS
 
 
 class P3LiveExecutorV3(P3LiveExecutorV2):
@@ -37,8 +54,21 @@ class P3LiveExecutorV3(P3LiveExecutorV2):
         gateway_factory: Callable[[P3Settings], Any] = FreshEconomicPolymarketLiveGateway,
         preflight_fn: Callable[..., dict[str, Any]] = run_live_preflight,
     ) -> None:
+        # V2 derives max submit age as `scan_interval + 3*live_poll` with a 500ms
+        # floor. Keep the scanner's real cadence unchanged, but give only this LIVE
+        # executor copy enough budget to reach the fresh-book revalidation step.
+        executor_settings = settings.model_copy(deep=True)
+        budget = _confirmation_age_budget_ms()
+        required_scan_component = max(
+            0,
+            budget - 3 * int(executor_settings.live_poll_interval_ms),
+        )
+        executor_settings.scan_interval_ms = max(
+            int(executor_settings.scan_interval_ms),
+            required_scan_component,
+        )
         super().__init__(
-            settings,
+            executor_settings,
             state,
             gateway_factory=gateway_factory,
             preflight_fn=preflight_fn,
