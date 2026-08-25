@@ -3,6 +3,10 @@
 Research scanner/replay always remains available. LIVE state is process-local and
 starts DRY after every restart. Authenticated operator actions and analytics share
 the 8093 web process; there is no second LIVE control listener.
+
+Pilot policy: one real network-submit cycle per operator arm. Pre-submit skips do not
+consume the arm. Once a two-leg FOK cycle reaches a terminal network outcome, LIVE
+halts and waits for the operator to review/re-arm before another real cycle.
 """
 from __future__ import annotations
 
@@ -20,6 +24,35 @@ from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as Structura
 from p3_web import run_web
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
+
+
+# These statuses are possible only after the LIVE executor has crossed the real
+# network-submit boundary (post_two_leg_fok) or is already fail-closed because that
+# boundary may have been crossed. Skipped/pre-submit outcomes intentionally do not
+# consume the one-cycle pilot arm.
+_NETWORK_CYCLE_TERMINAL_STATUSES = {
+    "MERGED_VERIFIED",
+    "NO_FILL_VERIFIED",
+    "ONE_LEG_UNWOUND_VERIFIED",
+    "ONE_LEG_UNWOUND_VERIFIED_HALTED",
+    "HALTED_RESIDUAL_EXPOSURE",
+    "HALTED_MERGE_NOT_VERIFIED",
+    "HALTED_EXCEPTION",
+}
+
+
+def _halt_after_network_cycle(state: LiveState, result: dict) -> bool:
+    """Enforce one real network cycle per operator arm.
+
+    Returns True when the result consumes the current arm. Calling halt on an
+    already-halted one-leg/ambiguity result is harmless and keeps one consistent
+    operator-facing reason for the pilot policy.
+    """
+    status = str(result.get("status") or "")
+    if status not in _NETWORK_CYCLE_TERMINAL_STATUSES:
+        return False
+    state.halt(f"ONE_NETWORK_CYCLE_PER_ARM_COMPLETE:{status}")
+    return True
 
 
 async def scanner_loop(scanner: StructuralArbScanner, interval_ms: int, stop: asyncio.Event) -> None:
@@ -78,14 +111,15 @@ async def live_executor_loop(
     state: LiveState,
     stop: asyncio.Event,
 ) -> None:
-    """Poll process-local LIVE state and execute at most one candidate per iteration."""
+    """Wait for a valid candidate and allow at most one real network cycle per arm."""
     while not stop.is_set():
         if state.can_auto_execute():
             try:
                 result = await asyncio.to_thread(P3LiveExecutorV2(settings, state).process_once)
                 status = str(result.get("status") or "")
+                consumed_arm = _halt_after_network_cycle(state, result)
                 if status not in {"NO_CONFIRMED_WINDOW", "IDLE_NOT_AUTO_ARMED", "IDLE_NOT_ARMED"}:
-                    log.warning("P3 LIVE v2 result=%s", result)
+                    log.warning("P3 LIVE v2 result=%s one_cycle_arm_consumed=%s", result, consumed_arm)
             except Exception:  # noqa: BLE001
                 state.halt("LIVE_LOOP_EXCEPTION")
                 log.exception("P3 LIVE v2 loop failed closed")
@@ -120,7 +154,8 @@ async def run() -> None:
     )
     log.info(
         "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
-        "web_auth=%s live_feature=%s live_auto=%s live_sizing=equal_shares target=%.3f",
+        "web_auth=%s live_feature=%s live_auto=%s live_sizing=equal_shares target=%.3f "
+        "live_policy=one_network_cycle_per_arm",
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
