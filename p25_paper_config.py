@@ -2,8 +2,9 @@
 
 Paper trading is a deterministic simulation only.  It never loads credentials,
 signs an order or calls an execution endpoint.  One canonical paper entry is
-attempted per market so market-level hit rate and PnL are not inflated by the many
-forecast checkpoints recorded for the same market.
+attempted per market in CANONICAL mode.  DEEP_VALUE_WATCH instead scans every
+configured forecast checkpoint and opens at most one paper position per market when
+the forecast side first falls inside the configured cheap-price band.
 """
 from __future__ import annotations
 
@@ -20,6 +21,10 @@ class PaperSettings(Settings):
     paper_strategy_version: str = Field(
         default="RESEARCH_PAPER_V1",
         alias="PAPER_STRATEGY_VERSION",
+    )
+    paper_entry_mode: str = Field(
+        default="CANONICAL",
+        alias="PAPER_ENTRY_MODE",
     )
     paper_starting_bankroll_usdc: float = Field(
         default=1000.0,
@@ -89,6 +94,15 @@ class PaperSettings(Settings):
             "1h": self.paper_entry_checkpoint_1h,
         }.get(horizon, self.paper_entry_checkpoint_5m)
 
+    def paper_entry_mode_normalized(self) -> str:
+        return str(self.paper_entry_mode or "CANONICAL").strip().upper()
+
+    def paper_watch_checkpoints(self, horizon: str) -> list[int]:
+        """Return checkpoints at which the paper policy may attempt an entry."""
+        if self.paper_entry_mode_normalized() == "DEEP_VALUE_WATCH":
+            return self.checkpoints_for(horizon)
+        return [self.paper_entry_checkpoint(horizon)]
+
     def paper_allowed_statuses(self) -> set[str]:
         return {
             value.strip().upper()
@@ -125,10 +139,23 @@ class PaperSettings(Settings):
             raise SystemExit("FATAL CONFIG ERROR: paper price araligi gecersiz.")
         if self.paper_slippage < 0 or self.paper_fee_bps < 0:
             raise SystemExit("FATAL CONFIG ERROR: paper maliyetleri negatif olamaz.")
+
+        mode = self.paper_entry_mode_normalized()
+        if mode not in {"CANONICAL", "DEEP_VALUE_WATCH"}:
+            raise SystemExit(
+                "FATAL CONFIG ERROR: PAPER_ENTRY_MODE CANONICAL veya DEEP_VALUE_WATCH olmali."
+            )
+
         for horizon in ("5m", "15m", "1h"):
-            checkpoint = self.paper_entry_checkpoint(horizon)
-            if checkpoint not in self.checkpoints_for(horizon):
+            checkpoints = self.paper_watch_checkpoints(horizon)
+            if not checkpoints:
                 raise SystemExit(
-                    "FATAL CONFIG ERROR: paper entry checkpoint recorder "
-                    f"checkpoint listesinde yok: {horizon}=T-{checkpoint}"
+                    f"FATAL CONFIG ERROR: paper checkpoint listesi bos: {horizon}"
                 )
+            configured = set(self.checkpoints_for(horizon))
+            for checkpoint in checkpoints:
+                if checkpoint not in configured:
+                    raise SystemExit(
+                        "FATAL CONFIG ERROR: paper entry checkpoint recorder "
+                        f"checkpoint listesinde yok: {horizon}=T-{checkpoint}"
+                    )
