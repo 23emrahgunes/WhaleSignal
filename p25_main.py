@@ -28,7 +28,7 @@ from p25_model import DirectionModel
 from p25_paper_config import PaperSettings as Settings
 from p25_paper_reconcile import PaperTradeReconciler
 from p25_reconciled_paper_engine import P25Engine
-from p25_reconciling_recorder import P25ReconcilingPaperRecorder
+from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
 from p25_web_records import run_web
 from reference import ReferenceRouter
@@ -55,7 +55,7 @@ async def run() -> None:
     symbols = sorted({combo.binance_symbol for combo in combos})
     log.info(
         "scope=%d combos symbols=%s SHADOW phase=%s "
-        "training=%s calibration=%s forecasts=%s paper=%s",
+        "training=%s calibration=%s forecasts=%s paper=%s paper_mode=%s",
         len(combos),
         symbols,
         cfg.phase,
@@ -63,12 +63,13 @@ async def run() -> None:
         cfg.calibration_active,
         cfg.forecast_recording_active,
         cfg.paper_trading_enabled,
+        cfg.paper_entry_mode_normalized(),
     )
 
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
 
-    recorder = P25ReconcilingPaperRecorder(cfg.db_path, cfg)
+    recorder = P25DeepValuePaperRecorder(cfg.db_path, cfg)
     if cfg.model_inference_active:
         model = DirectionModel.load(cfg.model_path) or DirectionModel(
             cfg.per_combo_model_min_markets,
