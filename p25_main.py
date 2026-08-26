@@ -30,7 +30,7 @@ from p25_paper_reconcile import PaperTradeReconciler
 from p25_deep_value_engine import P25Engine
 from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
-from p25_web_records import run_web
+from p25_deep_value_web import run_web
 from reference import ReferenceRouter
 
 log = logging.getLogger("direction_engine.p25_main")
