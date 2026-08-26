@@ -23,6 +23,13 @@ def _settings(monkeypatch, db_path: str) -> PaperSettings:
     monkeypatch.setenv("CALIBRATION_ENABLED", "false")
     monkeypatch.setenv("FORECAST_RECORDING_ENABLED", "true")
     monkeypatch.setenv("PAPER_TRADING_ENABLED", "true")
+    # Keep this fixture deterministic even when deploy_p25.sh has already written
+    # the production DEEP_VALUE_10C profile into .env on a VPS.
+    monkeypatch.setenv("PAPER_ENTRY_MODE", "CHECKPOINT")
+    monkeypatch.setenv("PAPER_STRATEGY_VERSION", "TEST_RECORDS_V1")
+    monkeypatch.setenv("PAPER_STAKE_USDC", "2.50")
+    monkeypatch.setenv("PAPER_MIN_PRICE", "0.05")
+    monkeypatch.setenv("PAPER_MAX_PRICE", "0.95")
     monkeypatch.setenv("DB_PATH", db_path)
     cfg = PaperSettings()
     cfg.enforce_phase_lock()
@@ -201,7 +208,8 @@ def test_csv_export_contains_filtered_rows(recorder):
     assert len(rows) == 1
     assert rows[0]["combo_key"] == "BTC:5m"
     assert rows[0]["outcome_label"] == "TUTTU"
-    assert rows[0]["strategy_version"] == "RESEARCH_PAPER_V1"
+    assert rows[0]["strategy_version"] == recorder.paper_policy.strategy_version
+    assert rows[0]["strategy_version"] == "TEST_RECORDS_V1"
 
 
 def test_dedicated_page_has_filters_records_and_safety_labels():
