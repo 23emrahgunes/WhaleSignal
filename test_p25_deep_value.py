@@ -60,7 +60,6 @@ def _ref(condition: str) -> MarketRef:
     return MarketRef(
         combo=BTC5,
         condition_id=condition,
-        market_id=f"market-{condition}",
         slug=f"btc-updown-5m-{condition}",
         question="BTC Up or Down",
         up_token_id=f"{condition}-up",
