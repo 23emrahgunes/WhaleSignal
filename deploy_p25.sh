@@ -9,7 +9,15 @@ if [[ ! -x ./.venv/bin/python ]]; then
 fi
 
 mkdir -p data models
-[[ -f .env ]] && cp -f .env ".env.backup.$(date +%Y%m%d-%H%M%S)"
+backup_dir="$HOME/.direction-engine-env-backups"
+mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
+if [[ -f .env ]]; then
+  backup_path="$backup_dir/.env.p25.$(date +%Y%m%d-%H%M%S)"
+  cp -f .env "$backup_path"
+  chmod 600 "$backup_path"
+  echo "P2.5 env backup=$backup_path"
+fi
 
 ./.venv/bin/python - <<'PY'
 from pathlib import Path
@@ -25,22 +33,32 @@ wanted = {
     'CALIBRATION_PATH': 'models/calibration_book.pkl',
     'FEATURE_PRICE_RING_MAX': '24000',
     'PAPER_TRADING_ENABLED': 'true',
-    'PAPER_STRATEGY_VERSION': 'RESEARCH_PAPER_V1',
+    'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
+    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_10C_V1',
     'PAPER_STARTING_BANKROLL_USDC': '1000',
-    'PAPER_STAKE_USDC': '2.50',
+    'PAPER_STAKE_USDC': '1.00',
     'PAPER_ENTRY_CHECKPOINT_5M': '60',
     'PAPER_ENTRY_CHECKPOINT_15M': '240',
     'PAPER_ENTRY_CHECKPOINT_1H': '600',
     'PAPER_MIN_CONFIDENCE': '0.05',
     'PAPER_MIN_AGREEMENT': '0.50',
     'PAPER_MIN_EDGE': '0.00',
-    'PAPER_MIN_PRICE': '0.05',
+    'PAPER_MIN_PRICE': '0.01',
     'PAPER_MAX_PRICE': '0.95',
     'PAPER_SLIPPAGE': '0.005',
     'PAPER_FEE_BPS': '0',
     'PAPER_ALLOWED_STATUSES': 'PROVISIONAL,VALIDATED',
     'PAPER_ALLOWED_GRADES': 'LOW,MEDIUM,HIGH',
     'PAPER_RECENT_LIMIT': '50',
+    'PAPER_DEEP_VALUE_MIN_ASK': '0.01',
+    'PAPER_DEEP_VALUE_MAX_ASK': '0.10',
+    'PAPER_DEEP_VALUE_PREFILTER_BUFFER': '0.03',
+    'PAPER_DEEP_VALUE_MIN_TTE_SEC': '5',
+    'PAPER_DEEP_VALUE_P26_DB_PATH': 'data/p26_research.sqlite',
+    'PAPER_DEEP_VALUE_MAX_BOOK_AGE_MS': '1500',
+    'PAPER_DEEP_VALUE_REQUIRE_DEPTH': 'true',
+    'PAPER_DEEP_VALUE_REQUIRE_FEE_SCHEDULE': 'true',
+    'PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.50',
 }
 lines = text.splitlines()
 seen = set()
@@ -80,7 +98,7 @@ pkill -f 'python.*p25_main.py' 2>/dev/null || true
 pkill -f 'python.*main.py' 2>/dev/null || true
 sleep 2
 
-echo "=== START P2.5 SHADOW + PAPER ==="
+echo "=== START P2.5 SHADOW + DEEP VALUE PAPER ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
@@ -128,7 +146,7 @@ wait_http_200() {
 }
 
 # /health is intentionally cheap. /api/state can legitimately need a longer first
-# warm-up on a large SQLite dataset; it remains bounded and runs off the aiohttp loop.
+# warm-up on a growing SQLite dataset; it remains bounded and runs off the aiohttp loop.
 wait_http_200 "/health" /tmp/direction-p25-health.json 30 5
 wait_http_200 "/api/state" /tmp/direction-p25-state.json 3 45
 wait_http_200 "/paper-trades" /tmp/direction-p25-paper.html 24 5
@@ -152,6 +170,7 @@ paper_summary = json.loads(Path('/tmp/direction-p25-paper-summary.json').read_te
 safety = state.get('safety', {})
 paper = state.get('paper_trading', {})
 policy = paper.get('policy', {})
+deep = paper.get('deep_value', {})
 print('phase=', state.get('phase'))
 print('mode=', state.get('mode'))
 print('markets_active=', state.get('footer', {}).get('markets_active'))
@@ -159,8 +178,13 @@ print('training=', safety.get('model_training_enabled'))
 print('calibration=', safety.get('calibration_enabled'))
 print('forecast_recording=', safety.get('forecast_recording_enabled'))
 print('paper_trading=', safety.get('paper_trading_enabled'))
+print('paper_entry_mode=', paper.get('entry_mode'))
 print('paper_strategy=', policy.get('strategy_version'))
 print('paper_stake=', policy.get('stake_usdc'))
+print('deep_min_ask=', deep.get('min_ask'))
+print('deep_max_ask=', deep.get('max_ask'))
+print('deep_require_depth=', deep.get('require_depth'))
+print('deep_max_book_age_ms=', deep.get('max_book_age_ms'))
 print('paper_records_page=', health.get('paper_records_page'))
 print('paper_records_api=', health.get('paper_records_api'))
 print('paper_records_total=', (paper_api.get('pagination') or {}).get('total'))
@@ -176,6 +200,12 @@ assert int(safety.get('paper_order_submissions') or 0) == 0
 assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
 assert paper.get('enabled') is True
+assert paper.get('entry_mode') == 'DEEP_VALUE_WATCH'
+assert policy.get('strategy_version') == 'DEEP_VALUE_10C_V1'
+assert float(policy.get('stake_usdc') or 0) == 1.0
+assert float(deep.get('min_ask') or 0) == 0.01
+assert float(deep.get('max_ask') or 0) == 0.10
+assert deep.get('require_depth') is True
 assert health.get('paper_records_page') == '/paper-trades'
 assert health.get('paper_records_api') == '/api/paper-trades'
 assert paper_api.get('paperOnly') is True
@@ -184,4 +214,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 SHADOW + PAPER DEPLOY PASS | pid=$new_pid | http=200 | paper-routes=200"
+echo "P2.5 DEEP VALUE PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..10c | stake=1.00 | paper-only=true"
