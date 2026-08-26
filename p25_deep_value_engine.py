@@ -34,10 +34,21 @@ class P25Engine(_BaseP25Engine):
 
         card = super()._card_p25(ref, snap, q, bundle, fv)
         if deep_enabled:
+            min_ask = float(getattr(self.cfg, "paper_deep_value_min_ask", 0.01))
             max_ask = float(getattr(self.cfg, "paper_deep_value_max_ask", 0.10))
+            stake = float(getattr(self.cfg, "paper_stake_usdc", 1.0))
+            slippage = float(getattr(self.cfg, "paper_slippage", 0.005))
+            min_value = float(
+                getattr(self.cfg, "paper_deep_value_min_value_multiple", 1.50)
+            )
             card["paper_entry_mode"] = "DEEP_VALUE_WATCH"
             card["paper_entry_checkpoint"] = f"{max_ask * 100:.0f}c DIP"
             card["paper_entry_label"] = f"DIP <= {max_ask * 100:.0f}c bekleniyor"
+            card["paper_deep_value_min_ask"] = min_ask
+            card["paper_deep_value_max_ask"] = max_ask
+            card["paper_deep_value_stake_usdc"] = stake
+            card["paper_deep_value_slippage"] = slippage
+            card["paper_deep_value_min_value_multiple"] = min_value
             card["paper_deep_value_watch_reason"] = bundle.trace.get(
                 "paper_deep_value_watch_reason"
             )
