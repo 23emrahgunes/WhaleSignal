@@ -67,6 +67,15 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             trace["paper_deep_value_watch_reason"] = "CONDITION_ID_MISSING"
             return False
 
+        # Paper scope is intentionally separate from the P2.5 discovery scope. P2.5
+        # may keep 5m/15m/1h markets alive for forecasting and for P26/P3 registry
+        # consumers while DEEP_VALUE_WATCH admits only the configured paper horizons.
+        horizon = str(ref.combo.horizon.value).lower()
+        allowed_horizons = self.deep_value_cfg.paper_deep_value_horizons()
+        if horizon not in allowed_horizons:
+            trace["paper_deep_value_watch_reason"] = f"HORIZON_{horizon.upper()}_NOT_ALLOWED"
+            return False
+
         current = self.paper_trade_for_condition(ref.condition_id)
         if current is not None:
             trace.update(
@@ -210,6 +219,7 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             "min_value_multiple": float(
                 self.deep_value_cfg.paper_deep_value_min_value_multiple
             ),
+            "allowed_horizons": sorted(self.deep_value_cfg.paper_deep_value_horizons()),
         }
         rows = self.conn.execute(
             """

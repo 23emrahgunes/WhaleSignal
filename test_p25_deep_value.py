@@ -14,6 +14,7 @@ from p26_fee import FeeScheduleStore
 
 
 BTC5 = AssetHorizon(Asset.BTC, Horizon.H5M)
+BTC15 = AssetHorizon(Asset.BTC, Horizon.H15M)
 
 
 def _settings(monkeypatch, p26_path, **overrides):
@@ -45,6 +46,7 @@ def _settings(monkeypatch, p26_path, **overrides):
         "PAPER_DEEP_VALUE_REQUIRE_DEPTH": "true",
         "PAPER_DEEP_VALUE_REQUIRE_FEE_SCHEDULE": "true",
         "PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE": "1.5",
+        "PAPER_DEEP_VALUE_HORIZONS": "5m,15m,1h",
     }
     values.update({key: str(value) for key, value in overrides.items()})
     for key, value in values.items():
@@ -54,14 +56,15 @@ def _settings(monkeypatch, p26_path, **overrides):
     return cfg
 
 
-def _ref(condition: str) -> MarketRef:
-    duration = float(BTC5.horizon.seconds)
+def _ref(condition: str, combo: AssetHorizon = BTC5) -> MarketRef:
+    duration = float(combo.horizon.seconds)
     start = time.time() - 60.0
+    horizon = combo.horizon.value
     return MarketRef(
-        combo=BTC5,
+        combo=combo,
         condition_id=condition,
-        slug=f"btc-updown-5m-{condition}",
-        question="BTC Up or Down",
+        slug=f"{combo.asset.value.lower()}-updown-{horizon}-{condition}",
+        question=f"{combo.asset.value} Up or Down",
         up_token_id=f"{condition}-up",
         down_token_id=f"{condition}-down",
         start_ts=start,
@@ -76,9 +79,9 @@ def _ref(condition: str) -> MarketRef:
     )
 
 
-def _snap(*, up_ask=0.05, down_ask=0.95, tte=120.0):
+def _snap(*, combo: AssetHorizon = BTC5, up_ask=0.05, down_ask=0.95, tte=120.0):
     return FeatureSnapshot(
-        combo=BTC5,
+        combo=combo,
         ts=time.time(),
         seconds_remaining=tte,
         tte_sec=tte,
@@ -104,7 +107,15 @@ def _trace(*, direction="UP", p_up=0.70):
     }
 
 
-def _seed_book(p26_path, condition, *, side="UP", ask=0.05, ask_size=25.0):
+def _seed_book(
+    p26_path,
+    condition,
+    *,
+    side="UP",
+    ask=0.05,
+    ask_size=25.0,
+    combo_key="BTC:5m",
+):
     token = f"{condition}-{side.lower()}"
     other = f"{condition}-{'down' if side == 'UP' else 'up'}"
     now_ms = int(time.time() * 1000)
@@ -118,7 +129,7 @@ def _seed_book(p26_path, condition, *, side="UP", ask=0.05, ask_size=25.0):
         )
         store.insert(
             condition_id=condition,
-            combo_key="BTC:5m",
+            combo_key=combo_key,
             side=side,
             snapshot=snapshot,
             recv_ts_ms=now_ms,
@@ -130,7 +141,7 @@ def _seed_book(p26_path, condition, *, side="UP", ask=0.05, ask_size=25.0):
     try:
         fees.upsert_market_info(
             condition_id=condition,
-            combo_key="BTC:5m",
+            combo_key=combo_key,
             market_end_ts_ms=now_ms + 120_000,
             payload={
                 "t": [
@@ -229,5 +240,56 @@ def test_deep_mode_keeps_checkpoint_forecasts_but_checkpoint_does_not_consume_pa
         assert recorder.record_forecast(ref, _snap(up_ask=0.60, tte=60), 60, _trace())
         assert recorder.conn.execute("SELECT COUNT(*) FROM forecasts").fetchone()[0] == 1
         assert recorder.conn.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
+    finally:
+        recorder.close()
+
+
+def test_five_minute_only_scope_rejects_15m_without_consuming_attempt(monkeypatch, tmp_path):
+    p26 = tmp_path / "p26.sqlite"
+    condition = "0x15mblocked"
+    _seed_book(p26, condition, ask=0.05, ask_size=25.0, combo_key="BTC:15m")
+    cfg = _settings(monkeypatch, p26, PAPER_DEEP_VALUE_HORIZONS="5m")
+    recorder = P25DeepValuePaperRecorder(str(tmp_path / "p25.sqlite"), cfg)
+    try:
+        trace = _trace()
+        opened = recorder.record_deep_value_watch(
+            _ref(condition, BTC15),
+            _snap(combo=BTC15, up_ask=0.05, tte=300),
+            trace,
+        )
+        assert opened is False
+        assert trace["paper_deep_value_watch_reason"] == "HORIZON_15M_NOT_ALLOWED"
+        assert recorder.conn.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0] == 0
+    finally:
+        recorder.close()
+
+
+def test_paper_equity_and_realized_pnl_are_isolated_to_active_strategy(monkeypatch, tmp_path):
+    p26 = tmp_path / "p26.sqlite"
+    cfg = _settings(
+        monkeypatch,
+        p26,
+        PAPER_STRATEGY_VERSION="DEEP_VALUE_10C_5M_V1",
+        PAPER_DEEP_VALUE_HORIZONS="5m",
+    )
+    recorder = P25DeepValuePaperRecorder(str(tmp_path / "p25.sqlite"), cfg)
+    try:
+        recorder.conn.executemany(
+            """
+            INSERT INTO paper_trades(
+                condition_id,combo_key,asset,horizon,strategy_version,
+                checkpoint_sec,attempted_at,stake_usdc,fee_usdc,status,realized_pnl
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            [
+                ("legacy", "BTC:5m", "BTC", "5m", "DEEP_VALUE_10C_V1", 0, 1.0, 1.0, 0.0, "SETTLED", 100.0),
+                ("current", "BTC:5m", "BTC", "5m", "DEEP_VALUE_10C_5M_V1", 0, 2.0, 1.0, 0.0, "SETTLED", 2.0),
+            ],
+        )
+        recorder.conn.commit()
+        overall = recorder.paper_analytics()["overall"]
+        assert overall["realized_pnl_usdc"] == pytest.approx(2.0)
+        assert overall["equity_usdc"] == pytest.approx(102.0)
+        assert overall["stake_settled_usdc"] == pytest.approx(1.0)
     finally:
         recorder.close()
