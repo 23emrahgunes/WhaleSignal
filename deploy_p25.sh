@@ -34,7 +34,7 @@ wanted = {
     'FEATURE_PRICE_RING_MAX': '24000',
     'PAPER_TRADING_ENABLED': 'true',
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
-    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_10C_V1',
+    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_10C_5M_V1',
     'PAPER_STARTING_BANKROLL_USDC': '1000',
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_ENTRY_CHECKPOINT_5M': '60',
@@ -59,6 +59,7 @@ wanted = {
     'PAPER_DEEP_VALUE_REQUIRE_DEPTH': 'true',
     'PAPER_DEEP_VALUE_REQUIRE_FEE_SCHEDULE': 'true',
     'PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.50',
+    'PAPER_DEEP_VALUE_HORIZONS': '5m',
 }
 lines = text.splitlines()
 seen = set()
@@ -98,7 +99,7 @@ pkill -f 'python.*p25_main.py' 2>/dev/null || true
 pkill -f 'python.*main.py' 2>/dev/null || true
 sleep 2
 
-echo "=== START P2.5 SHADOW + DEEP VALUE PAPER ==="
+echo "=== START P2.5 SHADOW + DEEP VALUE PAPER 5M ONLY ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
@@ -145,8 +146,6 @@ wait_http_200() {
   return 1
 }
 
-# /health is intentionally cheap. /api/state can legitimately need a longer first
-# warm-up on a growing SQLite dataset; it remains bounded and runs off the aiohttp loop.
 wait_http_200 "/health" /tmp/direction-p25-health.json 30 5
 wait_http_200 "/api/state" /tmp/direction-p25-state.json 3 45
 wait_http_200 "/paper-trades" /tmp/direction-p25-paper.html 24 5
@@ -185,6 +184,7 @@ print('deep_min_ask=', deep.get('min_ask'))
 print('deep_max_ask=', deep.get('max_ask'))
 print('deep_require_depth=', deep.get('require_depth'))
 print('deep_max_book_age_ms=', deep.get('max_book_age_ms'))
+print('deep_allowed_horizons=', deep.get('allowed_horizons'))
 print('paper_records_page=', health.get('paper_records_page'))
 print('paper_records_api=', health.get('paper_records_api'))
 print('paper_records_total=', (paper_api.get('pagination') or {}).get('total'))
@@ -201,11 +201,12 @@ assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
 assert paper.get('enabled') is True
 assert paper.get('entry_mode') == 'DEEP_VALUE_WATCH'
-assert policy.get('strategy_version') == 'DEEP_VALUE_10C_V1'
+assert policy.get('strategy_version') == 'DEEP_VALUE_10C_5M_V1'
 assert float(policy.get('stake_usdc') or 0) == 1.0
 assert float(deep.get('min_ask') or 0) == 0.01
 assert float(deep.get('max_ask') or 0) == 0.10
 assert deep.get('require_depth') is True
+assert deep.get('allowed_horizons') == ['5m']
 assert health.get('paper_records_page') == '/paper-trades'
 assert health.get('paper_records_api') == '/api/paper-trades'
 assert paper_api.get('paperOnly') is True
@@ -214,4 +215,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 DEEP VALUE PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..10c | stake=1.00 | paper-only=true"
+echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..10c | stake=1.00 | horizons=5m | paper-only=true"
