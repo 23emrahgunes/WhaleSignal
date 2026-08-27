@@ -32,6 +32,7 @@ wanted = {
     'MODEL_PATH': 'models/direction_model.pkl',
     'CALIBRATION_PATH': 'models/calibration_book.pkl',
     'FEATURE_PRICE_RING_MAX': '24000',
+    'RESOLUTION_POLL_SEC': '10',
     'PAPER_TRADING_ENABLED': 'true',
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
     'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_V1',
@@ -215,4 +216,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..25c | stake=1.00 | horizons=5m | paper-only=true"
+echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..25c | stake=1.00 | horizons=5m | resolution_poll=10s | paper-only=true"
