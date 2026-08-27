@@ -1,10 +1,9 @@
-"""Periodic reconciliation for OPEN paper trades orphaned by a restart.
+"""Fast periodic reconciliation for persisted OPEN paper trades.
 
-A paper entry may be created before a deployment restart and Gamma may resolve the
-market after the old process has gone away.  The normal resolution callback cannot
-fire for a market reference that no longer exists in memory.  This service scans
-persisted OPEN rows, fetches the exact immutable event slug, verifies condition ID,
-and settles only from an authoritative final Gamma result.
+Paper entries are settled only from authoritative Gamma resolution metadata.  The
+reconciler prefers the exact immutable market id when available, then falls back to
+the event slug and finally the condition-id filter.  This avoids waiting on a stale
+event payload when the exact market endpoint has already published the final result.
 
 Paper/SHADOW only.  No order execution is performed.
 """
@@ -52,28 +51,44 @@ class PaperTradeReconciler:
             "interval_sec": self.interval_sec,
         }
 
+    @staticmethod
+    def _condition_matches(market: object, condition_id: str) -> bool:
+        return (
+            isinstance(market, dict)
+            and str(market.get("conditionId") or "") == condition_id
+        )
+
     async def _market_for_record(self, record: dict) -> tuple[Optional[dict], str]:
         slug = str(record.get("slug") or "").strip()
         condition_id = str(record.get("condition_id") or "").strip()
-        if not slug:
-            return None, "no_slug"
+        market_id = str(record.get("market_id") or "").strip()
 
-        event = await self.discovery._fetch_json(  # noqa: SLF001
-            f"{self.cfg.gamma_host}/events/slug/{slug}"
-        )
-        if isinstance(event, dict):
-            markets = event.get("markets") or []
-            if isinstance(markets, list):
-                for market in markets:
-                    if not isinstance(market, dict):
-                        continue
-                    if str(market.get("conditionId") or "") == condition_id:
-                        return market, "event_slug+condition_id"
-                if markets:
-                    self.condition_mismatch += 1
+        # Exact market endpoint is the fastest/least ambiguous path after expiry.
+        # It is attempted first because event payloads can lag the final market state.
+        if market_id:
+            exact = await self.discovery._fetch_json(  # noqa: SLF001
+                f"{self.cfg.gamma_host}/markets/{market_id}"
+            )
+            if self._condition_matches(exact, condition_id):
+                return exact, "market_id+condition_id"
+            if isinstance(exact, dict):
+                self.condition_mismatch += 1
 
-        # Compatibility fallback.  This endpoint was unreliable for some resolved
-        # rolling markets, so it is never the primary source.
+        if slug:
+            event = await self.discovery._fetch_json(  # noqa: SLF001
+                f"{self.cfg.gamma_host}/events/slug/{slug}"
+            )
+            if isinstance(event, dict):
+                markets = event.get("markets") or []
+                if isinstance(markets, list):
+                    for market in markets:
+                        if self._condition_matches(market, condition_id):
+                            return market, "event_slug+condition_id"
+                    if markets:
+                        self.condition_mismatch += 1
+
+        # Compatibility fallback. This endpoint is known to return [] for some
+        # resolved rolling markets, so it remains the final source only.
         if condition_id:
             fallback = await self.discovery._fetch_json(  # noqa: SLF001
                 f"{self.cfg.gamma_host}/markets",
@@ -81,17 +96,12 @@ class PaperTradeReconciler:
             )
             if isinstance(fallback, list):
                 for market in fallback:
-                    if (
-                        isinstance(market, dict)
-                        and str(market.get("conditionId") or "") == condition_id
-                    ):
+                    if self._condition_matches(market, condition_id):
                         return market, "condition_filter"
-            elif (
-                isinstance(fallback, dict)
-                and str(fallback.get("conditionId") or "") == condition_id
-            ):
+            elif self._condition_matches(fallback, condition_id):
                 return fallback, "condition_filter"
-        return None, "event_or_condition_empty"
+
+        return None, "market_id_event_condition_empty"
 
     async def reconcile_once(self) -> dict:
         self.runs += 1
