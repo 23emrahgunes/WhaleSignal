@@ -278,22 +278,38 @@ class BookCollector:
     def _persist(self, token: str, ts_ms: int, sequence: Optional[int], recv_ms: int) -> None:
         meta = self.token_meta.get(token)
         book = self.local_books.get(token)
-        if meta is None or book is None or not book.asks:
+        if meta is None or book is None:
             return
+
+        # Empty executable ask depth is a real market state, not "missing data".
+        # Dropping this transition leaves the previous non-empty snapshot as the
+        # latest P26 truth, so P3 can keep seeing ghost BUY+MERGE liquidity after the
+        # exchange has removed the entire ask side. Persist an empty-ask transition
+        # immediately, bypassing the normal history-throttle, so downstream scanners
+        # fail closed on the current book rather than trading stale depth.
+        empty_ask_state = not book.asks
         last = self.last_persist_ms.get(token, 0)
-        if recv_ms - last < self.settings.book_persist_min_interval_ms:
+        if (
+            not empty_ask_state
+            and recv_ms - last < self.settings.book_persist_min_interval_ms
+        ):
             return
+
         condition_id, combo_key, side = meta
         snapshot = book.snapshot(token_id=token, ts_ms=ts_ms, sequence=sequence)
-        if self.books.insert(
+        created = self.books.insert(
             condition_id=condition_id,
             combo_key=combo_key,
             side=side,
             snapshot=snapshot,
             recv_ts_ms=recv_ms,
-        ):
+        )
+        if created:
             self.persisted += 1
-            self.last_persist_ms[token] = recv_ms
+        # Even a duplicate observation advanced recv_ts_ms in BookSnapshotStore.
+        # Record the observation locally as well so normal non-empty persistence
+        # remains throttled after the truth state has been written.
+        self.last_persist_ms[token] = recv_ms
 
     def handle_event(self, event: dict[str, Any], *, recv_ms: Optional[int] = None) -> None:
         received = int(time.time() * 1000) if recv_ms is None else int(recv_ms)

@@ -7,11 +7,11 @@ from p26_book_daemon import BookCollector, load_active_markets
 from p26_config import P26Settings
 
 
-def _settings(tmp_path, p25):
+def _settings(tmp_path, p25, *, persist_ms=0):
     return P26Settings(
         p25_db_path=str(p25),
         p26_db_path=str(tmp_path / "p26.sqlite"),
-        book_persist_min_interval_ms=0,
+        book_persist_min_interval_ms=persist_ms,
     )
 
 
@@ -81,6 +81,49 @@ def test_active_market_discovery_and_book_delta_persistence(tmp_path):
         assert len(history) == 2
         assert history[-1].best_ask == 0.52
         assert collector.fees.get("cond", "up").enabled is False
+    finally:
+        collector.close()
+
+
+def test_empty_ask_transition_is_persisted_immediately_even_inside_throttle(tmp_path):
+    """A removed ask side must replace stale executable liquidity in P26 truth."""
+    p25 = tmp_path / "p25.sqlite"
+    now_ms = int(time.time() * 1000)
+    conn = _market_db(p25, now_ms)
+    conn.close()
+    collector = BookCollector(_settings(tmp_path, p25, persist_ms=10_000))
+    try:
+        collector.token_meta = {"up": ("cond", "BTC:5m", "UP")}
+        collector.handle_event(
+            {
+                "event_type": "book",
+                "asset_id": "up",
+                "timestamp": now_ms,
+                "bids": [{"price": "0.49", "size": "10"}],
+                "asks": [{"price": "0.51", "size": "10"}],
+            },
+            recv_ms=now_ms,
+        )
+        # Only 1ms later the entire executable ask side disappears. The normal
+        # 10s history throttle must not hide this risk-critical state transition.
+        collector.handle_event(
+            {
+                "event_type": "price_change",
+                "timestamp": now_ms + 1,
+                "price_changes": [
+                    {"asset_id": "up", "side": "SELL", "price": "0.51", "size": "0"},
+                ],
+            },
+            recv_ms=now_ms + 1,
+        )
+        history = collector.books.history(
+            "cond", "UP", start_ts_ms=now_ms - 1, end_ts_ms=now_ms + 10
+        )
+        assert len(history) == 2
+        assert history[0].best_ask == 0.51
+        assert history[-1].asks == ()
+        assert history[-1].best_ask is None
+        assert collector.last_persist_ms["up"] == now_ms + 1
     finally:
         collector.close()
 
