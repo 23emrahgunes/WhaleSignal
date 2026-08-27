@@ -64,11 +64,21 @@ class PaperTradeReconciler:
         market_id = str(record.get("market_id") or "").strip()
 
         # Exact market endpoint is the fastest/least ambiguous path after expiry.
-        # It is attempted first because event payloads can lag the final market state.
+        # Fail soft: a transient 404/timeout must not suppress the older fallbacks.
         if market_id:
-            exact = await self.discovery._fetch_json(  # noqa: SLF001
-                f"{self.cfg.gamma_host}/markets/{market_id}"
-            )
+            try:
+                exact = await self.discovery._fetch_json(  # noqa: SLF001
+                    f"{self.cfg.gamma_host}/markets/{market_id}"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                exact = None
+                log.debug(
+                    "paper exact-market lookup failed market_id=%s error=%s",
+                    market_id,
+                    type(exc).__name__,
+                )
             if self._condition_matches(exact, condition_id):
                 return exact, "market_id+condition_id"
             if isinstance(exact, dict):
