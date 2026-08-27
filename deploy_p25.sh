@@ -34,7 +34,7 @@ wanted = {
     'FEATURE_PRICE_RING_MAX': '24000',
     'PAPER_TRADING_ENABLED': 'true',
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
-    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_10C_5M_V1',
+    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_V1',
     'PAPER_STARTING_BANKROLL_USDC': '1000',
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_ENTRY_CHECKPOINT_5M': '60',
@@ -51,7 +51,7 @@ wanted = {
     'PAPER_ALLOWED_GRADES': 'LOW,MEDIUM,HIGH',
     'PAPER_RECENT_LIMIT': '50',
     'PAPER_DEEP_VALUE_MIN_ASK': '0.01',
-    'PAPER_DEEP_VALUE_MAX_ASK': '0.10',
+    'PAPER_DEEP_VALUE_MAX_ASK': '0.25',
     'PAPER_DEEP_VALUE_PREFILTER_BUFFER': '0.03',
     'PAPER_DEEP_VALUE_MIN_TTE_SEC': '5',
     'PAPER_DEEP_VALUE_P26_DB_PATH': 'data/p26_research.sqlite',
@@ -201,10 +201,10 @@ assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
 assert paper.get('enabled') is True
 assert paper.get('entry_mode') == 'DEEP_VALUE_WATCH'
-assert policy.get('strategy_version') == 'DEEP_VALUE_10C_5M_V1'
+assert policy.get('strategy_version') == 'DEEP_VALUE_25C_5M_V1'
 assert float(policy.get('stake_usdc') or 0) == 1.0
 assert float(deep.get('min_ask') or 0) == 0.01
-assert float(deep.get('max_ask') or 0) == 0.10
+assert float(deep.get('max_ask') or 0) == 0.25
 assert deep.get('require_depth') is True
 assert deep.get('allowed_horizons') == ['5m']
 assert health.get('paper_records_page') == '/paper-trades'
@@ -215,4 +215,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..10c | stake=1.00 | horizons=5m | paper-only=true"
+echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..25c | stake=1.00 | horizons=5m | paper-only=true"
