@@ -52,10 +52,21 @@ class DeepValuePaperSettings(PaperSettings):
         default=1.50,
         alias="PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE",
     )
+    paper_deep_value_horizons_csv: str = Field(
+        default="5m,15m,1h",
+        alias="PAPER_DEEP_VALUE_HORIZONS",
+    )
 
     @property
     def paper_deep_value_enabled(self) -> bool:
         return self.paper_entry_mode.strip().upper() == "DEEP_VALUE_WATCH"
+
+    def paper_deep_value_horizons(self) -> set[str]:
+        return {
+            value.strip().lower()
+            for value in self.paper_deep_value_horizons_csv.split(",")
+            if value.strip()
+        }
 
     def enforce_phase_lock(self) -> None:
         super().enforce_phase_lock()
@@ -74,3 +85,8 @@ class DeepValuePaperSettings(PaperSettings):
             raise SystemExit("FATAL CONFIG ERROR: deep-value book age limiti en az 100ms olmali.")
         if self.paper_deep_value_min_value_multiple < 1.0:
             raise SystemExit("FATAL CONFIG ERROR: deep-value value multiple en az 1.0 olmali.")
+        allowed_horizons = self.paper_deep_value_horizons()
+        if not allowed_horizons or not allowed_horizons.issubset({"5m", "15m", "1h"}):
+            raise SystemExit(
+                "FATAL CONFIG ERROR: PAPER_DEEP_VALUE_HORIZONS yalniz 5m,15m,1h icerebilir."
+            )
