@@ -21,7 +21,7 @@ class DeepValuePaperSettings(PaperSettings):
         alias="PAPER_DEEP_VALUE_MIN_ASK",
     )
     paper_deep_value_max_ask: float = Field(
-        default=0.10,
+        default=0.25,
         alias="PAPER_DEEP_VALUE_MAX_ASK",
     )
     paper_deep_value_prefilter_buffer: float = Field(
