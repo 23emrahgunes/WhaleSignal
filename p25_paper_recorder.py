@@ -90,12 +90,16 @@ class P25PaperRecorder(P25ResearchRecorder):
         self.conn.commit()
 
     def _paper_totals(self) -> tuple[float, float, float]:
+        """Return totals for the currently active paper strategy only."""
+        strategy = self.paper_policy.strategy_version
         realized = float(
             self.conn.execute(
                 """
                 SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM paper_trades WHERE status='SETTLED'
-                """
+                FROM paper_trades
+                WHERE strategy_version=? AND status='SETTLED'
+                """,
+                (strategy,),
             ).fetchone()[0]
             or 0.0
         )
@@ -103,8 +107,10 @@ class P25PaperRecorder(P25ResearchRecorder):
             self.conn.execute(
                 """
                 SELECT COALESCE(SUM(COALESCE(stake_usdc,0)+COALESCE(fee_usdc,0)), 0)
-                FROM paper_trades WHERE status='OPEN'
-                """
+                FROM paper_trades
+                WHERE strategy_version=? AND status='OPEN'
+                """,
+                (strategy,),
             ).fetchone()[0]
             or 0.0
         )
