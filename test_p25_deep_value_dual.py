@@ -81,7 +81,8 @@ def test_cheap_opposite_side_still_needs_value_gate(monkeypatch, tmp_path):
     )
     recorder = P25DeepValuePaperRecorder(str(tmp_path / "p25.sqlite"), cfg)
     try:
-        trace = _trace(direction="UP", p_up=0.90)
+        # P(DOWN)=25%, fill=20.5c -> positive edge, but only ~1.22x value.
+        trace = _trace(direction="UP", p_up=0.75)
         opened = recorder.record_deep_value_watch(
             _ref(condition),
             _snap(up_ask=0.80, down_ask=0.20),
