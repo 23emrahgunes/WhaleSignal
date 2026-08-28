@@ -35,7 +35,7 @@ wanted = {
     'RESOLUTION_POLL_SEC': '10',
     'PAPER_TRADING_ENABLED': 'true',
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
-    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_V1',
+    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_DUAL_V1',
     'PAPER_STARTING_BANKROLL_USDC': '1000',
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_ENTRY_CHECKPOINT_5M': '60',
@@ -100,7 +100,7 @@ pkill -f 'python.*p25_main.py' 2>/dev/null || true
 pkill -f 'python.*main.py' 2>/dev/null || true
 sleep 2
 
-echo "=== START P2.5 SHADOW + DEEP VALUE PAPER 5M ONLY ==="
+echo "=== START P2.5 SHADOW + DEEP VALUE DUAL-SIDE PAPER 5M ONLY ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
@@ -202,7 +202,7 @@ assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) == 0
 assert paper.get('enabled') is True
 assert paper.get('entry_mode') == 'DEEP_VALUE_WATCH'
-assert policy.get('strategy_version') == 'DEEP_VALUE_25C_5M_V1'
+assert policy.get('strategy_version') == 'DEEP_VALUE_25C_5M_DUAL_V1'
 assert float(policy.get('stake_usdc') or 0) == 1.0
 assert float(deep.get('min_ask') or 0) == 0.01
 assert float(deep.get('max_ask') or 0) == 0.25
@@ -216,4 +216,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 DEEP VALUE 5M-ONLY PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..25c | stake=1.00 | horizons=5m | resolution_poll=10s | paper-only=true"
+echo "P2.5 DEEP VALUE DUAL-SIDE 5M PAPER DEPLOY PASS | pid=$new_pid | http=200 | trigger=1c..25c | stake=1.00 | scan=UP+DOWN | value>=1.50x | horizons=5m | resolution_poll=10s | paper-only=true"
