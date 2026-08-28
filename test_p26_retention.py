@@ -4,7 +4,7 @@ import sqlite3
 
 from p26_book_store import ensure_book_schema
 from p26_fee import ensure_fee_schema
-from p26_retention import prune_p26
+from p26_retention import RETENTION_VERSION, prune_p26
 from p26_schema import connect_p26, ensure_p26_schema
 
 
@@ -56,6 +56,7 @@ def test_retention_prunes_old_book_oracle_and_health(tmp_path):
     _seed(db, now_ms)
     result = prune_p26(db, now_ms=now_ms, batch_size=100, max_batches=10)
     assert result["status"] == "OK"
+    assert result["version"] == RETENTION_VERSION
     c = sqlite3.connect(db)
     try:
         assert c.execute("SELECT COUNT(*) FROM p26_clob_books").fetchone()[0] == 1
@@ -67,4 +68,4 @@ def test_retention_prunes_old_book_oracle_and_health(tmp_path):
 
 def test_missing_db_is_safe(tmp_path):
     result = prune_p26(str(tmp_path / "missing.sqlite"))
-    assert result == {"status": "DB_MISSING"}
+    assert result == {"status": "DB_MISSING", "version": RETENTION_VERSION}
