@@ -11,6 +11,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+RETENTION_VERSION = "P26_RETENTION_V1"
+
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return conn.execute(
@@ -61,7 +63,7 @@ def prune_p26(
 ) -> dict[str, int | str]:
     path = Path(db_path)
     if not path.exists():
-        return {"status": "DB_MISSING"}
+        return {"status": "DB_MISSING", "version": RETENTION_VERSION}
 
     now = int(time.time() * 1000) if now_ms is None else int(now_ms)
     cut_book = now - int(book_hours * 3_600_000)
@@ -73,7 +75,10 @@ def prune_p26(
     try:
         conn.execute("PRAGMA busy_timeout=60000")
         conn.execute("PRAGMA foreign_keys=ON")
-        result: dict[str, int | str] = {"status": "OK"}
+        result: dict[str, int | str] = {
+            "status": "OK",
+            "version": RETENTION_VERSION,
+        }
 
         # Canonical rows reference oracle ticks, so prune canonical history first.
         result["canonical_deleted"] = _delete_batches(
