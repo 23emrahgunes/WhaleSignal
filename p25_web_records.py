@@ -174,6 +174,7 @@ def _live_status(engine) -> dict:  # noqa: ANN001
 
 
 def _health_payload(engine, cfg) -> dict:  # noqa: ANN001
+    """Build a constant-time liveness payload without engine.snapshot/SQLite."""
     latest = getattr(engine, "latest", {}) or {}
     markets_active = sum(
         1
