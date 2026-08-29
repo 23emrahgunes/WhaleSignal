@@ -32,6 +32,16 @@ class DeepValuePaperSettings(PaperSettings):
         default=5.0,
         alias="PAPER_DEEP_VALUE_MIN_TTE_SEC",
     )
+    # Deep-value may watch the whole market, but the 5m strategy is only allowed
+    # to CREATE a paper entry (and therefore trigger XRP LIVE) inside T-90..T-60.
+    paper_deep_value_entry_tte_min_sec: float = Field(
+        default=60.0,
+        alias="PAPER_DEEP_VALUE_ENTRY_TTE_MIN_SEC",
+    )
+    paper_deep_value_entry_tte_max_sec: float = Field(
+        default=90.0,
+        alias="PAPER_DEEP_VALUE_ENTRY_TTE_MAX_SEC",
+    )
     paper_deep_value_p26_db_path: str = Field(
         default="data/p26_research.sqlite",
         alias="PAPER_DEEP_VALUE_P26_DB_PATH",
@@ -149,6 +159,14 @@ class DeepValuePaperSettings(PaperSettings):
             raise SystemExit("FATAL CONFIG ERROR: deep-value prefilter buffer negatif olamaz.")
         if self.paper_deep_value_min_tte_sec < 0:
             raise SystemExit("FATAL CONFIG ERROR: deep-value minimum TTE negatif olamaz.")
+        if self.paper_deep_value_entry_tte_min_sec < 0:
+            raise SystemExit("FATAL CONFIG ERROR: 5m entry-window minimum TTE negatif olamaz.")
+        if self.paper_deep_value_entry_tte_max_sec <= self.paper_deep_value_entry_tte_min_sec:
+            raise SystemExit("FATAL CONFIG ERROR: 5m entry-window TTE araligi gecersiz.")
+        if self.paper_deep_value_entry_tte_min_sec < self.paper_deep_value_min_tte_sec:
+            raise SystemExit(
+                "FATAL CONFIG ERROR: entry-window minimum TTE deep-value hard minimumun altinda olamaz."
+            )
         if self.paper_deep_value_max_book_age_ms < 100:
             raise SystemExit("FATAL CONFIG ERROR: deep-value book age limiti en az 100ms olmali.")
         if self.paper_deep_value_min_value_multiple < 1.0:
