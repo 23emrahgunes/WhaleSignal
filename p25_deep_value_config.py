@@ -1,6 +1,6 @@
 """Configuration extension for P2.5 DEEP_VALUE_WATCH research and guarded LIVE pilot.
 
-Paper behavior remains the default.  The optional P25 LIVE block is disabled unless
+Paper behavior remains the default. The optional P25 LIVE block is disabled unless
 explicitly enabled and armed; when enabled it is hard-locked to the XRP 5m paper
 cohort and a one-cycle arm nonce.
 """
@@ -82,9 +82,15 @@ class DeepValuePaperSettings(PaperSettings):
         default="DEEP_VALUE_25C_5M_DUAL_V1",
         alias="P25_LIVE_STRATEGY_VERSION",
     )
+    # Paper stake remains $1.00. LIVE may spend up to $1.10 when the executable
+    # fresh ask drifts slightly above the paper fill, subject to the 10% drift cap.
     p25_live_max_stake_usdc: float = Field(
-        default=1.0,
+        default=1.10,
         alias="P25_LIVE_MAX_STAKE_USDC",
+    )
+    p25_live_max_price_drift_pct: float = Field(
+        default=0.10,
+        alias="P25_LIVE_MAX_PRICE_DRIFT_PCT",
     )
     p25_live_max_limit_price: float = Field(
         default=0.255,
@@ -153,11 +159,24 @@ class DeepValuePaperSettings(PaperSettings):
                 "FATAL CONFIG ERROR: PAPER_DEEP_VALUE_HORIZONS yalniz 5m,15m,1h icerebilir."
             )
 
+        # Validate the LIVE envelope even while unarmed, so the UI cannot arm a
+        # malformed runtime profile that bypassed startup checks.
+        if self.p25_live_asset.strip().upper() != "XRP":
+            raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz XRP olabilir.")
+        if self.p25_live_horizon.strip().lower() != "5m":
+            raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz 5m olabilir.")
+        if self.p25_live_max_stake_usdc <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: P25 LIVE max stake pozitif olmali.")
+        if not 0.0 <= self.p25_live_max_price_drift_pct <= 0.25:
+            raise SystemExit("FATAL CONFIG ERROR: P25 LIVE fiyat sapmasi 0..25% olmali.")
+        if not 0.0 < self.p25_live_max_limit_price < 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: P25 LIVE price cap gecersiz.")
+        if self.p25_live_chain_id != 137:
+            raise SystemExit("FATAL CONFIG ERROR: P25 LIVE yalniz Polygon chain_id=137 destekler.")
+        if self.p25_live_settlement_wait_sec <= 0 or self.p25_live_settlement_poll_sec <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: P25 LIVE settlement sureleri pozitif olmali.")
+
         if self.p25_live_feature_enabled:
-            if self.p25_live_asset.strip().upper() != "XRP":
-                raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz XRP olabilir.")
-            if self.p25_live_horizon.strip().lower() != "5m":
-                raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz 5m olabilir.")
             if not self.paper_deep_value_enabled:
                 raise SystemExit("FATAL CONFIG ERROR: P25 LIVE pilot DEEP_VALUE_WATCH gerektirir.")
             if "5m" not in allowed_horizons:
@@ -166,13 +185,5 @@ class DeepValuePaperSettings(PaperSettings):
                 raise SystemExit("FATAL CONFIG ERROR: LIVE strategy paper strategy ile birebir ayni olmali.")
             if self.paper_stake_usdc > self.p25_live_max_stake_usdc + 1e-12:
                 raise SystemExit("FATAL CONFIG ERROR: paper stake LIVE hard cap'i asiyor.")
-            if self.p25_live_max_stake_usdc <= 0:
-                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE max stake pozitif olmali.")
-            if not 0.0 < self.p25_live_max_limit_price < 1.0:
-                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE price cap gecersiz.")
-            if self.p25_live_chain_id != 137:
-                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE yalniz Polygon chain_id=137 destekler.")
-            if self.p25_live_settlement_wait_sec <= 0 or self.p25_live_settlement_poll_sec <= 0:
-                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE settlement sureleri pozitif olmali.")
             if self.p25_live_armed and len(self.p25_live_arm_nonce.strip()) < 8:
                 raise SystemExit("FATAL CONFIG ERROR: P25 LIVE arm nonce en az 8 karakter olmali.")
