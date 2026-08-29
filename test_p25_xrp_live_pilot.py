@@ -1,7 +1,12 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from p25_live_xrp import LivePilotLedger, LiveTrigger, evaluate_live_trigger_scope
+from p25_live_xrp import (
+    LivePilotLedger,
+    LiveTrigger,
+    XRP5mLivePilot,
+    evaluate_live_trigger_scope,
+)
 
 
 class _Value:
@@ -33,7 +38,8 @@ def _cfg(**overrides):
         p25_live_asset="XRP",
         p25_live_horizon="5m",
         p25_live_strategy_version="DEEP_VALUE_25C_5M_DUAL_V1",
-        p25_live_max_stake_usdc=1.0,
+        p25_live_max_stake_usdc=1.10,
+        p25_live_max_price_drift_pct=0.10,
         p25_live_max_limit_price=0.255,
     )
     values.update(overrides)
@@ -76,14 +82,67 @@ def test_live_scope_rejects_other_asset_and_other_strategy():
     assert reason == "LIVE_STRATEGY_MISMATCH"
 
 
-def test_live_scope_rejects_unarmed_or_over_cap():
-    trigger, reason = evaluate_live_trigger_scope(_cfg(p25_live_armed=False), _Ref(), _paper())
+def test_live_scope_rejects_unarmed_or_over_110_cap():
+    trigger, reason = evaluate_live_trigger_scope(
+        _cfg(p25_live_armed=False),
+        _Ref(),
+        _paper(),
+    )
     assert trigger is None
     assert reason == "LIVE_NOT_ARMED"
 
-    trigger, reason = evaluate_live_trigger_scope(_cfg(), _Ref(), _paper(stake_usdc=1.01))
+    trigger, reason = evaluate_live_trigger_scope(
+        _cfg(),
+        _Ref(),
+        _paper(stake_usdc=1.11),
+    )
     assert trigger is None
     assert reason == "LIVE_STAKE_CAP"
+
+    trigger, reason = evaluate_live_trigger_scope(
+        _cfg(),
+        _Ref(),
+        _paper(stake_usdc=1.10),
+    )
+    assert reason == "OK"
+    assert trigger is not None
+
+
+def test_fresh_depth_can_use_ten_percent_price_drift_but_not_more():
+    class Level:
+        def __init__(self, price, size):
+            self.price = price
+            self.size = size
+
+    class Book:
+        min_order_size = 1.0
+        asks = [Level("0.170", "3"), Level("0.180", "4")]
+
+    class Client:
+        def get_order_book(self, _token):
+            return Book()
+
+    # Paper fill 16.5c with 10% drift permits up to 18.15c. Six shares can fill
+    # through the 18c level.
+    limit, capacity, min_size = XRP5mLivePilot._fresh_limit_for_quantity(
+        Client(),
+        token_id="token",
+        requested_shares=6.0,
+        max_live_limit_price=0.1815,
+    )
+    assert limit == 0.18
+    assert capacity == 7.0
+    assert min_size == 1.0
+
+    # A tighter 17.5c ceiling cannot source all six shares and must fail closed.
+    limit, capacity, _ = XRP5mLivePilot._fresh_limit_for_quantity(
+        Client(),
+        token_id="token",
+        requested_shares=6.0,
+        max_live_limit_price=0.175,
+    )
+    assert limit is None
+    assert capacity == 3.0
 
 
 def test_arm_nonce_is_restart_safe_one_shot(tmp_path: Path):
@@ -102,7 +161,7 @@ def test_arm_nonce_is_restart_safe_one_shot(tmp_path: Path):
     assert ledger.reserve(
         arm_nonce="pilot-0001",
         trigger=trigger,
-        live_limit_price=0.12,
+        live_limit_price=0.132,
         collateral_before_usdc=10.0,
         country="SE",
         region=None,
@@ -111,7 +170,7 @@ def test_arm_nonce_is_restart_safe_one_shot(tmp_path: Path):
     assert not ledger.reserve(
         arm_nonce="pilot-0001",
         trigger=trigger,
-        live_limit_price=0.12,
+        live_limit_price=0.132,
         collateral_before_usdc=10.0,
         country="SE",
         region=None,
