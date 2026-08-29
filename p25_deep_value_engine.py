@@ -13,6 +13,29 @@ from p25_reconciled_paper_engine import P25Engine as _BaseP25Engine
 log = logging.getLogger("direction_engine.p25.deep_value")
 
 
+def _entry_window_reason(cfg, ref, snap) -> str | None:  # noqa: ANN001
+    """Return a fail-closed reason unless a 5m market is inside T-90..T-60.
+
+    Forecasting and research recording continue for the whole market. This gate only
+    controls creation of DEEP_VALUE_WATCH paper entries; XRP LIVE inherits the same
+    cohort because LIVE is triggered only after a paper OPEN is created.
+    """
+    horizon = str(ref.combo.horizon.value).lower()
+    if horizon != "5m":
+        return None
+    tte = snap.tte_sec if snap.tte_sec is not None else snap.seconds_remaining
+    if tte is None:
+        return "ENTRY_TTE_MISSING"
+    tte = float(tte)
+    min_tte = float(getattr(cfg, "paper_deep_value_entry_tte_min_sec", 60.0))
+    max_tte = float(getattr(cfg, "paper_deep_value_entry_tte_max_sec", 90.0))
+    if tte > max_tte + 1e-9:
+        return f"WAITING_FOR_ENTRY_WINDOW_TTE_{tte:.1f}"
+    if tte + 1e-9 < min_tte:
+        return f"ENTRY_WINDOW_CLOSED_TTE_{tte:.1f}"
+    return None
+
+
 class P25Engine(_BaseP25Engine):
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002,ANN003
         super().__init__(*args, **kwargs)
@@ -28,19 +51,23 @@ class P25Engine(_BaseP25Engine):
         deep_enabled = bool(getattr(self.cfg, "paper_deep_value_enabled", False))
         paper_created = False
         if deep_enabled:
-            watcher = getattr(self.recorder, "record_deep_value_watch", None)
-            if callable(watcher):
-                try:
-                    paper_created = bool(watcher(ref, snap, bundle.trace))
-                except Exception as exc:  # noqa: BLE001
-                    bundle.trace["paper_deep_value_watch_reason"] = (
-                        f"WATCH_ERROR_{type(exc).__name__}"
-                    )
-                    log.warning(
-                        "deep-value watch failed combo=%s error=%s",
-                        ref.combo.key,
-                        type(exc).__name__,
-                    )
+            window_reason = _entry_window_reason(self.cfg, ref, snap)
+            if window_reason is not None:
+                bundle.trace["paper_deep_value_watch_reason"] = window_reason
+            else:
+                watcher = getattr(self.recorder, "record_deep_value_watch", None)
+                if callable(watcher):
+                    try:
+                        paper_created = bool(watcher(ref, snap, bundle.trace))
+                    except Exception as exc:  # noqa: BLE001
+                        bundle.trace["paper_deep_value_watch_reason"] = (
+                            f"WATCH_ERROR_{type(exc).__name__}"
+                        )
+                        log.warning(
+                            "deep-value watch failed combo=%s error=%s",
+                            ref.combo.key,
+                            type(exc).__name__,
+                        )
 
         if paper_created and self._xrp5m_live_pilot is not None:
             try:
@@ -62,14 +89,26 @@ class P25Engine(_BaseP25Engine):
             min_value = float(
                 getattr(self.cfg, "paper_deep_value_min_value_multiple", 1.50)
             )
+            entry_min = float(
+                getattr(self.cfg, "paper_deep_value_entry_tte_min_sec", 60.0)
+            )
+            entry_max = float(
+                getattr(self.cfg, "paper_deep_value_entry_tte_max_sec", 90.0)
+            )
             card["paper_entry_mode"] = "DEEP_VALUE_WATCH"
-            card["paper_entry_checkpoint"] = f"{max_ask * 100:.0f}c DIP"
-            card["paper_entry_label"] = f"DIP <= {max_ask * 100:.0f}c bekleniyor"
+            card["paper_entry_checkpoint"] = (
+                f"T-{entry_max:.0f}..T-{entry_min:.0f}s + {max_ask * 100:.0f}c DIP"
+            )
+            card["paper_entry_label"] = (
+                f"Giriş yalnız son {entry_max:.0f}-{entry_min:.0f}s penceresinde"
+            )
             card["paper_deep_value_min_ask"] = min_ask
             card["paper_deep_value_max_ask"] = max_ask
             card["paper_deep_value_stake_usdc"] = stake
             card["paper_deep_value_slippage"] = slippage
             card["paper_deep_value_min_value_multiple"] = min_value
+            card["paper_deep_value_entry_tte_min_sec"] = entry_min
+            card["paper_deep_value_entry_tte_max_sec"] = entry_max
             card["paper_deep_value_watch_reason"] = bundle.trace.get(
                 "paper_deep_value_watch_reason"
             )
