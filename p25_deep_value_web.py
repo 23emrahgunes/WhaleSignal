@@ -1,9 +1,4 @@
-"""DEEP_VALUE_WATCH web decoration for the P2.5 dashboard.
-
-The base P2.5 web server remains authoritative for routes and JSON APIs. This module
-only decorates the existing main HTML with a per-market deep-value status panel.
-No execution, credentials, signing or write endpoints are introduced.
-"""
+"""DEEP_VALUE_WATCH web decoration plus guarded XRP 5m LIVE operator control."""
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +17,8 @@ _DIP_CSS = r"""
 .dipwatch.hit .dipstate{background:#09684c;color:#b8f9e2}.dipwatch.blocked .dipstate{background:#74252a;color:#ffd4d6}.dipwatch.near .dipstate{background:#5e4809;color:#ffe8a6}
 .dipgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.dipmetric{background:#0b1422;border:1px solid #21304a;border-radius:6px;padding:6px;min-width:0}.dipmetric span{display:block;color:#849ab9;font-size:10px;margin-bottom:2px}.dipmetric b{display:block;color:#edf5ff;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dipreason{margin-top:6px;color:#9fb1cc;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:700px){.dipgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.xrp-live-wrap{display:flex;align-items:center;gap:7px;margin-left:auto;flex-wrap:wrap}.xrp-live-btn{border:1px solid #23795e;background:#12543f;color:#eafff7;border-radius:7px;padding:7px 10px;font-weight:900;cursor:pointer;font-size:11px}.xrp-live-btn.on{background:#6f2027;border-color:#a13b43;color:#ffe4e6}.xrp-live-btn.used{background:#5b450d;border-color:#8c6c1d;color:#fff0b8}.xrp-live-meta{color:#91a6c6;font-size:10px;max-width:390px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:700px){.dipgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.xrp-live-wrap{width:100%;margin-left:0}.xrp-live-meta{max-width:100%}}
 """
 
 
@@ -89,12 +85,44 @@ function deepValueBox(c){
    <div class="dipreason">${reasonText}</div>
  </div>`;
 }
+
+let xrpLiveState={armed:false,arm_consumed:false,max_stake_usdc:1.10,max_price_drift_pct:.10,last_reason:'IDLE'};
+function renderXrpLive(s){
+ xrpLiveState=s||xrpLiveState;
+ const b=document.getElementById('xrpLiveBtn'),m=document.getElementById('xrpLiveMeta');
+ if(!b||!m)return;
+ const armed=!!s.armed,consumed=!!s.arm_consumed;
+ const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
+ const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+ b.className='xrp-live-btn'+(armed&&!consumed?' on':consumed?' used':'');
+ if(armed&&!consumed)b.textContent='🔴 XRP 5m CANLI · DURDUR';
+ else if(consumed)b.textContent='XRP 5m YENİDEN CANLIYA GEÇ';
+ else b.textContent='🟢 XRP 5m CANLIYA GEÇ';
+ m.textContent=`max $${cap} · sapma ≤ %${drift} · ${s.last_reason||'IDLE'}`;
+}
+async function xrpLiveToggle(){
+ const s=xrpLiveState||{};
+ const action=(s.armed&&!s.arm_consumed)?'disarm':'arm';
+ if(action==='arm'){
+   const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
+   const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+   if(!confirm(`XRP 5 dakika gerçek para pilotu ARM edilecek.\n\nMaksimum notional: $${cap}\nPaper fill'e göre izin verilen fiyat sapması: en fazla %${drift}\nBir ARM = en fazla bir gerçek network submit cycle.\n\nDevam edilsin mi?`))return;
+ }else if(!confirm('XRP 5m LIVE ARM durdurulsun mu?'))return;
+ const password=prompt('Operatör şifresi (P3_WEB_PASSWORD / P25_LIVE_CONTROL_PASSWORD):');
+ if(!password)return;
+ try{
+   const r=await fetch('/api/xrp5m-live/'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DirectionEngine-XRP5m'},body:JSON.stringify({password,confirm:action==='arm'?'XRP 5M CANLI':'XRP 5M DURDUR'})});
+   const d=await r.json();
+   if(d.status)renderXrpLive(d.status);
+   alert((d.ok?'BAŞARILI: ':'RED: ')+(d.reason||d.error||('HTTP '+r.status)));
+ }catch(e){alert('XRP LIVE kontrol hatası: '+e);}
+}
 """
 
 
 def enhance_main_html(html: str) -> str:
-    """Inject the dip hunter exactly once into the existing dashboard HTML."""
-    if "DİP AVCISI ·" in html:
+    """Inject dip hunter and guarded LIVE control exactly once."""
+    if "DİP AVCISI ·" in html and "xrpLiveBtn" in html:
         return html
     enhanced = html.replace("</style>", _DIP_CSS + "\n</style>", 1)
     enhanced = enhanced.replace("function card(c){", _DIP_JS + "\nfunction card(c){", 1)
@@ -102,11 +130,31 @@ def enhance_main_html(html: str) -> str:
     replacement = " ${deepValueBox(c)}\n ${c.paper_entry_mode==='DEEP_VALUE_WATCH'?'':paperLine(c)}"
     if marker not in enhanced:
         raise RuntimeError("P2.5 dashboard paperLine marker bulunamadi")
-    return enhanced.replace(marker, replacement, 1)
+    enhanced = enhanced.replace(marker, replacement, 1)
+    enhanced = enhanced.replace(
+        '<span class="mut" id="up"></span>',
+        '<span class="mut" id="up"></span>'
+        '<div class="xrp-live-wrap"><button id="xrpLiveBtn" class="xrp-live-btn" '
+        'onclick="xrpLiveToggle()">🟢 XRP 5m CANLIYA GEÇ</button>'
+        '<span id="xrpLiveMeta" class="xrp-live-meta">max $1.10 · sapma ≤ %10</span></div>',
+        1,
+    )
+    enhanced = enhanced.replace(
+        "$('up').textContent='uptime '+Math.round(d.uptime_sec||0)+'s';",
+        "$('up').textContent='uptime '+Math.round(d.uptime_sec||0)+'s';renderXrpLive(d.xrp5m_live_pilot||{});",
+        1,
+    )
+    enhanced = enhanced.replace(
+        '<div class="banner"><b>TAHMİN</b> research ensemble’dır. <b>SİNYAL</b> yalnız doğrulama geçince açılır. <b>PAPER TRADE</b> seçilen tarafı gerçek best ask + slippage ile simüle eder; emir, imza ve private key yoktur.</div>',
+        '<div class="banner"><b>TAHMİN</b> research ensemble’dır. <b>PAPER</b> $1 simülasyondur. '
+        '<b>XRP 5m LIVE</b> yalnız operatör ARM ederse, aynı paper OPEN tetikleyicisini gerçek FOK emirle izler; '
+        'maksimum notional $1.10 ve paper fill’e göre en fazla %10 fiyat sapması uygulanır.</div>',
+        1,
+    )
+    return enhanced
 
 
 async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
-    """Run the normal P2.5 web server with the deep-value HTML decorator."""
     original = base_web._main_html_with_paper_link
 
     def decorated() -> str:
