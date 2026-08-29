@@ -1,8 +1,8 @@
-"""Configuration extension for P2.5 DEEP_VALUE_WATCH paper research.
+"""Configuration extension for P2.5 DEEP_VALUE_WATCH research and guarded LIVE pilot.
 
-This remains simulation-only. The extra settings control a tick-level low-price
-watch that uses the public P2.6 full-depth book as fill evidence. No credentials,
-signing or order submission are introduced.
+Paper behavior remains the default.  The optional P25 LIVE block is disabled unless
+explicitly enabled and armed; when enabled it is hard-locked to the XRP 5m paper
+cohort and a one-cycle arm nonce.
 """
 from __future__ import annotations
 
@@ -57,6 +57,68 @@ class DeepValuePaperSettings(PaperSettings):
         alias="PAPER_DEEP_VALUE_HORIZONS",
     )
 
+    # ----- Guarded directional LIVE pilot: disabled + unarmed by default -----
+    p25_live_feature_enabled: bool = Field(
+        default=False,
+        alias="P25_LIVE_FEATURE_ENABLED",
+    )
+    p25_live_armed: bool = Field(
+        default=False,
+        alias="P25_LIVE_ARMED",
+    )
+    p25_live_arm_nonce: str = Field(
+        default="",
+        alias="P25_LIVE_ARM_NONCE",
+    )
+    p25_live_asset: str = Field(
+        default="XRP",
+        alias="P25_LIVE_ASSET",
+    )
+    p25_live_horizon: str = Field(
+        default="5m",
+        alias="P25_LIVE_HORIZON",
+    )
+    p25_live_strategy_version: str = Field(
+        default="DEEP_VALUE_25C_5M_DUAL_V1",
+        alias="P25_LIVE_STRATEGY_VERSION",
+    )
+    p25_live_max_stake_usdc: float = Field(
+        default=1.0,
+        alias="P25_LIVE_MAX_STAKE_USDC",
+    )
+    p25_live_max_limit_price: float = Field(
+        default=0.255,
+        alias="P25_LIVE_MAX_LIMIT_PRICE",
+    )
+    p25_live_ledger_path: str = Field(
+        default="data/p25_live_direction.sqlite",
+        alias="P25_LIVE_LEDGER_PATH",
+    )
+    p25_live_clob_host: str = Field(
+        default="https://clob.polymarket.com",
+        alias="P25_LIVE_CLOB_HOST",
+    )
+    p25_live_chain_id: int = Field(
+        default=137,
+        alias="P25_LIVE_CHAIN_ID",
+    )
+    p25_live_geoblock_url: str = Field(
+        default="https://polymarket.com/api/geoblock",
+        alias="P25_LIVE_GEOBLOCK_URL",
+    )
+    p25_live_require_geoblock_clear: bool = Field(
+        default=True,
+        alias="P25_LIVE_REQUIRE_GEOBLOCK_CLEAR",
+    )
+    p25_live_settlement_wait_sec: float = Field(
+        default=15.0,
+        alias="P25_LIVE_SETTLEMENT_WAIT_SEC",
+    )
+    p25_live_settlement_poll_sec: float = Field(
+        default=0.5,
+        alias="P25_LIVE_SETTLEMENT_POLL_SEC",
+    )
+
     @property
     def paper_deep_value_enabled(self) -> bool:
         return self.paper_entry_mode.strip().upper() == "DEEP_VALUE_WATCH"
@@ -90,3 +152,27 @@ class DeepValuePaperSettings(PaperSettings):
             raise SystemExit(
                 "FATAL CONFIG ERROR: PAPER_DEEP_VALUE_HORIZONS yalniz 5m,15m,1h icerebilir."
             )
+
+        if self.p25_live_feature_enabled:
+            if self.p25_live_asset.strip().upper() != "XRP":
+                raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz XRP olabilir.")
+            if self.p25_live_horizon.strip().lower() != "5m":
+                raise SystemExit("FATAL CONFIG ERROR: ilk P25 LIVE pilot yalniz 5m olabilir.")
+            if not self.paper_deep_value_enabled:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE pilot DEEP_VALUE_WATCH gerektirir.")
+            if "5m" not in allowed_horizons:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE icin 5m paper horizon acik olmali.")
+            if self.paper_strategy_version != self.p25_live_strategy_version:
+                raise SystemExit("FATAL CONFIG ERROR: LIVE strategy paper strategy ile birebir ayni olmali.")
+            if self.paper_stake_usdc > self.p25_live_max_stake_usdc + 1e-12:
+                raise SystemExit("FATAL CONFIG ERROR: paper stake LIVE hard cap'i asiyor.")
+            if self.p25_live_max_stake_usdc <= 0:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE max stake pozitif olmali.")
+            if not 0.0 < self.p25_live_max_limit_price < 1.0:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE price cap gecersiz.")
+            if self.p25_live_chain_id != 137:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE yalniz Polygon chain_id=137 destekler.")
+            if self.p25_live_settlement_wait_sec <= 0 or self.p25_live_settlement_poll_sec <= 0:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE settlement sureleri pozitif olmali.")
+            if self.p25_live_armed and len(self.p25_live_arm_nonce.strip()) < 8:
+                raise SystemExit("FATAL CONFIG ERROR: P25 LIVE arm nonce en az 8 karakter olmali.")
