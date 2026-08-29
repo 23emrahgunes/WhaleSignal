@@ -67,6 +67,34 @@ class DeepValuePaperSettings(PaperSettings):
         alias="PAPER_DEEP_VALUE_HORIZONS",
     )
 
+    # ----- Independent PTB + Binance paper alpha experiment -----
+    # Polymarket prices are NOT inputs to this probability. Official PTB/current
+    # establish the anchor; Binance contributes only a bounded remaining-move shift.
+    paper_independent_alpha_enabled: bool = Field(
+        default=False,
+        alias="PAPER_INDEPENDENT_ALPHA_ENABLED",
+    )
+    paper_independent_deadzone_low: float = Field(
+        default=0.42,
+        alias="PAPER_INDEPENDENT_DEADZONE_LOW",
+    )
+    paper_independent_deadzone_high: float = Field(
+        default=0.58,
+        alias="PAPER_INDEPENDENT_DEADZONE_HIGH",
+    )
+    paper_independent_binance_max_sigma_shift: float = Field(
+        default=0.35,
+        alias="PAPER_INDEPENDENT_BINANCE_MAX_SIGMA_SHIFT",
+    )
+    paper_independent_max_basis_bps: float = Field(
+        default=50.0,
+        alias="PAPER_INDEPENDENT_MAX_BASIS_BPS",
+    )
+    paper_independent_max_basis_open_gap_ms: float = Field(
+        default=5000.0,
+        alias="PAPER_INDEPENDENT_MAX_BASIS_OPEN_GAP_MS",
+    )
+
     # ----- Guarded directional LIVE pilot: disabled + unarmed by default -----
     p25_live_feature_enabled: bool = Field(
         default=False,
@@ -176,6 +204,19 @@ class DeepValuePaperSettings(PaperSettings):
             raise SystemExit(
                 "FATAL CONFIG ERROR: PAPER_DEEP_VALUE_HORIZONS yalniz 5m,15m,1h icerebilir."
             )
+
+        if not 0.0 < self.paper_independent_deadzone_low < 0.5:
+            raise SystemExit("FATAL CONFIG ERROR: independent deadzone low 0..0.5 arasinda olmali.")
+        if not 0.5 < self.paper_independent_deadzone_high < 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: independent deadzone high 0.5..1 arasinda olmali.")
+        if self.paper_independent_deadzone_low >= self.paper_independent_deadzone_high:
+            raise SystemExit("FATAL CONFIG ERROR: independent deadzone araligi gecersiz.")
+        if not 0.0 <= self.paper_independent_binance_max_sigma_shift <= 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: Binance alpha shift 0..1 sigma olmali.")
+        if self.paper_independent_max_basis_bps <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: max basis bps pozitif olmali.")
+        if self.paper_independent_max_basis_open_gap_ms <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: basis open gap pozitif olmali.")
 
         # Validate the LIVE envelope even while unarmed, so the UI cannot arm a
         # malformed runtime profile that bypassed startup checks.

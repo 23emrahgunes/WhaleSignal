@@ -26,11 +26,14 @@ _DIP_JS = r"""
 function deepValueBox(c){
  if(c.paper_entry_mode!=='DEEP_VALUE_WATCH')return '';
  const paper=c.paper_trade||null;
- const side=(c.forecast_direction||'').toUpperCase();
+ const alpha=c.independent_alpha||{};
+ const side=String(c.paper_direction||c.forecast_direction||'').toUpperCase();
  const askRaw=side==='UP'?c.up_ask:side==='DOWN'?c.down_ask:null;
  const ask=askRaw==null?null:Number(askRaw);
- const pUp=c.forecast_p_up==null?null:Number(c.forecast_p_up);
+ const paperPUp=c.paper_p_up==null?c.forecast_p_up:c.paper_p_up;
+ const pUp=paperPUp==null?null:Number(paperPUp);
  const prob=pUp==null?null:(side==='UP'?pUp:side==='DOWN'?1-pUp:null);
+ const source=String(c.paper_probability_source||c.forecast_source||'—');
  const minAsk=Number(c.paper_deep_value_min_ask==null?0.01:c.paper_deep_value_min_ask);
  const maxAsk=Number(c.paper_deep_value_max_ask==null?0.10:c.paper_deep_value_max_ask);
  const stake=Number(c.paper_deep_value_stake_usdc==null?1:c.paper_deep_value_stake_usdc);
@@ -45,12 +48,15 @@ function deepValueBox(c){
  const isSettled=isTrade&&paper.status==='SETTLED';
  let state='DİP BEKLENİYOR',klass='';
  if(isTrade){state=isSettled?(paper.correct?'DİP TUTTU':'DİP KAÇTI'):'🔥 DİP YAKALANDI';klass=paper.correct===0?'blocked':'hit';}
- else if(side!=='UP'&&side!=='DOWN'){state='TAHMİN BEKLENİYOR';}
+ else if(side!=='UP'&&side!=='DOWN'){
+   state=reason.includes('NEUTRAL')?'ALPHA NEUTRAL':'ALPHA BEKLENİYOR';
+   if(reason.includes('NEUTRAL'))klass='blocked';
+ }
  else if(ask==null){state='ASK BEKLENİYOR';}
  else if(ask<minAsk){state='FİYAT ALT SINIRINDA';klass='blocked';}
  else if(ask<=maxAsk){
    if(reason.startsWith('DEPTH_')||reason.includes('FEE_')||reason.includes('BOOK_')){state='DİP VAR · FILL BLOKE';klass='blocked';}
-   else if(reason&&reason!=='OPEN'&&reason!=='OK'){state='DİP VAR · MODEL GATE';klass='blocked';}
+   else if(reason&&reason!=='OPEN'&&reason!=='OK'){state='DİP VAR · ALPHA GATE';klass='blocked';}
    else{state='DİP BÖLGESİ';klass='near';}
  }else if(distance!=null&&distance<=0.03){state='DİBE YAKIN';klass='near';}
  const askText=ask==null?'—':(ask*100).toFixed(1)+'¢';
@@ -58,6 +64,7 @@ function deepValueBox(c){
  const distText=distance==null?'—':distance<=0?'HEDEFTE':('+'+(distance*100).toFixed(1)+'¢');
  const shareText=shares==null?'—':shares.toFixed(2);
  const probText=prob==null?'—':(prob*100).toFixed(1)+'%';
+ const pUpText=pUp==null?'—':(pUp*100).toFixed(1)+'%';
  const valueText=value==null?'—':value.toFixed(2)+'x';
  const depthAge=paper&&paper.depth_age_ms!=null?Number(paper.depth_age_ms):c.paper_deep_value_depth_age_ms;
  let depthText='BEKLENİYOR';
@@ -69,12 +76,22 @@ function deepValueBox(c){
  const pnlText=isSettled&&paper.realized_pnl!=null?usd(paper.realized_pnl):isTrade?'AÇIK':'—';
  const band=paper&&paper.price_band?paper.price_band:(c.paper_deep_value_price_band||'—');
  const reasonText=isTrade?'DEEP_VALUE_WATCH · '+(paper.price_band||band):reason||'WAITING_FOR_DIP';
+ const anchor=String(alpha.anchor_source||'—');
+ const ptbDist=alpha.distance_bps==null?'—':Number(alpha.distance_bps).toFixed(1)+' bps';
+ const correction=alpha.binance_correction_bps==null?'—':((Number(alpha.binance_correction_bps)>=0?'+':'')+Number(alpha.binance_correction_bps).toFixed(1)+' bps');
+ const sigma=alpha.sigma_remaining_bps==null?'—':Number(alpha.sigma_remaining_bps).toFixed(1)+' bps';
  return `<div class="dipwatch ${klass}">
    <div class="diphead"><span class="diptitle">DİP AVCISI · ${side||'—'}</span><span class="dipstate">${state}</span></div>
    <div class="dipgrid">
     <div class="dipmetric"><span>Canlı ask</span><b>${askText}</b></div>
     <div class="dipmetric"><span>Dip hedefi</span><b>${targetText} · ${distText}</b></div>
-    <div class="dipmetric"><span>Model olasılığı</span><b>${probText}</b></div>
+    <div class="dipmetric"><span>Paper P(UP)</span><b>${pUpText}</b></div>
+    <div class="dipmetric"><span>Seçilen taraf P</span><b>${probText}</b></div>
+    <div class="dipmetric"><span>Alpha kaynağı</span><b>${source}</b></div>
+    <div class="dipmetric"><span>Anchor</span><b>${anchor}</b></div>
+    <div class="dipmetric"><span>PTB mesafesi</span><b>${ptbDist}</b></div>
+    <div class="dipmetric"><span>Binance düzeltme</span><b>${correction}</b></div>
+    <div class="dipmetric"><span>Kalan sigma</span><b>${sigma}</b></div>
     <div class="dipmetric"><span>$${stake.toFixed(2)} teorik share</span><b>${shareText}</b></div>
     <div class="dipmetric"><span>Value / min</span><b>${valueText} / ${minValue.toFixed(2)}x</b></div>
     <div class="dipmetric"><span>Full depth / yaş</span><b>${depthText} · ${ageText}</b></div>
@@ -146,8 +163,9 @@ def enhance_main_html(html: str) -> str:
     )
     enhanced = enhanced.replace(
         '<div class="banner"><b>TAHMİN</b> research ensemble’dır. <b>SİNYAL</b> yalnız doğrulama geçince açılır. <b>PAPER TRADE</b> seçilen tarafı gerçek best ask + slippage ile simüle eder; emir, imza ve private key yoktur.</div>',
-        '<div class="banner"><b>TAHMİN</b> research ensemble’dır. <b>PAPER</b> $1 simülasyondur. '
-        '<b>XRP 5m LIVE</b> yalnız operatör ARM ederse, aynı paper OPEN tetikleyicisini gerçek FOK emirle izler; '
+        '<div class="banner"><b>TAHMİN</b> research ensemble’dır ve karşılaştırma için kalır. '
+        '<b>PAPER ALPHA</b> bağımsız PTB + Binance olasılığıdır; Polymarket fiyatı yalnız value/fill aşamasında kullanılır. '
+        '<b>XRP 5m LIVE</b> yalnız operatör ARM ederse aynı paper OPEN tetikleyicisini FOK emirle izler; '
         'maksimum notional $1.10 ve paper fill’e göre en fazla %10 fiyat sapması uygulanır.</div>',
         1,
     )
