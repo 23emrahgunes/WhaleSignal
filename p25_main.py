@@ -1,8 +1,8 @@
-"""P2.5 SHADOW service entrypoint.
+"""P2.5 Direction Engine service entrypoint.
 
-The service produces research forecasts, validation-gated signals and paper-trade
-simulations. Paper positions are SQLite records only; no order execution,
-credentials, signing or private key exists.
+The default behavior remains SHADOW + paper.  An optional, explicitly armed XRP 5m
+LIVE pilot can be attached downstream of the existing paper trigger.  No LIVE order
+is possible unless the dedicated P25_LIVE_* safety configuration is enabled.
 """
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ from p25_deep_value_engine import P25Engine
 from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
 from p25_deep_value_web import run_web
+from p25_live_xrp import XRP5mLivePilot
 from reference import ReferenceRouter
 
 log = logging.getLogger("direction_engine.p25_main")
@@ -65,6 +66,16 @@ async def run() -> None:
         cfg.paper_trading_enabled,
         cfg.paper_entry_mode,
     )
+    if cfg.p25_live_feature_enabled:
+        log.warning(
+            "P25 LIVE PILOT feature=ON armed=%s scope=%s:%s strategy=%s "
+            "max_stake=%.2f one_cycle_per_arm=true",
+            cfg.p25_live_armed,
+            cfg.p25_live_asset,
+            cfg.p25_live_horizon,
+            cfg.p25_live_strategy_version,
+            cfg.p25_live_max_stake_usdc,
+        )
 
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
@@ -102,6 +113,9 @@ async def run() -> None:
         engine.attach_session(session)
         discovery.on_resolved(engine.on_market_resolved)
 
+        if cfg.p25_live_feature_enabled:
+            engine.attach_xrp5m_live_pilot(XRP5mLivePilot(cfg))
+
         paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
         engine.attach_paper_reconciler(paper_reconciler)
 
@@ -113,10 +127,6 @@ async def run() -> None:
         )
         engine.attach_clob(clob)
 
-        # Full dashboard snapshots include SQLite analytics. Wrap them in a
-        # stale-while-revalidate cache only after all observable runtime components
-        # are attached. The first heavy build is prewarmed in a daemon thread; after
-        # that, expired snapshots are served stale immediately while one refresh runs.
         snapshot_cache = SnapshotCache(engine.snapshot, ttl_sec=_state_cache_ttl_sec())
         engine.snapshot = snapshot_cache.get  # type: ignore[method-assign]
         snapshot_cache.prewarm()
