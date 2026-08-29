@@ -86,14 +86,14 @@ function deepValueBox(c){
  </div>`;
 }
 
-let xrpLiveState={armed:false,arm_consumed:false,max_stake_usdc:1.10,max_price_drift_pct:.10,last_reason:'IDLE'};
+let xrpLiveState={armed:false,arm_consumed:false,max_stake_usdc:1.10,max_price_drift_pct:0.10,last_reason:'IDLE'};
 function renderXrpLive(s){
  xrpLiveState=s||xrpLiveState;
  const b=document.getElementById('xrpLiveBtn'),m=document.getElementById('xrpLiveMeta');
  if(!b||!m)return;
  const armed=!!s.armed,consumed=!!s.arm_consumed;
- const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
- const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+ const cap=Number(s.max_stake_usdc==null ? 1.10 : s.max_stake_usdc).toFixed(2);
+ const drift=(Number(s.max_price_drift_pct==null ? 0.10 : s.max_price_drift_pct)*100).toFixed(0);
  b.className='xrp-live-btn'+(armed&&!consumed?' on':consumed?' used':'');
  if(armed&&!consumed)b.textContent='🔴 XRP 5m CANLI · DURDUR';
  else if(consumed)b.textContent='XRP 5m YENİDEN CANLIYA GEÇ';
@@ -104,8 +104,8 @@ async function xrpLiveToggle(){
  const s=xrpLiveState||{};
  const action=(s.armed&&!s.arm_consumed)?'disarm':'arm';
  if(action==='arm'){
-   const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
-   const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+   const cap=Number(s.max_stake_usdc==null ? 1.10 : s.max_stake_usdc).toFixed(2);
+   const drift=(Number(s.max_price_drift_pct==null ? 0.10 : s.max_price_drift_pct)*100).toFixed(0);
    if(!confirm(`XRP 5 dakika gerçek para pilotu ARM edilecek.\n\nMaksimum notional: $${cap}\nPaper fill'e göre izin verilen fiyat sapması: en fazla %${drift}\nBir ARM = en fazla bir gerçek network submit cycle.\n\nDevam edilsin mi?`))return;
  }else if(!confirm('XRP 5m LIVE ARM durdurulsun mu?'))return;
  const password=prompt('Operatör şifresi (P3_WEB_PASSWORD / P25_LIVE_CONTROL_PASSWORD):');
