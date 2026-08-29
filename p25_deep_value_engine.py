@@ -3,11 +3,16 @@
 Paper evaluation remains the primary path. LIVE is invoked only after the recorder
 has successfully created the exact paper OPEN row, so the pilot cannot invent a
 separate signal path or silently trade a different cohort.
+
+When PAPER_INDEPENDENT_ALPHA_ENABLED=true, the paper probability is replaced by the
+independent PTB+Binance experiment. The normal research forecast remains visible and
+recorded for comparison; Polymarket prices never enter the independent probability.
 """
 from __future__ import annotations
 
 import logging
 
+from p25_independent_alpha import build_independent_alpha
 from p25_reconciled_paper_engine import P25Engine as _BaseP25Engine
 
 log = logging.getLogger("direction_engine.p25.deep_value")
@@ -36,6 +41,49 @@ def _entry_window_reason(cfg, ref, snap) -> str | None:  # noqa: ANN001
     return None
 
 
+def _independent_paper_trace(cfg, ref, snap, fv, trace):  # noqa: ANN001
+    """Return (paper_trace, reject_reason, alpha_dict).
+
+    The original trace is never overwritten: research forecast analytics remain an
+    apples-to-apples control cohort. Only the copy passed to the paper recorder uses
+    the independent probability.
+    """
+    if not bool(getattr(cfg, "paper_independent_alpha_enabled", False)):
+        return trace, None, None
+
+    alpha = build_independent_alpha(ref=ref, snap=snap, fv=fv, cfg=cfg)
+    alpha_dict = alpha.to_dict()
+    trace["independent_alpha"] = alpha_dict
+    trace["independent_alpha_source"] = alpha.source
+    trace["independent_alpha_direction"] = alpha.direction
+    trace["independent_alpha_p_up"] = alpha.p_up
+    trace["independent_alpha_confidence"] = alpha.confidence
+    trace["independent_alpha_reason"] = alpha.reason
+
+    if not alpha.ready:
+        return None, f"INDEPENDENT_ALPHA_{alpha.reason}", alpha_dict
+    if alpha.direction == "NEUTRAL":
+        return None, "INDEPENDENT_ALPHA_NEUTRAL", alpha_dict
+    if alpha.p_up is None:
+        return None, "INDEPENDENT_ALPHA_PROBABILITY_MISSING", alpha_dict
+
+    paper_trace = dict(trace)
+    paper_trace.update(
+        {
+            "forecast_direction": alpha.direction,
+            "forecast_p_up": float(alpha.p_up),
+            "forecast_confidence": float(alpha.confidence),
+            "forecast_grade": alpha.grade,
+            "forecast_status": "PROVISIONAL",
+            "forecast_source": alpha.source,
+            # This probability is not a vote ensemble. Keep compatibility with the
+            # recorder schema; deploy sets PAPER_MIN_AGREEMENT=0 for this strategy.
+            "forecast_agreement": 1.0,
+        }
+    )
+    return paper_trace, None, alpha_dict
+
+
 class P25Engine(_BaseP25Engine):
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002,ANN003
         super().__init__(*args, **kwargs)
@@ -55,19 +103,41 @@ class P25Engine(_BaseP25Engine):
             if window_reason is not None:
                 bundle.trace["paper_deep_value_watch_reason"] = window_reason
             else:
-                watcher = getattr(self.recorder, "record_deep_value_watch", None)
-                if callable(watcher):
-                    try:
-                        paper_created = bool(watcher(ref, snap, bundle.trace))
-                    except Exception as exc:  # noqa: BLE001
-                        bundle.trace["paper_deep_value_watch_reason"] = (
-                            f"WATCH_ERROR_{type(exc).__name__}"
-                        )
-                        log.warning(
-                            "deep-value watch failed combo=%s error=%s",
-                            ref.combo.key,
-                            type(exc).__name__,
-                        )
+                paper_trace, alpha_reject, _alpha = _independent_paper_trace(
+                    self.cfg,
+                    ref,
+                    snap,
+                    fv,
+                    bundle.trace,
+                )
+                if alpha_reject is not None:
+                    bundle.trace["paper_deep_value_watch_reason"] = alpha_reject
+                else:
+                    watcher = getattr(self.recorder, "record_deep_value_watch", None)
+                    if callable(watcher) and paper_trace is not None:
+                        try:
+                            paper_created = bool(watcher(ref, snap, paper_trace))
+                            for key in (
+                                "paper_deep_value_watch_reason",
+                                "paper_deep_value_price_band",
+                                "paper_deep_value_depth_age_ms",
+                                "paper_trade_status",
+                                "paper_trade_side",
+                                "paper_trade_fill",
+                                "paper_trade_skip_reason",
+                                "paper_trade_checkpoint",
+                            ):
+                                if key in paper_trace:
+                                    bundle.trace[key] = paper_trace[key]
+                        except Exception as exc:  # noqa: BLE001
+                            bundle.trace["paper_deep_value_watch_reason"] = (
+                                f"WATCH_ERROR_{type(exc).__name__}"
+                            )
+                            log.warning(
+                                "deep-value watch failed combo=%s error=%s",
+                                ref.combo.key,
+                                type(exc).__name__,
+                            )
 
         if paper_created and self._xrp5m_live_pilot is not None:
             try:
@@ -95,6 +165,10 @@ class P25Engine(_BaseP25Engine):
             entry_max = float(
                 getattr(self.cfg, "paper_deep_value_entry_tte_max_sec", 90.0)
             )
+            independent_enabled = bool(
+                getattr(self.cfg, "paper_independent_alpha_enabled", False)
+            )
+            alpha = bundle.trace.get("independent_alpha") or {}
             card["paper_entry_mode"] = "DEEP_VALUE_WATCH"
             card["paper_entry_checkpoint"] = (
                 f"T-{entry_max:.0f}..T-{entry_min:.0f}s + {max_ask * 100:.0f}c DIP"
@@ -118,6 +192,17 @@ class P25Engine(_BaseP25Engine):
             card["paper_deep_value_depth_age_ms"] = bundle.trace.get(
                 "paper_deep_value_depth_age_ms"
             )
+            card["paper_independent_alpha_enabled"] = independent_enabled
+            card["independent_alpha"] = alpha
+            card["paper_probability_source"] = (
+                alpha.get("source") if independent_enabled else card.get("forecast_source")
+            )
+            card["paper_p_up"] = (
+                alpha.get("p_up") if independent_enabled else card.get("forecast_p_up")
+            )
+            card["paper_direction"] = (
+                alpha.get("direction") if independent_enabled else card.get("forecast_direction")
+            )
         return card
 
     def snapshot(self) -> dict:
@@ -137,6 +222,10 @@ class P25Engine(_BaseP25Engine):
             }
         data["xrp5m_live_pilot"] = live
         safety = data.setdefault("safety", {})
+        safety["paper_independent_alpha_enabled"] = bool(
+            getattr(self.cfg, "paper_independent_alpha_enabled", False)
+        )
+        safety["paper_independent_alpha_source"] = "INDEPENDENT_PTB_BINANCE_V1"
         armed_ready = bool(live.get("armed")) and not bool(live.get("arm_consumed"))
         safety["p25_direction_live_feature_enabled"] = bool(
             live.get("feature_enabled")
