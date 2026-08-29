@@ -162,12 +162,20 @@ def _not_ready(reason: str, *, official_ptb: float | None = None) -> Independent
 def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa: ANN001
     """Build a 5m independent terminal-above-PTB probability.
 
-    Polymarket up/down prices are intentionally never referenced here.
+    Polymarket up/down prices are intentionally never referenced here. Readiness is
+    based only on the Binance features this alpha actually consumes; the generic
+    FeatureVector.feature_ready flag is deliberately NOT used because that flag also
+    requires Polymarket CLOB availability.
     """
     if str(ref.combo.horizon.value).lower() != "5m":
         return _not_ready("HORIZON_NOT_5M")
-    if fv is None or not bool(getattr(fv, "feature_ready", False)):
-        return _not_ready("FEATURE_NOT_READY")
+    if fv is None:
+        return _not_ready("FEATURES_MISSING")
+    missing = set(getattr(fv, "missing_features", []) or [])
+    required = {"binance_book", "ret_5s", "ret_60s", "flow_5s", "rv_60s"}
+    blocking = sorted(missing.intersection(required))
+    if blocking:
+        return _not_ready("BINANCE_FEATURES_MISSING_" + "_".join(blocking).upper())
 
     tte_raw = snap.tte_sec if snap.tte_sec is not None else snap.seconds_remaining
     tte = _safe_float(tte_raw)
