@@ -1,8 +1,8 @@
 """P2.5 Direction Engine service entrypoint.
 
-The default behavior remains SHADOW + paper.  An optional, explicitly armed XRP 5m
-LIVE pilot can be attached downstream of the existing paper trigger.  No LIVE order
-is possible unless the dedicated P25_LIVE_* safety configuration is enabled.
+The default behavior remains SHADOW + paper. An optional, explicitly armed XRP 5m
+LIVE pilot is always attached downstream of the existing paper trigger so the
+operator UI can arm/disarm it without restarting the market-data process.
 """
 from __future__ import annotations
 
@@ -66,16 +66,13 @@ async def run() -> None:
         cfg.paper_trading_enabled,
         cfg.paper_entry_mode,
     )
-    if cfg.p25_live_feature_enabled:
-        log.warning(
-            "P25 LIVE PILOT feature=ON armed=%s scope=%s:%s strategy=%s "
-            "max_stake=%.2f one_cycle_per_arm=true",
-            cfg.p25_live_armed,
-            cfg.p25_live_asset,
-            cfg.p25_live_horizon,
-            cfg.p25_live_strategy_version,
-            cfg.p25_live_max_stake_usdc,
-        )
+    log.info(
+        "XRP5m LIVE pilot attached feature=%s armed=%s max_notional=%.2f drift=%.0f%%",
+        cfg.p25_live_feature_enabled,
+        cfg.p25_live_armed,
+        cfg.p25_live_max_stake_usdc,
+        cfg.p25_live_max_price_drift_pct * 100.0,
+    )
 
     stop = asyncio.Event()
     _install_signal_handlers(asyncio.get_running_loop(), stop)
@@ -113,8 +110,10 @@ async def run() -> None:
         engine.attach_session(session)
         discovery.on_resolved(engine.on_market_resolved)
 
-        if cfg.p25_live_feature_enabled:
-            engine.attach_xrp5m_live_pilot(XRP5mLivePilot(cfg))
+        # Always attach the object. No SDK/network action happens here; LIVE
+        # credentials are touched only during explicit arm preflight or an eligible
+        # paper-triggered submit cycle.
+        engine.attach_xrp5m_live_pilot(XRP5mLivePilot(cfg))
 
         paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
         engine.attach_paper_reconciler(paper_reconciler)

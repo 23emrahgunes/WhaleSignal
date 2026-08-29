@@ -1,8 +1,8 @@
 """P2.5 DEEP_VALUE_WATCH engine with an optional one-shot XRP 5m LIVE pilot.
 
-Paper evaluation remains the primary path.  LIVE is invoked only after the recorder
-has successfully created the exact paper OPEN row, so the first pilot cannot invent
-a separate signal path or silently trade a different cohort.
+Paper evaluation remains the primary path. LIVE is invoked only after the recorder
+has successfully created the exact paper OPEN row, so the pilot cannot invent a
+separate signal path or silently trade a different cohort.
 """
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ class P25Engine(_BaseP25Engine):
 
     def attach_xrp5m_live_pilot(self, pilot) -> None:  # noqa: ANN001
         self._xrp5m_live_pilot = pilot
+
+    def xrp5m_live_pilot(self):  # noqa: ANN201
+        return self._xrp5m_live_pilot
 
     def _card_p25(self, ref, snap, q, bundle, fv) -> dict:  # noqa: ANN001
         deep_enabled = bool(getattr(self.cfg, "paper_deep_value_enabled", False))
@@ -87,11 +90,15 @@ class P25Engine(_BaseP25Engine):
                 "feature_enabled": False,
                 "armed": False,
                 "scope": "XRP:5m",
+                "max_stake_usdc": 1.10,
+                "max_price_drift_pct": 0.10,
                 "one_cycle_per_arm": True,
                 "arm_consumed": False,
+                "network_cycles": 0,
             }
         data["xrp5m_live_pilot"] = live
         safety = data.setdefault("safety", {})
+        armed_ready = bool(live.get("armed")) and not bool(live.get("arm_consumed"))
         safety["p25_direction_live_feature_enabled"] = bool(
             live.get("feature_enabled")
         )
@@ -99,4 +106,8 @@ class P25Engine(_BaseP25Engine):
         safety["p25_direction_live_arm_consumed"] = bool(
             live.get("arm_consumed")
         )
+        # The generic dashboard footer previously always said execution OFF. Keep
+        # it honest now that the guarded XRP pilot can be armed at runtime.
+        safety["execution_enabled"] = armed_ready
+        safety["live_orders"] = int(live.get("network_cycles") or 0)
         return data
