@@ -67,15 +67,15 @@ def _main_html_with_paper_link() -> str:
 
 _PAPER_LIVE_JS = r"""
 <script>
-let xrpLivePaperState={armed:false,arm_consumed:false,max_stake_usdc:1.10,max_price_drift_pct:.10};
+let xrpLivePaperState={armed:false,arm_consumed:false,max_stake_usdc:1.10,max_price_drift_pct:0.10};
 function xrpLivePaperRender(s){
  xrpLivePaperState=s||xrpLivePaperState;
  const b=document.getElementById('xrpLivePaperBtn');
  const m=document.getElementById('xrpLivePaperMeta');
  if(!b||!m)return;
  const armed=!!s.armed, consumed=!!s.arm_consumed;
- const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
- const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+ const cap=Number(s.max_stake_usdc==null ? 1.10 : s.max_stake_usdc).toFixed(2);
+ const drift=(Number(s.max_price_drift_pct==null ? 0.10 : s.max_price_drift_pct)*100).toFixed(0);
  if(armed&&!consumed){b.textContent='🔴 XRP 5m CANLI · DURDUR';b.style.background='#6f2027';b.style.borderColor='#a13b43';}
  else if(consumed){b.textContent='XRP 5m YENİDEN CANLIYA GEÇ';b.style.background='#5b450d';b.style.borderColor='#8c6c1d';}
  else{b.textContent='🟢 XRP 5m CANLIYA GEÇ';b.style.background='#12543f';b.style.borderColor='#23795e';}
@@ -88,8 +88,8 @@ async function xrpLivePaperToggle(){
  const s=xrpLivePaperState||{};
  const action=(s.armed&&!s.arm_consumed)?'disarm':'arm';
  if(action==='arm'){
-   const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
-   const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
+   const cap=Number(s.max_stake_usdc==null ? 1.10 : s.max_stake_usdc).toFixed(2);
+   const drift=(Number(s.max_price_drift_pct==null ? 0.10 : s.max_price_drift_pct)*100).toFixed(0);
    if(!confirm(`XRP 5 dakika gerçek para pilotu ARM edilecek.\n\nMaksimum notional: $${cap}\nPaper girişe göre fiyat sapması: en fazla %${drift}\nBir ARM = en fazla bir network submit cycle.\n\nDevam edilsin mi?`))return;
  }else if(!confirm('XRP 5m LIVE ARM durdurulsun mu?'))return;
  const password=prompt('Operatör şifresi (P3_WEB_PASSWORD / P25_LIVE_CONTROL_PASSWORD):');
@@ -272,13 +272,14 @@ async def run_web(engine, cfg, stop: asyncio.Event) -> None:  # noqa: ANN001
                 getattr(cfg, "min_markets_for_stats", 30)
             )
 
+        live = _live_status(engine)
         return {
             "paperOnly": True,
             "source": "sqlite",
             "paper_trading": paper_payload,
             "forecast_analytics": forecast_payload,
-            "execution": bool(_live_status(engine).get("armed")),
-            "live_orders": int(_live_status(engine).get("network_cycles") or 0),
+            "execution": bool(live.get("armed")) and not bool(live.get("arm_consumed")),
+            "live_orders": int(live.get("network_cycles") or 0),
         }
 
     async def cached_paper_summary() -> dict:
