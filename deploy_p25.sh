@@ -35,14 +35,15 @@ wanted = {
     'RESOLUTION_POLL_SEC': '10',
     'PAPER_TRADING_ENABLED': 'true',
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
-    'PAPER_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_DUAL_V1',
+    'PAPER_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_25C_5M_V1',
     'PAPER_STARTING_BANKROLL_USDC': '1000',
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_ENTRY_CHECKPOINT_5M': '60',
     'PAPER_ENTRY_CHECKPOINT_15M': '240',
     'PAPER_ENTRY_CHECKPOINT_1H': '600',
     'PAPER_MIN_CONFIDENCE': '0.05',
-    'PAPER_MIN_AGREEMENT': '0.50',
+    # Independent alpha is a single calibrated probability, not a vote ensemble.
+    'PAPER_MIN_AGREEMENT': '0.00',
     'PAPER_MIN_EDGE': '0.00',
     'PAPER_MIN_PRICE': '0.01',
     'PAPER_MAX_PRICE': '0.95',
@@ -55,19 +56,29 @@ wanted = {
     'PAPER_DEEP_VALUE_MAX_ASK': '0.25',
     'PAPER_DEEP_VALUE_PREFILTER_BUFFER': '0.03',
     'PAPER_DEEP_VALUE_MIN_TTE_SEC': '5',
+    'PAPER_DEEP_VALUE_ENTRY_TTE_MIN_SEC': '60',
+    'PAPER_DEEP_VALUE_ENTRY_TTE_MAX_SEC': '90',
     'PAPER_DEEP_VALUE_P26_DB_PATH': 'data/p26_research.sqlite',
     'PAPER_DEEP_VALUE_MAX_BOOK_AGE_MS': '1500',
     'PAPER_DEEP_VALUE_REQUIRE_DEPTH': 'true',
     'PAPER_DEEP_VALUE_REQUIRE_FEE_SCHEDULE': 'true',
     'PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.50',
     'PAPER_DEEP_VALUE_HORIZONS': '5m',
+    # New experiment: official PTB/current anchor + bounded Binance remaining-move alpha.
+    # Polymarket prices are deliberately excluded from this probability.
+    'PAPER_INDEPENDENT_ALPHA_ENABLED': 'true',
+    'PAPER_INDEPENDENT_DEADZONE_LOW': '0.42',
+    'PAPER_INDEPENDENT_DEADZONE_HIGH': '0.58',
+    'PAPER_INDEPENDENT_BINANCE_MAX_SIGMA_SHIFT': '0.35',
+    'PAPER_INDEPENDENT_MAX_BASIS_BPS': '50',
+    'PAPER_INDEPENDENT_MAX_BASIS_OPEN_GAP_MS': '5000',
     # LIVE pilot is attached but starts fail-closed/unarmed after every deploy.
     'P25_LIVE_FEATURE_ENABLED': 'false',
     'P25_LIVE_ARMED': 'false',
     'P25_LIVE_ARM_NONCE': '',
     'P25_LIVE_ASSET': 'XRP',
     'P25_LIVE_HORIZON': '5m',
-    'P25_LIVE_STRATEGY_VERSION': 'DEEP_VALUE_25C_5M_DUAL_V1',
+    'P25_LIVE_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_25C_5M_V1',
     'P25_LIVE_MAX_STAKE_USDC': '1.10',
     'P25_LIVE_MAX_PRICE_DRIFT_PCT': '0.10',
     'P25_LIVE_MAX_LIMIT_PRICE': '0.255',
@@ -143,7 +154,7 @@ else
   echo "WARNING: Polymarket LIVE credential bulunamadi; ARM preflight fail-closed kalacak." >&2
 fi
 
-echo "=== START P2.5 SHADOW + DEEP VALUE DUAL-SIDE PAPER 5M ONLY ==="
+echo "=== START P2.5 SHADOW + INDEPENDENT PTB/BINANCE PAPER 5M ONLY ==="
 nohup ./.venv/bin/python p25_main.py > engine.log 2>&1 &
 new_pid=$!
 echo "$new_pid" > direction-engine.pid
@@ -227,6 +238,8 @@ print('paper_trading=', safety.get('paper_trading_enabled'))
 print('paper_entry_mode=', paper.get('entry_mode'))
 print('paper_strategy=', policy.get('strategy_version'))
 print('paper_stake=', policy.get('stake_usdc'))
+print('independent_alpha=', safety.get('paper_independent_alpha_enabled'))
+print('independent_source=', safety.get('paper_independent_alpha_source'))
 print('deep_min_ask=', deep.get('min_ask'))
 print('deep_max_ask=', deep.get('max_ask'))
 print('deep_require_depth=', deep.get('require_depth'))
@@ -251,9 +264,11 @@ assert safety.get('paper_only') is True
 assert int(safety.get('paper_order_submissions') or 0) == 0
 assert safety.get('execution_enabled') is False
 assert int(safety.get('live_orders') or 0) >= 0
+assert safety.get('paper_independent_alpha_enabled') is True
+assert safety.get('paper_independent_alpha_source') == 'INDEPENDENT_PTB_BINANCE_V1'
 assert paper.get('enabled') is True
 assert paper.get('entry_mode') == 'DEEP_VALUE_WATCH'
-assert policy.get('strategy_version') == 'DEEP_VALUE_25C_5M_DUAL_V1'
+assert policy.get('strategy_version') == 'INDEP_PTB_BINANCE_25C_5M_V1'
 assert float(policy.get('stake_usdc') or 0) == 1.0
 assert float(deep.get('min_ask') or 0) == 0.01
 assert float(deep.get('max_ask') or 0) == 0.25
@@ -271,4 +286,4 @@ assert paper_summary.get('paperOnly') is True
 assert paper_summary.get('source') == 'sqlite'
 PY
 
-echo "P2.5 DEPLOY PASS | paper=1.00 USDC | XRP5m LIVE attached+UNARMED | live_cap=1.10 USDC | max_price_drift=10% | UI=/paper-trades"
+echo "P2.5 DEPLOY PASS | alpha=INDEPENDENT_PTB_BINANCE_V1 | entry=T-90..T-60 | paper=1.00 USDC | XRP5m LIVE attached+UNARMED | live_cap=1.10 USDC | UI=/paper-trades"
