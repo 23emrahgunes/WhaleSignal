@@ -62,7 +62,7 @@ def _snap(**overrides):
 
 def _fv(**overrides):
     values = dict(
-        feature_ready=True,
+        missing_features=[],
         rv_multi={"5000": 0.0007, "30000": 0.0017, "60000": 0.0024},
         ret_multi={"5000": 0.0, "15000": 0.0, "30000": 0.0},
         flow_fast=0.0,
@@ -92,6 +92,16 @@ def test_official_current_anchor_is_independent_from_polymarket_mid():
     assert first.anchor_source == "OFFICIAL_CURRENT"
     assert first.p_up == pytest.approx(second.p_up)
     assert first.direction == second.direction
+
+
+def test_clob_missing_does_not_block_independent_alpha():
+    result = build_independent_alpha(
+        ref=_ref(reference_current=100.08),
+        snap=_snap(),
+        fv=_fv(missing_features=["clob"]),
+        cfg=_cfg(),
+    )
+    assert result.ready
 
 
 def test_basis_adjusted_binance_is_used_only_when_official_current_missing():
@@ -165,12 +175,11 @@ def test_binance_pressure_only_shifts_terminal_mean_within_bounded_sigma():
     assert down.direction == "DOWN"
     assert up.p_up is not None and up.p_up > 0.58
     assert down.p_up is not None and down.p_up < 0.42
-    assert abs(up.binance_correction_bps or 0.0) <= pytest.approx(
-        0.35 * float(up.sigma_remaining_bps), rel=1e-6
-    )
+    assert up.sigma_remaining_bps is not None
+    assert abs(up.binance_correction_bps or 0.0) <= 0.35 * up.sigma_remaining_bps + 1e-9
 
 
-def test_non_5m_or_missing_features_fail_closed():
+def test_non_5m_or_required_binance_feature_missing_fails_closed():
     wrong_horizon = build_independent_alpha(
         ref=_ref(combo=_Combo("15m")),
         snap=_snap(),
@@ -180,11 +189,11 @@ def test_non_5m_or_missing_features_fail_closed():
     assert not wrong_horizon.ready
     assert wrong_horizon.reason == "HORIZON_NOT_5M"
 
-    no_features = build_independent_alpha(
+    missing_binance = build_independent_alpha(
         ref=_ref(),
         snap=_snap(),
-        fv=_fv(feature_ready=False),
+        fv=_fv(missing_features=["clob", "flow_5s"]),
         cfg=_cfg(),
     )
-    assert not no_features.ready
-    assert no_features.reason == "FEATURE_NOT_READY"
+    assert not missing_binance.ready
+    assert missing_binance.reason == "BINANCE_FEATURES_MISSING_FLOW_5S"
