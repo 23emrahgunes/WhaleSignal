@@ -20,6 +20,7 @@ def test_strict_deploy_profile_contains_fail_closed_contract():
     assert "PAPER_DEEP_VALUE_ENTRY_TTE_MAX_SEC': '75'" in text
     assert "PAPER_INDEPENDENT_DEADZONE_LOW': '0.33'" in text
     assert "PAPER_INDEPENDENT_DEADZONE_HIGH': '0.67'" in text
+    assert "PAPER_STRICT_MAX_FLIP_RATE': '0.68'" in text
     assert "PAPER_STRICT_STABILITY_SEC': '3.0'" in text
     assert "PAPER_DEEP_VALUE_MAX_BOOK_AGE_MS': '750'" in text
     assert "PAPER_DEEP_VALUE_MIN_DEPTH_MULTIPLE': '1.50'" in text

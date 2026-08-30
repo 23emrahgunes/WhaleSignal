@@ -15,7 +15,7 @@ This cohort is intentionally separate from earlier paper history.
 - Raw PTB distance must already be on the selected side.
 - Counter-direction Binance correction may not exceed 0.10 remaining sigma.
 - Volatility percentile < 0.92.
-- Flip rate <= 0.55.
+- Flip rate <= 0.68.
 - Volatility acceleration <= 1.80.
 - Direction must remain continuously stable for >=3 seconds with observation gaps <=1.5s.
 - Value layer is direction locked: only the alpha-selected side is eligible.

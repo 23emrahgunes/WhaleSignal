@@ -30,7 +30,7 @@ def _cfg(**overrides):
         paper_strict_min_abs_z=0.45,
         paper_strict_max_counter_sigma=0.10,
         paper_strict_max_vol_percentile=0.92,
-        paper_strict_max_flip_rate=0.55,
+        paper_strict_max_flip_rate=0.68,
         paper_strict_max_vol_accel=1.80,
     )
     values.update(overrides)
@@ -109,8 +109,13 @@ def test_strict_rejects_high_vol_flip_and_acceleration():
     assert not high_vol.ready
     assert high_vol.reason == "STRICT_HIGH_VOL_PERCENTILE"
 
+    flip_boundary = build_independent_alpha(
+        ref=_ref(), snap=_snap(), fv=_fv(flip_rate=0.68), cfg=_cfg()
+    )
+    assert flip_boundary.ready
+
     flip = build_independent_alpha(
-        ref=_ref(), snap=_snap(), fv=_fv(flip_rate=0.56), cfg=_cfg()
+        ref=_ref(), snap=_snap(), fv=_fv(flip_rate=0.69), cfg=_cfg()
     )
     assert not flip.ready
     assert flip.reason == "STRICT_FLIP_RATE"
