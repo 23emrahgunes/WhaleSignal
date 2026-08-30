@@ -3,6 +3,29 @@ set -Eeuo pipefail
 
 cd "$(dirname "$0")"
 
+# If STRICT was deployed before, neutralize only the master strict switch before
+# invoking the normal deploy. This keeps deploy_p25.sh idempotent and lets its own
+# assertions run against the repository-standard non-strict baseline first.
+if [[ -x ./.venv/bin/python ]]; then
+  ./.venv/bin/python - <<'PY'
+from pathlib import Path
+p = Path('.env')
+if p.exists():
+    lines = p.read_text(encoding='utf-8').splitlines()
+    out = []
+    seen = False
+    for line in lines:
+        if line.strip().startswith('PAPER_STRICT_ENTRY_ENABLED='):
+            out.append('PAPER_STRICT_ENTRY_ENABLED=false')
+            seen = True
+        else:
+            out.append(line)
+    if not seen:
+        out.append('PAPER_STRICT_ENTRY_ENABLED=false')
+    p.write_text('\n'.join(out).rstrip() + '\n', encoding='utf-8')
+PY
+fi
+
 # First run the normal P2.5 deployment so dependencies, schema, compile and the full
 # regression suite are validated with the repository-standard path.
 bash ./deploy_p25.sh
