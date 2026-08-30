@@ -67,7 +67,7 @@ wanted = {
     'PAPER_STRICT_MIN_ABS_Z': '0.45',
     'PAPER_STRICT_MAX_COUNTER_SIGMA': '0.10',
     'PAPER_STRICT_MAX_VOL_PERCENTILE': '0.92',
-    'PAPER_STRICT_MAX_FLIP_RATE': '0.55',
+    'PAPER_STRICT_MAX_FLIP_RATE': '0.68',
     'PAPER_STRICT_MAX_VOL_ACCEL': '1.80',
     'PAPER_STRICT_STABILITY_SEC': '3.0',
     'PAPER_STRICT_STABILITY_MAX_GAP_SEC': '1.5',
@@ -160,6 +160,7 @@ print('strict=', safety.get('paper_strict_entry_enabled'))
 print('entry_window=', strict.get('entry_tte_max_sec'), '->', strict.get('entry_tte_min_sec'))
 print('deadzone=', strict.get('deadzone_low'), strict.get('deadzone_high'))
 print('min_abs_z=', strict.get('min_abs_z'))
+print('max_flip_rate=', strict.get('max_flip_rate'))
 print('stability=', strict.get('stability_sec'))
 print('book_age=', strict.get('max_book_age_ms'))
 print('depth_multiple=', strict.get('min_depth_multiple'))
@@ -177,6 +178,7 @@ assert float(strict.get('deadzone_low')) == 0.33
 assert float(strict.get('deadzone_high')) == 0.67
 assert float(strict.get('min_abs_z')) == 0.45
 assert float(strict.get('max_counter_sigma')) == 0.10
+assert float(strict.get('max_flip_rate')) == 0.68
 assert float(strict.get('stability_sec')) == 3.0
 assert int(strict.get('max_book_age_ms')) == 750
 assert float(strict.get('min_depth_multiple')) == 1.5
@@ -189,4 +191,4 @@ assert live.get('armed') is False
 assert safety.get('execution_enabled') is False
 PY
 
-echo "STRICT V1 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_STRICT_5M_V1 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | stability=3s | ask=5-22c | book<=750ms | depth>=1.5x | LIVE=UNARMED"
+echo "STRICT V1 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_STRICT_5M_V1 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-22c | book<=750ms | depth>=1.5x | LIVE=UNARMED"
