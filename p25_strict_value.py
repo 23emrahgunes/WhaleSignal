@@ -1,9 +1,9 @@
-"""STRICT V1 value evaluator for the independent PTB+Binance paper cohort.
+"""Direction-locked value evaluator for the independent PTB+Binance paper cohort.
 
-Unlike the legacy dual-side deep-value experiment, this evaluator may only price the
-side selected by the independent alpha. It also requires a configurable liquidity
-buffer above the exact paper quantity. Polymarket pricing remains a value/fill input,
-never an alpha input.
+This evaluator is no longer a low-price/deep-value strategy. It may only price the
+side selected by the independent alpha and requires executable market price to leave
+an explicit probability edge. Polymarket pricing is therefore used only as a value
+and fill input, never as an alpha input.
 """
 from __future__ import annotations
 
@@ -12,6 +12,17 @@ from typing import Any
 
 from p25_deep_value import _candidate_for_side, _forecast_gate
 from p25_paper import PaperEntryDecision, PaperPolicy
+
+
+def _mapped_failure(reason: str | None) -> str:
+    raw = str(reason or "")
+    if raw == "WAITING_FOR_DIP":
+        return "WAITING_FOR_DIRECTIONAL_PRICE_EDGE"
+    if raw == "EDGE_BELOW_MINIMUM":
+        return "DIRECTIONAL_EDGE_BELOW_MINIMUM"
+    if raw == "VALUE_MULTIPLE_BELOW_MINIMUM":
+        return "DIRECTIONAL_VALUE_BELOW_MINIMUM"
+    return raw or "NO_DIRECTION_LOCKED_VALUE"
 
 
 def evaluate_strict_value_watch(
@@ -25,7 +36,7 @@ def evaluate_strict_value_watch(
 ) -> tuple[PaperEntryDecision | None, dict[str, Any]]:  # noqa: ANN001
     diag: dict[str, Any] = {
         "entry_mode": "DEEP_VALUE_WATCH",
-        "scan_mode": "DIRECTION_LOCKED_STRICT",
+        "scan_mode": "DIRECTION_LOCKED_EDGE_V2",
     }
     if not bool(getattr(cfg, "paper_deep_value_enabled", False)):
         diag["reason"] = "MODE_DISABLED"
@@ -54,8 +65,22 @@ def evaluate_strict_value_watch(
     selected_probability = (
         float(forecast["p_up"]) if side == "UP" else float(forecast["p_down"])
     )
-    diag["alpha_side"] = side
-    diag["selected_probability"] = selected_probability
+    min_edge = float(getattr(policy, "min_edge", 0.0) or 0.0)
+    slippage = max(0.0, float(getattr(policy, "slippage", 0.0) or 0.0))
+    absolute_max_ask = float(getattr(cfg, "paper_deep_value_max_ask", 0.75))
+    dynamic_max_ask = max(
+        0.0,
+        min(absolute_max_ask, selected_probability - min_edge - slippage),
+    )
+    diag.update(
+        {
+            "alpha_side": side,
+            "selected_probability": selected_probability,
+            "min_edge": min_edge,
+            "absolute_max_ask": absolute_max_ask,
+            "dynamic_max_ask": dynamic_max_ask,
+        }
+    )
 
     candidate, side_diag = _candidate_for_side(
         side=side,
@@ -67,14 +92,16 @@ def evaluate_strict_value_watch(
         now_ms=int(time.time() * 1000),
         available_bankroll_usdc=available_bankroll_usdc,
     )
+    raw_reason = side_diag.get("reason")
     diag.update(side_diag)
-    diag["candidate_reasons"] = {side: side_diag.get("reason")}
+    diag["candidate_raw_reason"] = raw_reason
+    diag["candidate_reasons"] = {side: raw_reason}
     diag["candidate_values"] = {side: side_diag.get("value_multiple")}
     diag["candidate_asks"] = {
         side: side_diag.get("entry_ask", side_diag.get("snap_ask"))
     }
     if candidate is None:
-        diag["reason"] = side_diag.get("reason") or "NO_DIRECTION_LOCKED_VALUE"
+        diag["reason"] = _mapped_failure(raw_reason)
         return None, diag
 
     min_depth_multiple = float(

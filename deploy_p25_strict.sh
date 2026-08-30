@@ -37,15 +37,19 @@ path = Path('.env')
 text = path.read_text(encoding='utf-8') if path.exists() else ''
 wanted = {
     'PAPER_ENTRY_MODE': 'DEEP_VALUE_WATCH',
-    'PAPER_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_STRICT_5M_V1',
+    'PAPER_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2',
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_MIN_CONFIDENCE': '0.34',
     'PAPER_MIN_AGREEMENT': '0.00',
-    'PAPER_MIN_EDGE': '0.30',
+    # Directional V2 buys the alpha-selected side when the executable fill still
+    # leaves at least 8 percentage points of independent probability edge.
+    'PAPER_MIN_EDGE': '0.08',
     'PAPER_ALLOWED_STATUSES': 'PROVISIONAL,VALIDATED',
     'PAPER_ALLOWED_GRADES': 'MEDIUM,HIGH',
+    # No more 5-22c deep-value restriction. Absolute ask cap is 75c; the effective
+    # cap is tighter because fill_price must also stay >=8 points below P(selected).
     'PAPER_DEEP_VALUE_MIN_ASK': '0.05',
-    'PAPER_DEEP_VALUE_MAX_ASK': '0.22',
+    'PAPER_DEEP_VALUE_MAX_ASK': '0.75',
     'PAPER_DEEP_VALUE_PREFILTER_BUFFER': '0.02',
     'PAPER_DEEP_VALUE_MIN_TTE_SEC': '5',
     'PAPER_DEEP_VALUE_ENTRY_TTE_MIN_SEC': '60',
@@ -54,7 +58,7 @@ wanted = {
     'PAPER_DEEP_VALUE_REQUIRE_DEPTH': 'true',
     'PAPER_DEEP_VALUE_MIN_DEPTH_MULTIPLE': '1.50',
     'PAPER_DEEP_VALUE_REQUIRE_FEE_SCHEDULE': 'true',
-    'PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '2.75',
+    'PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.12',
     'PAPER_DEEP_VALUE_HORIZONS': '5m',
     'PAPER_INDEPENDENT_ALPHA_ENABLED': 'true',
     'PAPER_INDEPENDENT_DEADZONE_LOW': '0.33',
@@ -71,12 +75,12 @@ wanted = {
     'PAPER_STRICT_MAX_VOL_ACCEL': '1.80',
     'PAPER_STRICT_STABILITY_SEC': '3.0',
     'PAPER_STRICT_STABILITY_MAX_GAP_SEC': '1.5',
-    # LIVE remains fail-closed after every deploy. If explicitly armed later it must
-    # consume exactly the same strict paper cohort.
+    # LIVE remains fail-closed after every deploy. Its legacy 25.5c hard price cap
+    # is intentionally unchanged, so V2 must be proven in paper before LIVE is widened.
     'P25_LIVE_FEATURE_ENABLED': 'false',
     'P25_LIVE_ARMED': 'false',
     'P25_LIVE_ARM_NONCE': '',
-    'P25_LIVE_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_STRICT_5M_V1',
+    'P25_LIVE_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2',
     'P25_LIVE_MAX_STAKE_USDC': '1.10',
     'P25_LIVE_MAX_PRICE_DRIFT_PCT': '0.10',
     'P25_LIVE_MAX_LIMIT_PRICE': '0.255',
@@ -103,7 +107,7 @@ path.write_text('\n'.join(out).rstrip() + '\n', encoding='utf-8')
 PY
 chmod 600 .env
 
-echo "=== RESTART P2.5 WITH STRICT V1 PROFILE ==="
+echo "=== RESTART P2.5 WITH DIRECTIONAL EDGE V2 PROFILE ==="
 pkill -f 'python.*p25_main.py' 2>/dev/null || true
 sleep 2
 
@@ -130,14 +134,14 @@ for i in $(seq 1 30); do
     break
   fi
   if ! kill -0 "$new_pid" 2>/dev/null; then
-    echo "ERROR: STRICT P2.5 process durdu" >&2
+    echo "ERROR: DIRECTIONAL V2 process durdu" >&2
     tail -n 180 engine.log >&2 || true
     exit 1
   fi
   sleep 1
 done
 if [[ "$code" != "200" ]]; then
-  echo "ERROR: STRICT /api/state HTTP=$code" >&2
+  echo "ERROR: DIRECTIONAL V2 /api/state HTTP=$code" >&2
   tail -n 180 engine.log >&2 || true
   exit 1
 fi
@@ -160,15 +164,17 @@ print('strict=', safety.get('paper_strict_entry_enabled'))
 print('entry_window=', strict.get('entry_tte_max_sec'), '->', strict.get('entry_tte_min_sec'))
 print('deadzone=', strict.get('deadzone_low'), strict.get('deadzone_high'))
 print('min_abs_z=', strict.get('min_abs_z'))
-print('max_flip_rate=', strict.get('max_flip_rate'))
 print('stability=', strict.get('stability_sec'))
 print('book_age=', strict.get('max_book_age_ms'))
 print('depth_multiple=', strict.get('min_depth_multiple'))
 print('ask=', deep.get('min_ask'), deep.get('max_ask'))
+print('min_edge=', policy.get('min_edge'))
+print('min_value=', deep.get('min_value_multiple'))
 print('live_armed=', live.get('armed'))
+print('live_price_cap=', live.get('max_limit_price'))
 print('execution=', safety.get('execution_enabled'))
 
-assert policy.get('strategy_version') == 'INDEP_PTB_BINANCE_STRICT_5M_V1'
+assert policy.get('strategy_version') == 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2'
 assert safety.get('paper_independent_alpha_enabled') is True
 assert safety.get('paper_independent_alpha_source') == 'INDEPENDENT_PTB_BINANCE_STRICT_V1'
 assert safety.get('paper_strict_entry_enabled') is True
@@ -178,17 +184,18 @@ assert float(strict.get('deadzone_low')) == 0.33
 assert float(strict.get('deadzone_high')) == 0.67
 assert float(strict.get('min_abs_z')) == 0.45
 assert float(strict.get('max_counter_sigma')) == 0.10
-assert float(strict.get('max_flip_rate')) == 0.68
 assert float(strict.get('stability_sec')) == 3.0
 assert int(strict.get('max_book_age_ms')) == 750
 assert float(strict.get('min_depth_multiple')) == 1.5
 assert strict.get('require_official_current') is True
 assert strict.get('direction_lock') is True
 assert float(deep.get('min_ask')) == 0.05
-assert float(deep.get('max_ask')) == 0.22
+assert float(deep.get('max_ask')) == 0.75
 assert float(deep.get('min_depth_multiple')) == 1.5
+assert abs(float(policy.get('min_edge')) - 0.08) < 1e-9
+assert abs(float(deep.get('min_value_multiple')) - 1.12) < 1e-9
 assert live.get('armed') is False
 assert safety.get('execution_enabled') is False
 PY
 
-echo "STRICT V1 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_STRICT_5M_V1 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-22c | book<=750ms | depth>=1.5x | LIVE=UNARMED"
+echo "DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | LIVE=UNARMED+25.5c_cap"
