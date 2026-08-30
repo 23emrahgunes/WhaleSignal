@@ -33,7 +33,7 @@ class DeepValuePaperSettings(PaperSettings):
         alias="PAPER_DEEP_VALUE_MIN_TTE_SEC",
     )
     # Deep-value may watch the whole market, but the 5m strategy is only allowed
-    # to CREATE a paper entry (and therefore trigger XRP LIVE) inside T-90..T-60.
+    # to CREATE a paper entry inside the configured terminal window.
     paper_deep_value_entry_tte_min_sec: float = Field(
         default=60.0,
         alias="PAPER_DEEP_VALUE_ENTRY_TTE_MIN_SEC",
@@ -53,6 +53,10 @@ class DeepValuePaperSettings(PaperSettings):
     paper_deep_value_require_depth: bool = Field(
         default=True,
         alias="PAPER_DEEP_VALUE_REQUIRE_DEPTH",
+    )
+    paper_deep_value_min_depth_multiple: float = Field(
+        default=1.0,
+        alias="PAPER_DEEP_VALUE_MIN_DEPTH_MULTIPLE",
     )
     paper_deep_value_require_fee_schedule: bool = Field(
         default=True,
@@ -93,6 +97,52 @@ class DeepValuePaperSettings(PaperSettings):
     paper_independent_max_basis_open_gap_ms: float = Field(
         default=5000.0,
         alias="PAPER_INDEPENDENT_MAX_BASIS_OPEN_GAP_MS",
+    )
+
+    # ----- STRICT V1 entry contract (off by default for backwards compatibility) -----
+    paper_strict_entry_enabled: bool = Field(
+        default=False,
+        alias="PAPER_STRICT_ENTRY_ENABLED",
+    )
+    paper_strict_direction_lock: bool = Field(
+        default=True,
+        alias="PAPER_STRICT_DIRECTION_LOCK",
+    )
+    paper_strict_require_official_current: bool = Field(
+        default=True,
+        alias="PAPER_STRICT_REQUIRE_OFFICIAL_CURRENT",
+    )
+    paper_strict_require_ptb_side_alignment: bool = Field(
+        default=True,
+        alias="PAPER_STRICT_REQUIRE_PTB_SIDE_ALIGNMENT",
+    )
+    paper_strict_min_abs_z: float = Field(
+        default=0.45,
+        alias="PAPER_STRICT_MIN_ABS_Z",
+    )
+    paper_strict_max_counter_sigma: float = Field(
+        default=0.10,
+        alias="PAPER_STRICT_MAX_COUNTER_SIGMA",
+    )
+    paper_strict_max_vol_percentile: float = Field(
+        default=0.92,
+        alias="PAPER_STRICT_MAX_VOL_PERCENTILE",
+    )
+    paper_strict_max_flip_rate: float = Field(
+        default=0.55,
+        alias="PAPER_STRICT_MAX_FLIP_RATE",
+    )
+    paper_strict_max_vol_accel: float = Field(
+        default=1.80,
+        alias="PAPER_STRICT_MAX_VOL_ACCEL",
+    )
+    paper_strict_stability_sec: float = Field(
+        default=3.0,
+        alias="PAPER_STRICT_STABILITY_SEC",
+    )
+    paper_strict_stability_max_gap_sec: float = Field(
+        default=1.5,
+        alias="PAPER_STRICT_STABILITY_MAX_GAP_SEC",
     )
 
     # ----- Guarded directional LIVE pilot: disabled + unarmed by default -----
@@ -197,6 +247,8 @@ class DeepValuePaperSettings(PaperSettings):
             )
         if self.paper_deep_value_max_book_age_ms < 100:
             raise SystemExit("FATAL CONFIG ERROR: deep-value book age limiti en az 100ms olmali.")
+        if self.paper_deep_value_min_depth_multiple < 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: depth multiple en az 1.0 olmali.")
         if self.paper_deep_value_min_value_multiple < 1.0:
             raise SystemExit("FATAL CONFIG ERROR: deep-value value multiple en az 1.0 olmali.")
         allowed_horizons = self.paper_deep_value_horizons()
@@ -217,6 +269,26 @@ class DeepValuePaperSettings(PaperSettings):
             raise SystemExit("FATAL CONFIG ERROR: max basis bps pozitif olmali.")
         if self.paper_independent_max_basis_open_gap_ms <= 0:
             raise SystemExit("FATAL CONFIG ERROR: basis open gap pozitif olmali.")
+
+        if self.paper_strict_min_abs_z < 0:
+            raise SystemExit("FATAL CONFIG ERROR: strict min |z| negatif olamaz.")
+        if not 0.0 <= self.paper_strict_max_counter_sigma <= 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: strict counter-sigma 0..1 arasinda olmali.")
+        if not 0.0 < self.paper_strict_max_vol_percentile <= 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: strict vol percentile 0..1 arasinda olmali.")
+        if not 0.0 <= self.paper_strict_max_flip_rate <= 1.0:
+            raise SystemExit("FATAL CONFIG ERROR: strict flip rate 0..1 arasinda olmali.")
+        if self.paper_strict_max_vol_accel <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: strict vol accel pozitif olmali.")
+        if self.paper_strict_stability_sec < 0:
+            raise SystemExit("FATAL CONFIG ERROR: strict stability negatif olamaz.")
+        if self.paper_strict_stability_max_gap_sec <= 0:
+            raise SystemExit("FATAL CONFIG ERROR: strict stability max gap pozitif olmali.")
+        if self.paper_strict_entry_enabled:
+            if not self.paper_independent_alpha_enabled:
+                raise SystemExit("FATAL CONFIG ERROR: STRICT V1 independent alpha gerektirir.")
+            if not self.paper_strict_direction_lock:
+                raise SystemExit("FATAL CONFIG ERROR: STRICT V1 direction-lock kapatilamaz.")
 
         # Validate the LIVE envelope even while unarmed, so the UI cannot arm a
         # malformed runtime profile that bypassed startup checks.

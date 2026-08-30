@@ -6,12 +6,15 @@ Binance is used only to estimate the incremental move over the remaining seconds
 If the current official reference is unavailable, a basis-adjusted Binance proxy is
 allowed only when the opening basis is known and sane.
 
-This module does not submit orders and does not read Polymarket CLOB prices.
+STRICT V1 is an optional fail-closed quality envelope layered on top of the same
+probability. It can require a fresh official current reference, a wider probability
+dead-zone, PTB-side alignment, bounded counter-pressure and conservative volatility
+filters. This module does not submit orders and does not read Polymarket CLOB prices.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -67,7 +70,11 @@ def _remaining_sigma_bps(fv, tte_sec: float) -> float | None:  # noqa: ANN001
     return max(1e-6, remaining * 10000.0)
 
 
-def _binance_pressure(fv, sigma_remaining_bps: float, max_sigma_shift: float) -> tuple[float, float, float]:  # noqa: ANN001,E501
+def _binance_pressure(
+    fv,
+    sigma_remaining_bps: float,
+    max_sigma_shift: float,
+) -> tuple[float, float, float]:  # noqa: ANN001
     """Return bounded expected-move correction and its momentum/flow sub-scores."""
     r5 = _ret_bps(fv, 5000)
     r15 = _ret_bps(fv, 15000)
@@ -109,6 +116,11 @@ class IndependentAlpha:
     z_terminal: float | None
     momentum_score: float | None
     flow_score: float | None
+    strict_entry: bool = False
+    vol_percentile: float | None = None
+    flip_rate: float | None = None
+    vol_accel: float | None = None
+    counter_sigma: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         def rounded(value: float | None, digits: int = 6):
@@ -133,14 +145,30 @@ class IndependentAlpha:
             "z_terminal": rounded(self.z_terminal, 4),
             "momentum_score": rounded(self.momentum_score, 4),
             "flow_score": rounded(self.flow_score, 4),
+            "strict_entry": self.strict_entry,
+            "vol_percentile": rounded(self.vol_percentile, 4),
+            "flip_rate": rounded(self.flip_rate, 4),
+            "vol_accel": rounded(self.vol_accel, 4),
+            "counter_sigma": rounded(self.counter_sigma, 4),
         }
 
 
-def _not_ready(reason: str, *, official_ptb: float | None = None) -> IndependentAlpha:
+def _source(cfg) -> str:  # noqa: ANN001
+    if bool(getattr(cfg, "paper_strict_entry_enabled", False)):
+        return "INDEPENDENT_PTB_BINANCE_STRICT_V1"
+    return "INDEPENDENT_PTB_BINANCE_V1"
+
+
+def _not_ready(
+    reason: str,
+    *,
+    cfg=None,  # noqa: ANN001
+    official_ptb: float | None = None,
+) -> IndependentAlpha:
     return IndependentAlpha(
         ready=False,
         reason=reason,
-        source="INDEPENDENT_PTB_BINANCE_V1",
+        source=_source(cfg) if cfg is not None else "INDEPENDENT_PTB_BINANCE_V1",
         direction="ABSTAIN",
         p_up=None,
         confidence=0.0,
@@ -156,35 +184,83 @@ def _not_ready(reason: str, *, official_ptb: float | None = None) -> Independent
         z_terminal=None,
         momentum_score=None,
         flow_score=None,
+        strict_entry=bool(getattr(cfg, "paper_strict_entry_enabled", False)) if cfg else False,
     )
 
 
-def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa: ANN001
-    """Build a 5m independent terminal-above-PTB probability.
+def _strict_rejection(alpha: IndependentAlpha, fv, cfg) -> str | None:  # noqa: ANN001
+    if not bool(getattr(cfg, "paper_strict_entry_enabled", False)):
+        return None
 
-    Polymarket up/down prices are intentionally never referenced here. Readiness is
-    based only on the Binance features this alpha actually consumes; the generic
-    FeatureVector.feature_ready flag is deliberately NOT used because that flag also
-    requires Polymarket CLOB availability.
-    """
+    if bool(getattr(cfg, "paper_strict_require_official_current", True)):
+        if alpha.anchor_source != "OFFICIAL_CURRENT":
+            return "STRICT_OFFICIAL_CURRENT_REQUIRED"
+
+    vol_pct = float(getattr(fv, "vol_percentile", 0.5) or 0.0)
+    flip_rate = float(getattr(fv, "flip_rate", 0.0) or 0.0)
+    vol_accel = float(getattr(fv, "vol_accel", 0.0) or 0.0)
+    if vol_pct >= float(getattr(cfg, "paper_strict_max_vol_percentile", 0.92)):
+        return "STRICT_HIGH_VOL_PERCENTILE"
+    if flip_rate > float(getattr(cfg, "paper_strict_max_flip_rate", 0.55)):
+        return "STRICT_FLIP_RATE"
+    if vol_accel > float(getattr(cfg, "paper_strict_max_vol_accel", 1.80)):
+        return "STRICT_VOL_ACCEL"
+
+    if alpha.direction == "NEUTRAL":
+        return "DEADZONE_NEUTRAL"
+    if alpha.z_terminal is None:
+        return "STRICT_Z_MISSING"
+    if abs(alpha.z_terminal) + 1e-12 < float(
+        getattr(cfg, "paper_strict_min_abs_z", 0.45)
+    ):
+        return "STRICT_Z_BELOW_MINIMUM"
+
+    if bool(getattr(cfg, "paper_strict_require_ptb_side_alignment", True)):
+        if alpha.distance_bps is None:
+            return "STRICT_PTB_DISTANCE_MISSING"
+        if alpha.direction == "UP" and alpha.distance_bps <= 0:
+            return "STRICT_PTB_SIDE_MISMATCH"
+        if alpha.direction == "DOWN" and alpha.distance_bps >= 0:
+            return "STRICT_PTB_SIDE_MISMATCH"
+
+    if (
+        alpha.distance_bps is not None
+        and alpha.binance_correction_bps is not None
+        and alpha.sigma_remaining_bps is not None
+        and alpha.sigma_remaining_bps > 0
+        and alpha.distance_bps * alpha.binance_correction_bps < 0
+    ):
+        counter_sigma = abs(alpha.binance_correction_bps) / alpha.sigma_remaining_bps
+        if counter_sigma > float(
+            getattr(cfg, "paper_strict_max_counter_sigma", 0.10)
+        ) + 1e-12:
+            return "STRICT_COUNTER_PRESSURE"
+    return None
+
+
+def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa: ANN001
+    """Build a 5m independent terminal-above-PTB probability."""
     if str(ref.combo.horizon.value).lower() != "5m":
-        return _not_ready("HORIZON_NOT_5M")
+        return _not_ready("HORIZON_NOT_5M", cfg=cfg)
     if fv is None:
-        return _not_ready("FEATURES_MISSING")
+        return _not_ready("FEATURES_MISSING", cfg=cfg)
     missing = set(getattr(fv, "missing_features", []) or [])
     required = {"binance_book", "ret_5s", "ret_60s", "flow_5s", "rv_60s"}
     blocking = sorted(missing.intersection(required))
     if blocking:
-        return _not_ready("BINANCE_FEATURES_MISSING_" + "_".join(blocking).upper())
+        return _not_ready(
+            "BINANCE_FEATURES_MISSING_" + "_".join(blocking).upper(),
+            cfg=cfg,
+        )
 
     tte_raw = snap.tte_sec if snap.tte_sec is not None else snap.seconds_remaining
     tte = _safe_float(tte_raw)
     if tte is None or tte <= 0:
-        return _not_ready("TTE_INVALID")
+        return _not_ready("TTE_INVALID", cfg=cfg)
 
     official_ptb = _safe_float(getattr(ref, "official_reference_open", None))
     if official_ptb is None or official_ptb <= 0:
-        return _not_ready("OFFICIAL_PTB_MISSING")
+        return _not_ready("OFFICIAL_PTB_MISSING", cfg=cfg)
 
     current: float | None = None
     anchor_source: str | None = None
@@ -202,6 +278,14 @@ def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa:
         current = official_current
         anchor_source = "OFFICIAL_CURRENT"
     else:
+        if bool(getattr(cfg, "paper_strict_entry_enabled", False)) and bool(
+            getattr(cfg, "paper_strict_require_official_current", True)
+        ):
+            return _not_ready(
+                "STRICT_OFFICIAL_CURRENT_REQUIRED",
+                cfg=cfg,
+                official_ptb=official_ptb,
+            )
         spot = _safe_float(getattr(snap, "spot_price", None))
         spot_age_ms = _safe_float(getattr(snap, "spot_age_ms", None))
         proxy_open = _safe_float(getattr(ref, "proxy_reference_open", None))
@@ -211,23 +295,35 @@ def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa:
         max_gap_ms = float(getattr(cfg, "paper_independent_max_basis_open_gap_ms", 5000.0))
         max_basis_bps = float(getattr(cfg, "paper_independent_max_basis_bps", 50.0))
         if spot is None or spot <= 0 or spot_age_ms is None or spot_age_ms > max_spot_age_ms:
-            return _not_ready("CURRENT_REFERENCE_AND_FRESH_SPOT_MISSING", official_ptb=official_ptb)
+            return _not_ready(
+                "CURRENT_REFERENCE_AND_FRESH_SPOT_MISSING",
+                cfg=cfg,
+                official_ptb=official_ptb,
+            )
         if proxy_open is None or proxy_open <= 0:
-            return _not_ready("PROXY_OPEN_MISSING", official_ptb=official_ptb)
+            return _not_ready("PROXY_OPEN_MISSING", cfg=cfg, official_ptb=official_ptb)
         if official_open_time is None or proxy_open_time is None:
-            return _not_ready("BASIS_OPEN_TIME_MISSING", official_ptb=official_ptb)
+            return _not_ready(
+                "BASIS_OPEN_TIME_MISSING",
+                cfg=cfg,
+                official_ptb=official_ptb,
+            )
         open_gap_ms = abs(official_open_time - proxy_open_time) * 1000.0
         if open_gap_ms > max_gap_ms:
-            return _not_ready("BASIS_OPEN_TIME_GAP", official_ptb=official_ptb)
+            return _not_ready(
+                "BASIS_OPEN_TIME_GAP",
+                cfg=cfg,
+                official_ptb=official_ptb,
+            )
         basis_bps = 10000.0 * math.log(proxy_open / official_ptb)
         if abs(basis_bps) > max_basis_bps:
-            return _not_ready("BASIS_TOO_LARGE", official_ptb=official_ptb)
+            return _not_ready("BASIS_TOO_LARGE", cfg=cfg, official_ptb=official_ptb)
         current = spot * (official_ptb / proxy_open)
         anchor_source = "BINANCE_BASIS_ADJUSTED"
 
     sigma_remaining_bps = _remaining_sigma_bps(fv, tte)
     if sigma_remaining_bps is None or sigma_remaining_bps <= 0:
-        return _not_ready("REMAINING_VOL_MISSING", official_ptb=official_ptb)
+        return _not_ready("REMAINING_VOL_MISSING", cfg=cfg, official_ptb=official_ptb)
 
     distance_bps = 10000.0 * math.log(current / official_ptb)
     max_sigma_shift = float(getattr(cfg, "paper_independent_binance_max_sigma_shift", 0.35))
@@ -242,9 +338,9 @@ def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa:
 
     low = float(getattr(cfg, "paper_independent_deadzone_low", 0.42))
     high = float(getattr(cfg, "paper_independent_deadzone_high", 0.58))
-    if p_up < low:
+    if p_up <= low:
         direction = "DOWN"
-    elif p_up > high:
+    elif p_up >= high:
         direction = "UP"
     else:
         direction = "NEUTRAL"
@@ -257,10 +353,18 @@ def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa:
     else:
         grade = "LOW"
 
-    return IndependentAlpha(
+    vol_pct = float(getattr(fv, "vol_percentile", 0.5) or 0.0)
+    flip_rate = float(getattr(fv, "flip_rate", 0.0) or 0.0)
+    vol_accel = float(getattr(fv, "vol_accel", 0.0) or 0.0)
+    counter_sigma = (
+        abs(correction_bps) / sigma_remaining_bps
+        if distance_bps * correction_bps < 0 and sigma_remaining_bps > 0
+        else 0.0
+    )
+    alpha = IndependentAlpha(
         ready=True,
         reason="OK" if direction != "NEUTRAL" else "DEADZONE_NEUTRAL",
-        source="INDEPENDENT_PTB_BINANCE_V1",
+        source=_source(cfg),
         direction=direction,
         p_up=p_up,
         confidence=confidence,
@@ -276,4 +380,13 @@ def build_independent_alpha(*, ref, snap, fv, cfg) -> IndependentAlpha:  # noqa:
         z_terminal=z_terminal,
         momentum_score=momentum_score,
         flow_score=flow_score,
+        strict_entry=bool(getattr(cfg, "paper_strict_entry_enabled", False)),
+        vol_percentile=vol_pct,
+        flip_rate=flip_rate,
+        vol_accel=vol_accel,
+        counter_sigma=counter_sigma,
     )
+    strict_reason = _strict_rejection(alpha, fv, cfg)
+    if strict_reason is not None:
+        return replace(alpha, ready=False, reason=strict_reason)
+    return alpha

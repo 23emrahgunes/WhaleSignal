@@ -2,7 +2,7 @@
 
 Only qualifying paper entries are persisted. Normal ticks above the configured dip
 threshold are deliberately not written, so they cannot consume the one-shot market
-entry before a later 10c/5c touch. Research forecasts continue to be recorded at the
+entry before a later touch. Research forecasts continue to be recorded at the
 normal checkpoints.
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ import logging
 from p25_deep_value import evaluate_deep_value_watch
 from p25_reconciling_recorder import P25ReconcilingPaperRecorder
 from p25_research_recorder import P25ResearchRecorder
+from p25_strict_value import evaluate_strict_value_watch
 
 log = logging.getLogger("direction_engine.paper.deep_value")
 
@@ -68,8 +69,8 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             return False
 
         # Paper scope is intentionally separate from the P2.5 discovery scope. P2.5
-        # may keep 5m/15m/1h markets alive for forecasting and for P26/P3 registry
-        # consumers while DEEP_VALUE_WATCH admits only the configured paper horizons.
+        # may keep 5m/15m/1h markets alive for forecasting while paper admits only
+        # the configured horizons.
         horizon = str(ref.combo.horizon.value).lower()
         allowed_horizons = self.deep_value_cfg.paper_deep_value_horizons()
         if horizon not in allowed_horizons:
@@ -90,7 +91,12 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             )
             return False
 
-        decision, diag = evaluate_deep_value_watch(
+        evaluator = (
+            evaluate_strict_value_watch
+            if bool(getattr(self.deep_value_cfg, "paper_strict_entry_enabled", False))
+            else evaluate_deep_value_watch
+        )
+        decision, diag = evaluator(
             ref=ref,
             snap=snap,
             trace=trace,
@@ -101,6 +107,10 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
         trace["paper_deep_value_watch_reason"] = diag.get("reason")
         trace["paper_deep_value_price_band"] = diag.get("price_band")
         trace["paper_deep_value_depth_age_ms"] = diag.get("depth_age_ms")
+        trace["paper_deep_value_scan_mode"] = diag.get("scan_mode")
+        trace["paper_deep_value_depth_min_multiple"] = diag.get(
+            "depth_min_multiple"
+        )
         if decision is None or not decision.eligible:
             return False
 
@@ -172,10 +182,11 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
             }
         )
         log.info(
-            "DEEP VALUE PAPER OPEN %s %s band=%s ask=%.4f fill=%.4f "
+            "PAPER OPEN %s %s scan=%s band=%s ask=%.4f fill=%.4f "
             "stake=%.2f shares=%.4f depth=%.2f age=%sms edge=%+.4f value=%.2fx fee=%.5f",
             ref.combo.key,
             decision.side,
+            diag.get("scan_mode"),
             diag.get("price_band"),
             float(decision.entry_ask or 0.0),
             float(decision.fill_price or 0.0),
@@ -207,12 +218,24 @@ class P25DeepValuePaperRecorder(P25ReconcilingPaperRecorder):
         payload["entry_mode"] = str(self.deep_value_cfg.paper_entry_mode).upper()
         payload["deep_value"] = {
             "enabled": bool(self.deep_value_cfg.paper_deep_value_enabled),
+            "strict_entry": bool(
+                getattr(self.deep_value_cfg, "paper_strict_entry_enabled", False)
+            ),
             "min_ask": float(self.deep_value_cfg.paper_deep_value_min_ask),
             "max_ask": float(self.deep_value_cfg.paper_deep_value_max_ask),
             "stake_usdc": float(self.paper_policy.stake_usdc),
             "min_tte_sec": float(self.deep_value_cfg.paper_deep_value_min_tte_sec),
+            "entry_tte_min_sec": float(
+                self.deep_value_cfg.paper_deep_value_entry_tte_min_sec
+            ),
+            "entry_tte_max_sec": float(
+                self.deep_value_cfg.paper_deep_value_entry_tte_max_sec
+            ),
             "max_book_age_ms": int(self.deep_value_cfg.paper_deep_value_max_book_age_ms),
             "require_depth": bool(self.deep_value_cfg.paper_deep_value_require_depth),
+            "min_depth_multiple": float(
+                self.deep_value_cfg.paper_deep_value_min_depth_multiple
+            ),
             "require_fee_schedule": bool(
                 self.deep_value_cfg.paper_deep_value_require_fee_schedule
             ),
