@@ -1,9 +1,9 @@
 """P2.5 Direction Engine service entrypoint.
 
-The default behavior remains SHADOW + paper. A guarded BTC/ETH/SOL/XRP 5m LIVE
-controller is always attached downstream of the existing paper trigger. Constructing
-the controller performs no network/order action; DRY and LIVE are explicit operator
-controls from the web UI.
+The default behavior remains SHADOW + paper. The repository-standard baseline keeps
+its legacy XRP 5m pilot so deploy_p25.sh can complete its historical smoke contract.
+The Directional Edge V2 profile attaches the guarded BTC/ETH/SOL/XRP 5m controller;
+constructing either object performs no network/order action.
 """
 from __future__ import annotations
 
@@ -33,9 +33,11 @@ from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
 from p25_all5m_web import run_web
 from p25_live_all5m import All5mLiveController
+from p25_live_xrp import XRP5mLivePilot
 from reference import ReferenceRouter
 
 log = logging.getLogger("direction_engine.p25_main")
+_DIRECTIONAL_ALL5M_STRATEGY = "INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2"
 
 
 def _state_cache_ttl_sec() -> float:
@@ -44,6 +46,13 @@ def _state_cache_ttl_sec() -> float:
         return max(0.5, float(raw))
     except ValueError:
         return 5.0
+
+
+def _build_live_controller(cfg):  # noqa: ANN001,ANN201
+    """Select LIVE controller from the active paper cohort, without network I/O."""
+    if str(cfg.paper_strategy_version) == _DIRECTIONAL_ALL5M_STRATEGY:
+        return All5mLiveController(cfg), "ALL5M_DRY_FIRST"
+    return XRP5mLivePilot(cfg), "XRP5M_LEGACY_BASELINE"
 
 
 async def run() -> None:
@@ -60,15 +69,6 @@ async def run() -> None:
         "training=%s calibration=%s forecasts=%s paper=%s entry_mode=%s",
         len(combos), symbols, cfg.phase, cfg.training_active, cfg.calibration_active,
         cfg.forecast_recording_active, cfg.paper_trading_enabled, cfg.paper_entry_mode,
-    )
-    log.info(
-        "ALL5m LIVE controller attached scope=BTC/ETH/SOL/XRP:5m feature=%s "
-        "armed=%s max_notional=%.2f drift=%.0f%% hard_price_cap=%.3f DRY_REQUIRED",
-        cfg.p25_live_feature_enabled,
-        cfg.p25_live_armed,
-        cfg.p25_live_max_stake_usdc,
-        cfg.p25_live_max_price_drift_pct * 100.0,
-        cfg.p25_live_max_limit_price,
     )
 
     stop = asyncio.Event()
@@ -100,9 +100,19 @@ async def run() -> None:
         engine.attach_session(session)
         discovery.on_resolved(engine.on_market_resolved)
 
-        # Backwards-compatible engine attachment name; the object itself is the new
-        # persistent all-5m controller. No credentials/network are touched here.
-        engine.attach_xrp5m_live_pilot(All5mLiveController(cfg))
+        live_controller, live_profile = _build_live_controller(cfg)
+        engine.attach_xrp5m_live_pilot(live_controller)
+        log.info(
+            "LIVE controller=%s strategy=%s feature=%s armed=%s max_notional=%.2f "
+            "drift=%.0f%% hard_price_cap=%.3f",
+            live_profile,
+            cfg.paper_strategy_version,
+            cfg.p25_live_feature_enabled,
+            cfg.p25_live_armed,
+            cfg.p25_live_max_stake_usdc,
+            cfg.p25_live_max_price_drift_pct * 100.0,
+            cfg.p25_live_max_limit_price,
+        )
 
         paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
         engine.attach_paper_reconciler(paper_reconciler)
