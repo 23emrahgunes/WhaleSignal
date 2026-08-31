@@ -2,11 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from p25_live_all5m import All5mLiveTrigger
-from p25_live_all5m_market import (
-    All5mMarketBuyController,
-    _exception_order_id,
-    _is_authoritative_fok_no_fill,
-)
+from p25_live_all5m_market import All5mMarketBuyController
 
 
 class _Level:
@@ -65,52 +61,13 @@ def _trigger(condition="cond-sol"):
     )
 
 
-def _prepared_controller(tmp_path, monkeypatch, *, conditional_after=0.0):
-    book = _Book([_Level("0.50", "10")], min_order_size="5")
+def _controller(tmp_path, monkeypatch, book):
     client = _Client(book)
     controller = All5mMarketBuyController(
         _cfg(tmp_path),
         client_factory=lambda **_kwargs: client,
         secret_reader=lambda: None,
     )
-    monkeypatch.setattr(
-        controller,
-        "_geoblock",
-        lambda: {"blocked": False, "country": "SE", "region": None},
-    )
-    monkeypatch.setattr(controller, "_collateral_balance", lambda _client: 19.10)
-    values = iter([0.0, conditional_after])
-    monkeypatch.setattr(
-        controller,
-        "_conditional_balance",
-        lambda _client, _token, refresh: next(values),
-    )
-    return controller, client
-
-
-def test_market_quote_is_usdc_based_and_does_not_apply_share_minimum():
-    client = _Client(_Book([_Level("0.50", "10")], min_order_size="5"))
-    price, shares, capacity = All5mMarketBuyController._fresh_market_quote_for_usdc(
-        client,
-        token_id="sol-down",
-        amount_usdc=1.0,
-        max_live_limit_price=0.5555,
-    )
-    assert price == 0.50
-    assert abs(shares - 2.0) < 1e-9
-    assert abs(capacity - 5.0) < 1e-9
-
-
-def test_submit_uses_exact_one_usdc_market_buy_even_below_book_share_minimum(tmp_path, monkeypatch):
-    book = _Book([_Level("0.50", "10")], min_order_size="5")
-    client = _Client(book)
-    cfg = _cfg(tmp_path)
-    controller = All5mMarketBuyController(
-        cfg,
-        client_factory=lambda **_kwargs: client,
-        secret_reader=lambda: None,
-    )
-
     monkeypatch.setattr(
         controller,
         "_geoblock",
@@ -122,7 +79,30 @@ def test_submit_uses_exact_one_usdc_market_buy_even_below_book_share_minimum(tmp
         "_conditional_balance",
         lambda _client, _token, refresh: 0.0,
     )
+    return controller, client
 
+
+def test_market_quote_allows_partial_usdc_capacity_and_ignores_share_minimum():
+    # Only $0.60 protected liquidity exists, while book metadata says 5-share minimum.
+    # FAK is allowed to take the available portion and cancel the rest.
+    client = _Client(_Book([_Level("0.50", "1.2")], min_order_size="5"))
+    price, shares, capacity = All5mMarketBuyController._fresh_market_quote_for_usdc(
+        client,
+        token_id="sol-down",
+        amount_usdc=1.0,
+        max_live_limit_price=0.5555,
+    )
+    assert price == 0.50
+    assert abs(shares - 1.2) < 1e-9
+    assert abs(capacity - 0.60) < 1e-9
+
+
+def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "1.2")], min_order_size="5"),
+    )
     posted = {}
 
     def fake_post(_client, *, token_id, amount_usdc, protected_price):
@@ -131,93 +111,96 @@ def test_submit_uses_exact_one_usdc_market_buy_even_below_book_share_minimum(tmp
             amount_usdc=amount_usdc,
             protected_price=protected_price,
         )
-        return {"success": True, "orderID": "market-order-1", "status": "matched"}
+        return {"success": True, "orderID": "fak-partial-1", "status": "matched"}
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
+    # Full $1 at 50c is ~2 shares. One share is a real, verified partial fill.
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 1.0)
+
+    controller._submit_one(_trigger("cond-partial"))
+
+    assert posted == {
+        "token_id": "sol-down",
+        "amount_usdc": 1.0,
+        "protected_price": 0.50,
+    }
+    status = controller.status()
+    assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
+    assert status["partial_fill_ok"] is True
+    assert status["min_fak_depth_usdc"] == 0.25
+    assert status["armed"] is True
+    assert status["halted"] is False
+    assert status["last_reason"] == "PARTIAL_FILL_VERIFIED_SOL:5m"
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "PARTIAL_FILL_VERIFIED"
+    assert latest["order_id"] == "fak-partial-1"
+    assert abs(float(latest["filled_shares"]) - 1.0) < 1e-9
+
+
+def test_fak_full_fill_is_verified(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "10")], min_order_size="5"),
+    )
     monkeypatch.setattr(
         controller,
-        "_wait_for_fill_delta",
-        lambda *_args, **_kwargs: 2.0,
+        "_post_market_buy",
+        lambda *_a, **_k: {"success": True, "orderID": "fak-full", "status": "matched"},
     )
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 2.0)
 
-    controller._submit_one(_trigger())
-
-    assert posted["token_id"] == "sol-down"
-    assert posted["amount_usdc"] == 1.0
-    assert posted["protected_price"] == 0.50
-    assert controller.status()["last_reason"] == "FILLED_VERIFIED_SOL:5m"
+    controller._submit_one(_trigger("cond-full"))
     latest = controller.ledger.latest()
     assert latest is not None
     assert latest["status"] == "FILLED_VERIFIED"
-    assert latest["order_id"] == "market-order-1"
-    assert abs(float(latest["filled_shares"]) - 2.0) < 1e-9
+    assert controller.status()["halted"] is False
 
 
-def test_market_buy_still_fails_closed_when_one_dollar_cannot_fill_under_price_cap(tmp_path, monkeypatch):
-    client = _Client(_Book([_Level("0.50", "0.4")], min_order_size="5"))
-    controller = All5mMarketBuyController(
-        _cfg(tmp_path),
-        client_factory=lambda **_kwargs: client,
-        secret_reader=lambda: None,
+def test_fak_zero_fill_is_normal_and_session_continues(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "1.2")], min_order_size="5"),
     )
     monkeypatch.setattr(
         controller,
-        "_geoblock",
-        lambda: {"blocked": False, "country": "SE", "region": None},
+        "_post_market_buy",
+        lambda *_a, **_k: {"success": True, "orderID": "fak-zero", "status": "unmatched"},
+    )
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.0)
+
+    controller._submit_one(_trigger("cond-zero"))
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "NO_FILL_VERIFIED"
+    assert controller.status()["armed"] is True
+    assert controller.status()["halted"] is False
+
+
+def test_fak_does_not_submit_below_quarter_dollar_protected_depth(tmp_path, monkeypatch):
+    # $0.20 of allowed liquidity: below the $0.25 pre-submit floor.
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "0.4")], min_order_size="5"),
     )
     posted = {"count": 0}
 
     def fake_post(*_args, **_kwargs):
         posted["count"] += 1
-        raise AssertionError("must not post without $1 depth")
+        raise AssertionError("must not post below the $0.25 protected-depth floor")
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
-    controller._submit_one(_trigger())
+    controller._submit_one(_trigger("cond-too-thin"))
 
     assert posted["count"] == 0
-    assert controller.status()["last_reason"] == "FRESH_DEPTH_OR_PRICE_MOVED_SOL:5m"
+    assert controller.status()["last_reason"] == "FRESH_DEPTH_BELOW_FAK_MIN_SOL:5m"
 
 
-def test_authoritative_fok_kill_is_no_fill_and_does_not_halt_session(tmp_path, monkeypatch):
-    controller, _client = _prepared_controller(tmp_path, monkeypatch, conditional_after=0.0)
-    message = (
-        "PolyApiException[status_code=400, error_message={'error': "
-        "\"order couldn't be fully filled. FOK orders are fully filled or killed.\", "
-        "'orderID': '0xdeadbeef'}]"
-    )
-    exc = RuntimeError(message)
-    assert _is_authoritative_fok_no_fill(exc) is True
-    assert _exception_order_id(exc) == "0xdeadbeef"
-
-    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
-    controller._submit_one(_trigger("cond-fok-kill"))
-
-    status = controller.status()
-    assert status["halted"] is False
-    assert status["armed"] is True
-    assert status["last_reason"] == "NO_FILL_FOK_KILLED_SOL:5m"
-    latest = controller.ledger.latest()
-    assert latest is not None
-    assert latest["status"] == "NO_FILL_FOK_KILLED"
-    assert latest["order_id"] == "0xdeadbeef"
-    assert float(latest["filled_shares"]) == 0.0
-    assert "AUTHORITATIVE_FOK_KILLED_NO_FILL" in str(latest["response_json"])
-
-
-def test_fok_kill_with_unexpected_balance_delta_still_halts(tmp_path, monkeypatch):
-    controller, _client = _prepared_controller(tmp_path, monkeypatch, conditional_after=0.25)
-    exc = RuntimeError(
-        "PolyApiException[status_code=400, error_message={'error': "
-        "\"order couldn't be fully filled. FOK orders are fully filled or killed.\", "
-        "'orderID': '0xambiguous'}]"
-    )
-    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
-    controller._submit_one(_trigger("cond-fok-ambiguous"))
-
-    status = controller.status()
-    assert status["halted"] is True
-    assert status["armed"] is False
-    latest = controller.ledger.latest()
-    assert latest is not None
-    assert latest["status"] == "EXPOSURE_UNCERTAIN_HALT"
-    assert float(latest["filled_shares"]) == 0.25
+def test_market_buy_source_uses_fak_not_fok():
+    text = Path("p25_live_all5m_market.py").read_text(encoding="utf-8")
+    assert "OrderType.FAK" in text
+    assert "MARKET_BUY_FAK_USDC" in text
+    assert "PARTIAL_FILL_VERIFIED" in text

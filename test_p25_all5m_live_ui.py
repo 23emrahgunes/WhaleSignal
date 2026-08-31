@@ -11,6 +11,10 @@ def _assert_all5m_controls(html: str) -> None:
     assert "post_orders ÇAĞRILMAZ" in html
     assert "BTC/ETH/SOL/XRP 5m" in html
     assert "Önce DRY TEST PASS olmalı" in html
+    assert "FAK $1" in html
+    assert "ne kadar dolarsa alınır" in html
+    assert "PARTIAL FILL" in html
+    assert "min depth" in html
 
 
 def test_main_dashboard_has_dry_then_all5m_live_controls():

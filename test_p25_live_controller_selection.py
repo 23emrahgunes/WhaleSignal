@@ -47,6 +47,8 @@ def test_directional_v2_switches_to_dry_first_all5m_market_buy_controller(tmp_pa
     assert status["scope"] == "BTC/ETH/SOL/XRP:5m"
     assert status["dry_ready"] is False
     assert status["armed"] is False
-    assert status["order_mode"] == "MARKET_BUY_FOK_USDC"
+    assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
     assert status["market_buy_usdc"] == 1.0
+    assert status["min_fak_depth_usdc"] == 0.25
+    assert status["partial_fill_ok"] is True
     assert status["local_share_min_gate"] is False
