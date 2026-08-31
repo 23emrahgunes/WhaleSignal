@@ -24,7 +24,7 @@ from p25_paper_records import (
 
 _ALL5M_JS = r"""
 <script>
-let all5mState={armed:false,dry_ready:false,halted:false,max_stake_usdc:1.10,max_price_drift_pct:.10,max_limit_price:.83,min_arm_collateral_usdc:4.40,last_reason:'IDLE'};
+let all5mState={armed:false,dry_ready:false,halted:false,max_stake_usdc:1.10,max_price_drift_pct:.10,max_limit_price:.83,min_arm_collateral_usdc:4.40,min_fak_depth_usdc:.25,last_reason:'IDLE'};
 function all5mRender(s){
  all5mState=s||all5mState;
  const dry=document.getElementById('all5mDryBtn'),live=document.getElementById('all5mLiveBtn'),m=document.getElementById('all5mLiveMeta');
@@ -34,13 +34,14 @@ function all5mRender(s){
  const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
  const px=(Number(s.max_limit_price==null?.83:s.max_limit_price)*100).toFixed(0);
  const col=Number(s.min_arm_collateral_usdc==null?4.40:s.min_arm_collateral_usdc).toFixed(2);
+ const fakMin=Number(s.min_fak_depth_usdc==null?.25:s.min_fak_depth_usdc).toFixed(2);
  dry.disabled=armed||halted;
  live.disabled=(!armed&&!dryReady)||halted;
  if(armed){live.textContent='🔴 TÜM 5m CANLI · DURDUR';live.style.background='#6f2027';live.style.borderColor='#a13b43';}
  else{live.textContent='🟢 TÜM 5m CANLIYA GEÇ';live.style.background=dryReady?'#12543f':'#3c4658';live.style.borderColor=dryReady?'#23795e':'#596579';}
  dry.textContent=dryReady?'✅ DRY PASS · TEKRAR TEST':'🟡 TÜM 5m DRY TEST';
  const dryTxt=dryReady?'DRY PASS':'DRY GEREKLİ';
- m.textContent=`BTC/ETH/SOL/XRP 5m · ${dryTxt} · max $${cap}/emir · drift ≤%${drift} · hard ${px}¢ · arm bakiye ≥$${col} · ${s.last_reason||'IDLE'}`;
+ m.textContent=`BTC/ETH/SOL/XRP 5m · ${dryTxt} · FAK $1 · min depth $${fakMin} · drift ≤%${drift} · hard ${px}¢ · arm bakiye ≥$${col} · ${s.last_reason||'IDLE'}`;
 }
 async function all5mPoll(){
  try{const r=await fetch('/api/all5m-live/status',{cache:'no-store'});if(r.ok)all5mRender(await r.json());}catch(e){}
@@ -67,8 +68,8 @@ async function all5mToggle(){
   try{const x=await all5mPost('/api/all5m-live/disarm','ALL 5M DURDUR');if(x)alert((x.d.ok?'BAŞARILI: ':'RED: ')+(x.d.reason||''));}catch(e){alert('LIVE durdurma hatası: '+e);}
  }else{
   if(!s.dry_ready){alert('Önce DRY TEST PASS olmalı.');return;}
-  const cap=Number(s.max_stake_usdc||1.10).toFixed(2),px=(Number(s.max_limit_price||.83)*100).toFixed(0);
-  if(!confirm(`BTC/ETH/SOL/XRP 5m CANLI oturum açılacak.\n\nYalnız yeni Directional Edge V2 PAPER OPEN sinyalleri izlenir.\nHer market condition için en fazla 1 FOK denemesi.\nMaksimum $${cap}/emir, hard fiyat cap ${px}¢.\nBelirsiz exposure olursa tüm LIVE fail-closed HALT olur.\n\nDevam edilsin mi?`))return;
+  const cap=Number(s.max_stake_usdc||1.10).toFixed(2),px=(Number(s.max_limit_price||.83)*100).toFixed(0),fakMin=Number(s.min_fak_depth_usdc||.25).toFixed(2);
+  if(!confirm(`BTC/ETH/SOL/XRP 5m CANLI oturum açılacak.\n\nYalnız yeni Directional Edge V2 PAPER OPEN sinyalleri izlenir.\nHer market condition için en fazla 1 FAK $1 BUY denemesi.\nProtected fresh depth en az $${fakMin} ise ne kadar dolarsa alınır, kalan miktar iptal edilir.\nMaksimum hard cap $${cap}/emir, fiyat cap ${px}¢.\nDoğrulanmış PARTIAL FILL normaldir ve LIVE devam eder.\nBelirsiz exposure/network hatası olursa tüm LIVE fail-closed HALT olur.\n\nDevam edilsin mi?`))return;
   try{const x=await all5mPost('/api/all5m-live/arm','ALL 5M CANLI');if(x)alert((x.d.ok?'✅ CANLI AKTİF: ':'❌ RED: ')+(x.d.reason||''));}catch(e){alert('LIVE arm hatası: '+e);}
  }
  await all5mPoll();
@@ -113,7 +114,7 @@ def _main_html() -> str:
     )
     html = html.replace(
         '<b>XRP 5m LIVE</b> yalnız operatör ARM ederse aynı paper OPEN tetikleyicisini FOK emirle izler; maksimum notional $1.10 ve paper fill’e göre en fazla %10 fiyat sapması uygulanır.',
-        '<b>ALL 5m LIVE</b> DRY PASS sonrası operatör ARM ederse BTC/ETH/SOL/XRP 5m yeni paper OPEN tetikleyicilerini FOK emirle izler. DRY sırasında gerçek auth/book istekleri yapılır ama emir gönderilmez.',
+        '<b>ALL 5m LIVE</b> DRY PASS sonrası operatör ARM ederse BTC/ETH/SOL/XRP 5m yeni paper OPEN tetikleyicilerini $1 FAK emirle izler. Doğrulanmış kısmi fill normaldir; kalan miktar iptal edilir. DRY sırasında gerçek auth/book istekleri yapılır ama emir gönderilmez.',
         1,
     )
     return html.replace("</body>", _ALL5M_JS + "\n</body>", 1)
@@ -157,6 +158,9 @@ def _live_status(engine) -> dict:  # noqa: ANN001
             "max_price_drift_pct": 0.10,
             "max_limit_price": 0.83,
             "min_arm_collateral_usdc": 4.40,
+            "min_fak_depth_usdc": 0.25,
+            "order_mode": "MARKET_BUY_FAK_USDC",
+            "partial_fill_ok": True,
             "dry_ready": False,
             "last_reason": "CONTROLLER_NOT_ATTACHED",
         }
