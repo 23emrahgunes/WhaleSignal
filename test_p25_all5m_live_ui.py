@@ -14,7 +14,8 @@ def _assert_all5m_controls(html: str) -> None:
     assert "FAK $1" in html
     assert "ne kadar dolarsa alınır" in html
     assert "PARTIAL FILL" in html
-    assert "min depth" in html
+    assert "depth >0" in html
+    assert "herhangi bir pozitif likidite" in html
 
 
 def test_main_dashboard_has_dry_then_all5m_live_controls():
