@@ -28,5 +28,7 @@ def test_strict_deploy_profile_contains_directional_v2_contract():
     assert "PAPER_DEEP_VALUE_MAX_ASK': '0.75'" in text
     assert "PAPER_MIN_EDGE': '0.08'" in text
     assert "PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.12'" in text
-    assert "P25_LIVE_MAX_LIMIT_PRICE': '0.255'" in text
+    assert "P25_LIVE_MAX_LIMIT_PRICE': '0.83'" in text
+    assert "P25_LIVE_MAX_STAKE_USDC': '1.10'" in text
     assert "P25_LIVE_ARMED': 'false'" in text
+    assert "ALL5M LIVE=DRY_REQUIRED+UNARMED" in text
