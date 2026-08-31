@@ -72,8 +72,8 @@ wanted = {
     'PAPER_STRICT_STABILITY_SEC': '3.0',
     'PAPER_STRICT_STABILITY_MAX_GAP_SEC': '1.5',
     # ALL-5m LIVE is always fail-closed after deploy. DRY must pass in the UI before
-    # the operator can arm BTC/ETH/SOL/XRP. Per-order paper stake remains $1.00;
-    # 10% price drift means a live order can spend at most $1.10.
+    # the operator can arm BTC/ETH/SOL/XRP. The FAK order amount is fixed at $1.00;
+    # the existing $1.10 max remains a hard safety envelope.
     'P25_LIVE_FEATURE_ENABLED': 'false',
     'P25_LIVE_ARMED': 'false',
     'P25_LIVE_ARM_NONCE': '',
@@ -177,6 +177,10 @@ print('min_value=', deep.get('min_value_multiple'))
 print('live_scope=', live.get('scope'))
 print('live_armed=', live.get('armed'))
 print('dry_ready=', live.get('dry_ready'))
+print('live_order_mode=', live.get('order_mode'))
+print('live_market_buy_usdc=', live.get('market_buy_usdc'))
+print('live_min_fak_depth_usdc=', live.get('min_fak_depth_usdc'))
+print('live_partial_fill_ok=', live.get('partial_fill_ok'))
 print('live_price_cap=', live.get('max_limit_price'))
 print('live_order_cap=', live.get('max_stake_usdc'))
 print('min_arm_collateral=', live.get('min_arm_collateral_usdc'))
@@ -209,10 +213,14 @@ assert live.get('dry_ready') is False
 assert live.get('continuous_session') is True
 assert live.get('one_attempt_per_condition') is True
 assert live.get('post_orders_called_by_dry') is False
+assert live.get('order_mode') == 'MARKET_BUY_FAK_USDC'
+assert abs(float(live.get('market_buy_usdc')) - 1.00) < 1e-9
+assert abs(float(live.get('min_fak_depth_usdc')) - 0.25) < 1e-9
+assert live.get('partial_fill_ok') is True
 assert abs(float(live.get('max_limit_price')) - 0.83) < 1e-9
 assert abs(float(live.get('max_stake_usdc')) - 1.10) < 1e-9
 assert abs(float(live.get('min_arm_collateral_usdc')) - 4.40) < 1e-9
 assert safety.get('execution_enabled') is False
 PY
 
-printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | max=$1.10/order | hard=83c'
+printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | order=FAK-$1 | min_fak_depth=$0.25 | max=$1.10/order | hard=83c'
