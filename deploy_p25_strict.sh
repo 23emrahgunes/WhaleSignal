@@ -215,4 +215,4 @@ assert abs(float(live.get('min_arm_collateral_usdc')) - 4.40) < 1e-9
 assert safety.get('execution_enabled') is False
 PY
 
-echo "DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | max=$1.10/order | hard=83c"
+printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | max=$1.10/order | hard=83c'
