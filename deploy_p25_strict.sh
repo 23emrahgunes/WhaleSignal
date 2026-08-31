@@ -180,6 +180,7 @@ print('dry_ready=', live.get('dry_ready'))
 print('live_order_mode=', live.get('order_mode'))
 print('live_market_buy_usdc=', live.get('market_buy_usdc'))
 print('live_min_fak_depth_usdc=', live.get('min_fak_depth_usdc'))
+print('live_positive_depth_only=', live.get('positive_depth_only'))
 print('live_partial_fill_ok=', live.get('partial_fill_ok'))
 print('live_price_cap=', live.get('max_limit_price'))
 print('live_order_cap=', live.get('max_stake_usdc'))
@@ -215,7 +216,8 @@ assert live.get('one_attempt_per_condition') is True
 assert live.get('post_orders_called_by_dry') is False
 assert live.get('order_mode') == 'MARKET_BUY_FAK_USDC'
 assert abs(float(live.get('market_buy_usdc')) - 1.00) < 1e-9
-assert abs(float(live.get('min_fak_depth_usdc')) - 0.25) < 1e-9
+assert 0.0 < float(live.get('min_fak_depth_usdc')) <= 1e-8
+assert live.get('positive_depth_only') is True
 assert live.get('partial_fill_ok') is True
 assert abs(float(live.get('max_limit_price')) - 0.83) < 1e-9
 assert abs(float(live.get('max_stake_usdc')) - 1.10) < 1e-9
@@ -223,4 +225,4 @@ assert abs(float(live.get('min_arm_collateral_usdc')) - 4.40) < 1e-9
 assert safety.get('execution_enabled') is False
 PY
 
-printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | order=FAK-$1 | min_fak_depth=$0.25 | max=$1.10/order | hard=83c'
+printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | order=FAK-$1 | min_fak_depth=>0 | max=$1.10/order | hard=83c'
