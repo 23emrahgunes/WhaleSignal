@@ -28,10 +28,12 @@ def test_deep_mode_replaces_old_checkpoint_paper_line_in_cards():
     assert "c.paper_entry_mode==='DEEP_VALUE_WATCH'?'':paperLine(c)" in html
 
 
-def test_runtime_wires_deep_value_web_and_exposes_dynamic_profile_fields():
+def test_runtime_wires_deep_value_plus_all5m_web_and_exposes_dynamic_profile_fields():
     main = Path("p25_main.py").read_text(encoding="utf-8")
+    all5m_web = Path("p25_all5m_web.py").read_text(encoding="utf-8")
     engine = Path("p25_deep_value_engine.py").read_text(encoding="utf-8")
-    assert "from p25_deep_value_web import run_web" in main
+    assert "from p25_all5m_web import run_web" in main
+    assert "from p25_deep_value_web import enhance_main_html" in all5m_web
     for field in (
         "paper_deep_value_min_ask",
         "paper_deep_value_max_ask",

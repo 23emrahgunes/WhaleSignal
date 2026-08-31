@@ -52,7 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-live.txt
 
-      - name: Verify official SDK surface used by P3 LIVE
+      - name: Verify official SDK surface used by P3 and P25 LIVE
         run: |
           python - <<'PY'
           import inspect
@@ -93,11 +93,14 @@ jobs:
           assert "amount" in inspect.signature(SecureClient.merge_positions).parameters
           assert BookParams(token_id="1").token_id == "1"
           assert PartialCreateOrderOptions() is not None
-          print("P3_LIVE_SDK_CONTRACT_PASS")
+          print("P3_P25_LIVE_SDK_CONTRACT_PASS")
           PY
 
       - name: Compile LIVE modules
-        run: python -m py_compile p3_live_*.py p3_daemon.py p3_web.py
+        run: >-
+          python -m py_compile
+          p3_live_*.py p3_daemon.py p3_web.py
+          p25_live_xrp.py p25_live_all5m.py p25_all5m_web.py
 
       - name: Run guarded LIVE deterministic tests
         env:
@@ -111,3 +114,6 @@ jobs:
           test_p3_live_equal_share_risk.py
           test_p3_live_network_uncertainty.py
           test_p3_panel_tr.py
+          test_p25_xrp_live_pilot.py
+          test_p25_all5m_live.py
+          test_p25_all5m_live_ui.py
