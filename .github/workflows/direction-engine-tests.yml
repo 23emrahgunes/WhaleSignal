@@ -100,7 +100,7 @@ jobs:
         run: >-
           python -m py_compile
           p3_live_*.py p3_daemon.py p3_web.py
-          p25_live_xrp.py p25_live_all5m.py p25_all5m_web.py
+          p25_live_xrp.py p25_live_all5m.py p25_live_all5m_market.py p25_all5m_web.py
 
       - name: Run guarded LIVE deterministic tests
         env:
@@ -116,4 +116,5 @@ jobs:
           test_p3_panel_tr.py
           test_p25_xrp_live_pilot.py
           test_p25_all5m_live.py
+          test_p25_all5m_market_buy.py
           test_p25_all5m_live_ui.py
