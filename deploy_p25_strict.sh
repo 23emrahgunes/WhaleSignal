@@ -41,13 +41,9 @@ wanted = {
     'PAPER_STAKE_USDC': '1.00',
     'PAPER_MIN_CONFIDENCE': '0.34',
     'PAPER_MIN_AGREEMENT': '0.00',
-    # Directional V2 buys the alpha-selected side when the executable fill still
-    # leaves at least 8 percentage points of independent probability edge.
     'PAPER_MIN_EDGE': '0.08',
     'PAPER_ALLOWED_STATUSES': 'PROVISIONAL,VALIDATED',
     'PAPER_ALLOWED_GRADES': 'MEDIUM,HIGH',
-    # No more 5-22c deep-value restriction. Absolute ask cap is 75c; the effective
-    # cap is tighter because fill_price must also stay >=8 points below P(selected).
     'PAPER_DEEP_VALUE_MIN_ASK': '0.05',
     'PAPER_DEEP_VALUE_MAX_ASK': '0.75',
     'PAPER_DEEP_VALUE_PREFILTER_BUFFER': '0.02',
@@ -75,15 +71,18 @@ wanted = {
     'PAPER_STRICT_MAX_VOL_ACCEL': '1.80',
     'PAPER_STRICT_STABILITY_SEC': '3.0',
     'PAPER_STRICT_STABILITY_MAX_GAP_SEC': '1.5',
-    # LIVE remains fail-closed after every deploy. Its legacy 25.5c hard price cap
-    # is intentionally unchanged, so V2 must be proven in paper before LIVE is widened.
+    # ALL-5m LIVE is always fail-closed after deploy. DRY must pass in the UI before
+    # the operator can arm BTC/ETH/SOL/XRP. Per-order paper stake remains $1.00;
+    # 10% price drift means a live order can spend at most $1.10.
     'P25_LIVE_FEATURE_ENABLED': 'false',
     'P25_LIVE_ARMED': 'false',
     'P25_LIVE_ARM_NONCE': '',
     'P25_LIVE_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2',
     'P25_LIVE_MAX_STAKE_USDC': '1.10',
     'P25_LIVE_MAX_PRICE_DRIFT_PCT': '0.10',
-    'P25_LIVE_MAX_LIMIT_PRICE': '0.255',
+    # Paper ask can reach 75c, fill ~75.5c and +10% drift ~83.05c. Keep a bounded
+    # 83c hard cap; the notional cap remains the stronger $1.10/order constraint.
+    'P25_LIVE_MAX_LIMIT_PRICE': '0.83',
 }
 
 lines = text.splitlines()
@@ -107,7 +106,7 @@ path.write_text('\n'.join(out).rstrip() + '\n', encoding='utf-8')
 PY
 chmod 600 .env
 
-echo "=== RESTART P2.5 WITH DIRECTIONAL EDGE V2 PROFILE ==="
+echo "=== RESTART P2.5 WITH DIRECTIONAL EDGE V2 + ALL5M DRY-FIRST LIVE ==="
 pkill -f 'python.*p25_main.py' 2>/dev/null || true
 sleep 2
 
@@ -146,17 +145,22 @@ if [[ "$code" != "200" ]]; then
   exit 1
 fi
 
+# The new controller is exposed through the backwards-compatible snapshot key as
+# well as the dedicated web status endpoint.
+curl -fsS --connect-timeout 2 --max-time 10 \
+  "$base_url/api/all5m-live/status" > /tmp/direction-p25-all5m-live.json
+
 ./.venv/bin/python - <<'PY'
 import json
 from pathlib import Path
 
 state = json.loads(Path('/tmp/direction-p25-strict-state.json').read_text(encoding='utf-8'))
+live = json.loads(Path('/tmp/direction-p25-all5m-live.json').read_text(encoding='utf-8'))
 safety = state.get('safety', {})
 paper = state.get('paper_trading', {})
 policy = paper.get('policy', {})
 deep = paper.get('deep_value', {})
 strict = safety.get('paper_strict_profile', {})
-live = state.get('xrp5m_live_pilot', {})
 
 print('strategy=', policy.get('strategy_version'))
 print('alpha=', safety.get('paper_independent_alpha_source'))
@@ -170,8 +174,12 @@ print('depth_multiple=', strict.get('min_depth_multiple'))
 print('ask=', deep.get('min_ask'), deep.get('max_ask'))
 print('min_edge=', policy.get('min_edge'))
 print('min_value=', deep.get('min_value_multiple'))
+print('live_scope=', live.get('scope'))
 print('live_armed=', live.get('armed'))
+print('dry_ready=', live.get('dry_ready'))
 print('live_price_cap=', live.get('max_limit_price'))
+print('live_order_cap=', live.get('max_stake_usdc'))
+print('min_arm_collateral=', live.get('min_arm_collateral_usdc'))
 print('execution=', safety.get('execution_enabled'))
 
 assert policy.get('strategy_version') == 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2'
@@ -194,8 +202,17 @@ assert float(deep.get('max_ask')) == 0.75
 assert float(deep.get('min_depth_multiple')) == 1.5
 assert abs(float(policy.get('min_edge')) - 0.08) < 1e-9
 assert abs(float(deep.get('min_value_multiple')) - 1.12) < 1e-9
+assert live.get('scope') == 'BTC/ETH/SOL/XRP:5m'
+assert set(live.get('assets') or []) == {'BTC','ETH','SOL','XRP'}
 assert live.get('armed') is False
+assert live.get('dry_ready') is False
+assert live.get('continuous_session') is True
+assert live.get('one_attempt_per_condition') is True
+assert live.get('post_orders_called_by_dry') is False
+assert abs(float(live.get('max_limit_price')) - 0.83) < 1e-9
+assert abs(float(live.get('max_stake_usdc')) - 1.10) < 1e-9
+assert abs(float(live.get('min_arm_collateral_usdc')) - 4.40) < 1e-9
 assert safety.get('execution_enabled') is False
 PY
 
-echo "DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | LIVE=UNARMED+25.5c_cap"
+echo "DIRECTIONAL EDGE V2 DEPLOY PASS | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | max=$1.10/order | hard=83c"
