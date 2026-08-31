@@ -6,9 +6,10 @@ fresh depth and enforces the existing paper-drift + hard price ceiling before po
 a FAK market BUY. FAK may fill any available portion immediately and cancels the
 remainder; verified partial fills are normal and do not halt the continuous session.
 
-No local share ``min_order_size`` gate is applied to this market-order path; the
-authenticated CLOB response and post-order conditional-token balance are authoritative.
-Unknown post-reserve exceptions still halt fail-closed.
+No local share ``min_order_size`` gate or arbitrary dollar-depth floor is applied to
+this market-order path. If any positive protected ask liquidity exists, the FAK is
+submitted and the authenticated CLOB response plus post-order conditional-token
+balance are authoritative. Unknown post-reserve exceptions still halt fail-closed.
 """
 from __future__ import annotations
 
@@ -26,7 +27,8 @@ from p25_live_all5m import (
 log = logging.getLogger("direction_engine.p25.live_all5m_market")
 
 _MARKET_BUY_FLOOR_USDC = 1.00
-_MIN_FAK_DEPTH_USDC = 0.25
+# Effectively "any positive protected depth" while avoiding pure floating-point dust.
+_POSITIVE_DEPTH_EPS_USDC = 1e-9
 _FULL_FILL_VERIFY_RATIO = 0.90
 
 
@@ -39,7 +41,10 @@ class All5mMarketBuyController(All5mLiveController):
             {
                 "order_mode": "MARKET_BUY_FAK_USDC",
                 "market_buy_usdc": _MARKET_BUY_FLOOR_USDC,
-                "min_fak_depth_usdc": _MIN_FAK_DEPTH_USDC,
+                # Backwards-compatible status field. A tiny non-zero value also keeps
+                # the existing browser `||` fallback from falsely displaying $0.25.
+                "min_fak_depth_usdc": _POSITIVE_DEPTH_EPS_USDC,
+                "positive_depth_only": True,
                 "local_share_min_gate": False,
                 "partial_fill_ok": True,
             }
@@ -56,10 +61,9 @@ class All5mMarketBuyController(All5mLiveController):
     ) -> tuple[float | None, float, float]:  # noqa: ANN001
         """Return (worst_price, expected_available_shares, capacity_usdc) under cap.
 
-        Unlike the old FOK path, this quote does not require the full $1 amount to be
-        available. It consumes up to ``amount_usdc`` from asks at or below the protected
-        price ceiling and reports how much protected liquidity currently exists. The
-        caller decides whether that capacity is large enough to justify a FAK submit.
+        This quote does not require the full $1 amount or any arbitrary dollar floor.
+        It consumes up to ``amount_usdc`` from asks at or below the protected price
+        ceiling and reports whatever positive executable liquidity currently exists.
         """
         book = client.get_order_book(str(token_id))
         levels: list[tuple[float, float]] = []
@@ -161,8 +165,10 @@ class All5mMarketBuyController(All5mLiveController):
                 amount_usdc=live_amount_usdc,
                 max_live_limit_price=max_live_limit,
             )
-            if protected_price is None or capacity_usdc + 1e-9 < _MIN_FAK_DEPTH_USDC:
-                self._last_reason = f"FRESH_DEPTH_BELOW_FAK_MIN_{trigger.combo_key}"
+            # FAK means "fill whatever is immediately available, cancel the rest".
+            # Therefore any genuine positive protected liquidity is enough to submit.
+            if protected_price is None or capacity_usdc <= _POSITIVE_DEPTH_EPS_USDC:
+                self._last_reason = f"FRESH_DEPTH_ZERO_OR_MOVED_{trigger.combo_key}"
                 return
 
             collateral = self._collateral_balance(client)
