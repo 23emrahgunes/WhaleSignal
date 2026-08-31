@@ -1,21 +1,18 @@
 """USDC-denominated market BUY executor for guarded ALL-5m LIVE.
 
 Polymarket's official py-clob-client-v2 market BUY API accepts ``amount`` in USDC.
-Directional Edge V2 therefore spends a fixed $1.00 per LIVE order instead of copying
-paper share quantity into a limit order. The controller still pre-checks fresh depth
-and enforces the existing paper-drift + hard price ceiling before posting an FOK
-market BUY. No local share ``min_order_size`` gate is applied to this market-order
-path; the authenticated CLOB response remains authoritative.
+Directional Edge V2 spends a fixed $1.00 per LIVE order. The controller pre-checks
+fresh depth and enforces the existing paper-drift + hard price ceiling before posting
+a FAK market BUY. FAK may fill any available portion immediately and cancels the
+remainder; verified partial fills are normal and do not halt the continuous session.
 
-An authoritative HTTP response saying an FOK order could not be fully filled is a
-normal no-fill outcome, not transport uncertainty. That response is recorded and the
-continuous LIVE session stays armed. Unknown post-reserve exceptions still halt.
+No local share ``min_order_size`` gate is applied to this market-order path; the
+authenticated CLOB response and post-order conditional-token balance are authoritative.
+Unknown post-reserve exceptions still halt fail-closed.
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 
 from p25_live_all5m import (
@@ -29,51 +26,22 @@ from p25_live_all5m import (
 log = logging.getLogger("direction_engine.p25.live_all5m_market")
 
 _MARKET_BUY_FLOOR_USDC = 1.00
-_FILL_VERIFY_RATIO = 0.90
-_FOK_NO_FILL_TEXT = "order couldn't be fully filled"
-_FOK_KILLED_TEXT = "fok orders are fully filled or killed"
-
-
-def _is_authoritative_fok_no_fill(exc: Exception) -> bool:
-    """True only for the CLOB's explicit FOK all-or-kill rejection response."""
-    text = str(exc).lower()
-    return (
-        _FOK_NO_FILL_TEXT in text
-        and _FOK_KILLED_TEXT in text
-        and ("status_code=400" in text or "status=400" in text or "400 bad request" in text)
-    )
-
-
-def _exception_order_id(exc: Exception) -> str | None:
-    text = str(exc)
-    match = re.search(r"['\"]orderID['\"]\s*:\s*['\"]([^'\"]+)['\"]", text)
-    if match:
-        return match.group(1)
-    match = re.search(r"['\"]orderId['\"]\s*:\s*['\"]([^'\"]+)['\"]", text)
-    return match.group(1) if match else None
-
-
-def _fok_no_fill_response(exc: Exception) -> str:
-    payload = {
-        "classification": "AUTHORITATIVE_FOK_KILLED_NO_FILL",
-        "exception": type(exc).__name__,
-        "orderID": _exception_order_id(exc),
-        "message": str(exc)[:700],
-    }
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True)[:1000]
+_MIN_FAK_DEPTH_USDC = 0.25
+_FULL_FILL_VERIFY_RATIO = 0.90
 
 
 class All5mMarketBuyController(All5mLiveController):
-    """Persistent ALL-5m LIVE controller using USDC market BUY FOK orders."""
+    """Persistent ALL-5m LIVE controller using USDC market BUY FAK orders."""
 
     def status(self) -> dict[str, Any]:
         payload = super().status()
         payload.update(
             {
-                "order_mode": "MARKET_BUY_FOK_USDC",
+                "order_mode": "MARKET_BUY_FAK_USDC",
                 "market_buy_usdc": _MARKET_BUY_FLOOR_USDC,
+                "min_fak_depth_usdc": _MIN_FAK_DEPTH_USDC,
                 "local_share_min_gate": False,
-                "fok_kill_is_no_fill": True,
+                "partial_fill_ok": True,
             }
         )
         return payload
@@ -86,12 +54,12 @@ class All5mMarketBuyController(All5mLiveController):
         amount_usdc: float,
         max_live_limit_price: float,
     ) -> tuple[float | None, float, float]:  # noqa: ANN001
-        """Return (worst_price, expected_shares, capacity_usdc) under price cap.
+        """Return (worst_price, expected_available_shares, capacity_usdc) under cap.
 
-        The quote intentionally ignores the book's ``min_order_size`` metadata because
-        the actual order is a USDC-denominated MARKET BUY, not a share-sized limit order.
-        It only proves that the requested dollar amount can be fully consumed from fresh
-        asks without crossing the configured live price ceiling.
+        Unlike the old FOK path, this quote does not require the full $1 amount to be
+        available. It consumes up to ``amount_usdc`` from asks at or below the protected
+        price ceiling and reports how much protected liquidity currently exists. The
+        caller decides whether that capacity is large enough to justify a FAK submit.
         """
         book = client.get_order_book(str(token_id))
         levels: list[tuple[float, float]] = []
@@ -111,18 +79,20 @@ class All5mMarketBuyController(All5mLiveController):
         worst_price: float | None = None
         for price, size in levels:
             level_capacity = price * size
-            capacity_usdc += level_capacity
-            if remaining <= 1e-9:
+            if level_capacity <= 0:
                 continue
-            take_usdc = min(remaining, level_capacity)
+            take_usdc = min(remaining, level_capacity) if remaining > 1e-9 else 0.0
             if take_usdc > 0:
                 expected_shares += take_usdc / price
                 remaining -= take_usdc
                 worst_price = price
+            # Capacity is capped at the requested amount because excess depth does not
+            # improve this $1 FAK order's execution envelope.
+            capacity_usdc += min(level_capacity, max(0.0, float(amount_usdc) - capacity_usdc))
+            if capacity_usdc + 1e-9 >= float(amount_usdc):
+                break
 
-        if remaining > 1e-9:
-            return None, expected_shares, capacity_usdc
-        return worst_price, expected_shares, capacity_usdc
+        return worst_price, expected_shares, min(capacity_usdc, float(amount_usdc))
 
     @staticmethod
     def _post_market_buy(
@@ -132,7 +102,7 @@ class All5mMarketBuyController(All5mLiveController):
         amount_usdc: float,
         protected_price: float,
     ):  # noqa: ANN001,ANN201
-        """Create + post an official SDK MARKET BUY FOK with explicit price protection."""
+        """Create + post an official SDK MARKET BUY FAK with explicit price protection."""
         from py_clob_client_v2 import MarketOrderArgs, OrderType, Side
 
         return client.create_and_post_market_order(
@@ -140,71 +110,11 @@ class All5mMarketBuyController(All5mLiveController):
                 token_id=str(token_id),
                 amount=float(amount_usdc),
                 side=Side.BUY,
-                order_type=OrderType.FOK,
+                order_type=OrderType.FAK,
                 price=float(protected_price),
             ),
-            order_type=OrderType.FOK,
+            order_type=OrderType.FAK,
         )
-
-    def _record_authoritative_fok_no_fill(
-        self,
-        *,
-        trigger: All5mLiveTrigger,
-        client,
-        before: float,
-        exc: Exception,
-    ) -> None:  # noqa: ANN001
-        """Record CLOB-confirmed FOK kill as no-fill; halt only if balance changed."""
-        order_id = _exception_order_id(exc)
-        response_json = _fok_no_fill_response(exc)
-        try:
-            after = self._conditional_balance(client, trigger.token_id, refresh=True)
-            delta = max(0.0, float(after) - float(before))
-        except Exception as balance_exc:  # noqa: BLE001
-            self.ledger.update(
-                trigger.claim_key,
-                status="ERROR_AFTER_RESERVE_HALT",
-                order_id=order_id,
-                response_json=response_json,
-                error=(
-                    "FOK_KILL_BALANCE_VERIFY_FAILED: "
-                    f"{type(balance_exc).__name__}: {str(balance_exc)[:180]}"
-                ),
-            )
-            self._halt("ERROR_AFTER_RESERVE_HALT")
-            return
-
-        epsilon = 1e-6
-        if delta <= epsilon:
-            status = "NO_FILL_FOK_KILLED"
-            self._last_reason = f"{status}_{trigger.combo_key}"
-            self.ledger.update(
-                trigger.claim_key,
-                status=status,
-                order_id=order_id,
-                filled_shares=0.0,
-                response_json=response_json,
-            )
-            log.info(
-                "all5m FOK killed with no fill combo=%s order_id=%s; LIVE session continues",
-                trigger.combo_key,
-                order_id,
-            )
-            return
-
-        # FOK should be all-or-none. A non-zero balance delta contradicts the explicit
-        # killed response, so preserve the conservative fail-closed behavior.
-        status = "EXPOSURE_UNCERTAIN_HALT"
-        self._last_reason = f"{status}_{trigger.combo_key}"
-        self.ledger.update(
-            trigger.claim_key,
-            status=status,
-            order_id=order_id,
-            filled_shares=delta,
-            response_json=response_json,
-            error="FOK_KILL_RESPONSE_BUT_CONDITIONAL_BALANCE_INCREASED",
-        )
-        self._halt(status)
 
     def _submit_one(self, trigger: All5mLiveTrigger) -> None:
         reserved = False
@@ -245,14 +155,14 @@ class All5mMarketBuyController(All5mLiveController):
                 self._last_reason = f"LIVE_NOTIONAL_CAP_{trigger.combo_key}"
                 return
 
-            protected_price, expected_shares, _capacity_usdc = self._fresh_market_quote_for_usdc(
+            protected_price, _available_shares, capacity_usdc = self._fresh_market_quote_for_usdc(
                 client,
                 token_id=trigger.token_id,
                 amount_usdc=live_amount_usdc,
                 max_live_limit_price=max_live_limit,
             )
-            if protected_price is None:
-                self._last_reason = f"FRESH_DEPTH_OR_PRICE_MOVED_{trigger.combo_key}"
+            if protected_price is None or capacity_usdc + 1e-9 < _MIN_FAK_DEPTH_USDC:
+                self._last_reason = f"FRESH_DEPTH_BELOW_FAK_MIN_{trigger.combo_key}"
                 return
 
             collateral = self._collateral_balance(client)
@@ -279,41 +189,35 @@ class All5mMarketBuyController(All5mLiveController):
                 self.ledger.update(trigger.claim_key, status="DISARMED_BEFORE_SUBMIT")
                 return
 
-            try:
-                raw = self._post_market_buy(
-                    client,
-                    token_id=trigger.token_id,
-                    amount_usdc=live_amount_usdc,
-                    protected_price=float(protected_price),
-                )
-            except Exception as exc:  # noqa: BLE001
-                if _is_authoritative_fok_no_fill(exc):
-                    self._record_authoritative_fok_no_fill(
-                        trigger=trigger,
-                        client=client,
-                        before=before,
-                        exc=exc,
-                    )
-                    return
-                raise
-
+            raw = self._post_market_buy(
+                client,
+                token_id=trigger.token_id,
+                amount_usdc=live_amount_usdc,
+                protected_price=float(protected_price),
+            )
             response_json = _sanitize_order_response(raw)
             order_id = _order_id(raw)
 
-            min_verified_shares = max(1e-6, expected_shares * _FILL_VERIFY_RATIO)
+            # A full $1 spend at prices no worse than protected_price must acquire at
+            # least amount/protected_price shares. Use a 90% tolerance for fee/rounding.
+            # Anything positive below that is a valid FAK partial fill, not uncertainty.
+            full_fill_min_shares = max(
+                1e-6,
+                (live_amount_usdc / float(protected_price)) * _FULL_FILL_VERIFY_RATIO,
+            )
             delta = self._wait_for_fill_delta(
                 client,
                 token_id=trigger.token_id,
                 before=before,
-                requested_shares=min_verified_shares,
+                requested_shares=full_fill_min_shares,
             )
-            epsilon = max(1e-6, min_verified_shares * 1e-6)
-            if delta + epsilon >= min_verified_shares:
+            epsilon = max(1e-6, full_fill_min_shares * 1e-6)
+            if delta + epsilon >= full_fill_min_shares:
                 status = "FILLED_VERIFIED"
             elif delta <= epsilon:
                 status = "NO_FILL_VERIFIED"
             else:
-                status = "EXPOSURE_UNCERTAIN_HALT"
+                status = "PARTIAL_FILL_VERIFIED"
 
             self._last_reason = f"{status}_{trigger.combo_key}"
             self.ledger.update(
@@ -323,8 +227,12 @@ class All5mMarketBuyController(All5mLiveController):
                 filled_shares=delta,
                 response_json=response_json,
             )
-            if status == "EXPOSURE_UNCERTAIN_HALT":
-                self._halt(status)
+            if status == "PARTIAL_FILL_VERIFIED":
+                log.info(
+                    "all5m FAK partial fill verified combo=%s shares=%.8f; LIVE continues",
+                    trigger.combo_key,
+                    delta,
+                )
         except Exception as exc:  # noqa: BLE001
             self._last_reason = f"LIVE_ERROR_{type(exc).__name__}_{trigger.combo_key}"
             log.exception("all5m market BUY LIVE error combo=%s", trigger.combo_key)
