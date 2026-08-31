@@ -32,3 +32,19 @@ def test_strict_deploy_profile_contains_directional_v2_contract():
     assert "P25_LIVE_MAX_STAKE_USDC': '1.10'" in text
     assert "P25_LIVE_ARMED': 'false'" in text
     assert "ALL5M LIVE=DRY_REQUIRED+UNARMED" in text
+
+
+def test_strict_deploy_success_banner_is_safe_under_nounset_without_positional_args():
+    text = Path("deploy_p25_strict.sh").read_text(encoding="utf-8")
+    banner = next(
+        line for line in text.splitlines()
+        if "DIRECTIONAL EDGE V2 DEPLOY PASS" in line
+    )
+    result = subprocess.run(
+        ["bash", "-u", "-c", banner],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "max=$1.10/order" in result.stdout
