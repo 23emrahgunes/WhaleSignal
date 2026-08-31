@@ -32,7 +32,7 @@ from p25_deep_value_engine import P25Engine
 from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
 from p25_all5m_web import run_web
-from p25_live_all5m import All5mLiveController
+from p25_live_all5m_market import All5mMarketBuyController
 from p25_live_xrp import XRP5mLivePilot
 from reference import ReferenceRouter
 
@@ -51,7 +51,7 @@ def _state_cache_ttl_sec() -> float:
 def _build_live_controller(cfg):  # noqa: ANN001,ANN201
     """Select LIVE controller from the active paper cohort, without network I/O."""
     if str(cfg.paper_strategy_version) == _DIRECTIONAL_ALL5M_STRATEGY:
-        return All5mLiveController(cfg), "ALL5M_DRY_FIRST"
+        return All5mMarketBuyController(cfg), "ALL5M_MARKET_BUY_DRY_FIRST"
     return XRP5mLivePilot(cfg), "XRP5M_LEGACY_BASELINE"
 
 
@@ -102,9 +102,10 @@ async def run() -> None:
 
         live_controller, live_profile = _build_live_controller(cfg)
         engine.attach_xrp5m_live_pilot(live_controller)
+        live_status = live_controller.status()
         log.info(
             "LIVE controller=%s strategy=%s feature=%s armed=%s max_notional=%.2f "
-            "drift=%.0f%% hard_price_cap=%.3f",
+            "drift=%.0f%% hard_price_cap=%.3f order_mode=%s market_buy_usdc=%s",
             live_profile,
             cfg.paper_strategy_version,
             cfg.p25_live_feature_enabled,
@@ -112,6 +113,8 @@ async def run() -> None:
             cfg.p25_live_max_stake_usdc,
             cfg.p25_live_max_price_drift_pct * 100.0,
             cfg.p25_live_max_limit_price,
+            live_status.get("order_mode", "LIMIT_SHARE"),
+            live_status.get("market_buy_usdc", "n/a"),
         )
 
         paper_reconciler = PaperTradeReconciler(cfg, discovery, recorder)
