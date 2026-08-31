@@ -2,7 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from p25_live_all5m import All5mLiveTrigger
-from p25_live_all5m_market import All5mMarketBuyController
+from p25_live_all5m_market import (
+    All5mMarketBuyController,
+    _exception_order_id,
+    _is_authoritative_fok_no_fill,
+)
 
 
 class _Level:
@@ -46,11 +50,11 @@ def _cfg(tmp_path: Path):
     )
 
 
-def _trigger():
+def _trigger(condition="cond-sol"):
     return All5mLiveTrigger(
         session_nonce="all5m-session-market-1",
-        condition_id="cond-sol",
-        market_id="market-sol",
+        condition_id=condition,
+        market_id=f"market-{condition}",
         combo_key="SOL:5m",
         strategy_version="INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2",
         side="DOWN",
@@ -61,10 +65,30 @@ def _trigger():
     )
 
 
+def _prepared_controller(tmp_path, monkeypatch, *, conditional_after=0.0):
+    book = _Book([_Level("0.50", "10")], min_order_size="5")
+    client = _Client(book)
+    controller = All5mMarketBuyController(
+        _cfg(tmp_path),
+        client_factory=lambda **_kwargs: client,
+        secret_reader=lambda: None,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_geoblock",
+        lambda: {"blocked": False, "country": "SE", "region": None},
+    )
+    monkeypatch.setattr(controller, "_collateral_balance", lambda _client: 19.10)
+    values = iter([0.0, conditional_after])
+    monkeypatch.setattr(
+        controller,
+        "_conditional_balance",
+        lambda _client, _token, refresh: next(values),
+    )
+    return controller, client
+
+
 def test_market_quote_is_usdc_based_and_does_not_apply_share_minimum():
-    # Book says min_order_size=5 shares, while $1 at 50c buys only 2 shares.
-    # The official MARKET BUY path is quoted by USDC amount, so the local share
-    # minimum must not reject it before the CLOB receives the market order.
     client = _Client(_Book([_Level("0.50", "10")], min_order_size="5"))
     price, shares, capacity = All5mMarketBuyController._fresh_market_quote_for_usdc(
         client,
@@ -130,7 +154,6 @@ def test_submit_uses_exact_one_usdc_market_buy_even_below_book_share_minimum(tmp
 
 
 def test_market_buy_still_fails_closed_when_one_dollar_cannot_fill_under_price_cap(tmp_path, monkeypatch):
-    # Only 20c of allowed liquidity. This must stop before any market order post.
     client = _Client(_Book([_Level("0.50", "0.4")], min_order_size="5"))
     controller = All5mMarketBuyController(
         _cfg(tmp_path),
@@ -153,3 +176,48 @@ def test_market_buy_still_fails_closed_when_one_dollar_cannot_fill_under_price_c
 
     assert posted["count"] == 0
     assert controller.status()["last_reason"] == "FRESH_DEPTH_OR_PRICE_MOVED_SOL:5m"
+
+
+def test_authoritative_fok_kill_is_no_fill_and_does_not_halt_session(tmp_path, monkeypatch):
+    controller, _client = _prepared_controller(tmp_path, monkeypatch, conditional_after=0.0)
+    message = (
+        "PolyApiException[status_code=400, error_message={'error': "
+        "\"order couldn't be fully filled. FOK orders are fully filled or killed.\", "
+        "'orderID': '0xdeadbeef'}]"
+    )
+    exc = RuntimeError(message)
+    assert _is_authoritative_fok_no_fill(exc) is True
+    assert _exception_order_id(exc) == "0xdeadbeef"
+
+    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
+    controller._submit_one(_trigger("cond-fok-kill"))
+
+    status = controller.status()
+    assert status["halted"] is False
+    assert status["armed"] is True
+    assert status["last_reason"] == "NO_FILL_FOK_KILLED_SOL:5m"
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "NO_FILL_FOK_KILLED"
+    assert latest["order_id"] == "0xdeadbeef"
+    assert float(latest["filled_shares"]) == 0.0
+    assert "AUTHORITATIVE_FOK_KILLED_NO_FILL" in str(latest["response_json"])
+
+
+def test_fok_kill_with_unexpected_balance_delta_still_halts(tmp_path, monkeypatch):
+    controller, _client = _prepared_controller(tmp_path, monkeypatch, conditional_after=0.25)
+    exc = RuntimeError(
+        "PolyApiException[status_code=400, error_message={'error': "
+        "\"order couldn't be fully filled. FOK orders are fully filled or killed.\", "
+        "'orderID': '0xambiguous'}]"
+    )
+    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
+    controller._submit_one(_trigger("cond-fok-ambiguous"))
+
+    status = controller.status()
+    assert status["halted"] is True
+    assert status["armed"] is False
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "EXPOSURE_UNCERTAIN_HALT"
+    assert float(latest["filled_shares"]) == 0.25

@@ -6,10 +6,16 @@ paper share quantity into a limit order. The controller still pre-checks fresh d
 and enforces the existing paper-drift + hard price ceiling before posting an FOK
 market BUY. No local share ``min_order_size`` gate is applied to this market-order
 path; the authenticated CLOB response remains authoritative.
+
+An authoritative HTTP response saying an FOK order could not be fully filled is a
+normal no-fill outcome, not transport uncertainty. That response is recorded and the
+continuous LIVE session stays armed. Unknown post-reserve exceptions still halt.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from p25_live_all5m import (
@@ -24,6 +30,37 @@ log = logging.getLogger("direction_engine.p25.live_all5m_market")
 
 _MARKET_BUY_FLOOR_USDC = 1.00
 _FILL_VERIFY_RATIO = 0.90
+_FOK_NO_FILL_TEXT = "order couldn't be fully filled"
+_FOK_KILLED_TEXT = "fok orders are fully filled or killed"
+
+
+def _is_authoritative_fok_no_fill(exc: Exception) -> bool:
+    """True only for the CLOB's explicit FOK all-or-kill rejection response."""
+    text = str(exc).lower()
+    return (
+        _FOK_NO_FILL_TEXT in text
+        and _FOK_KILLED_TEXT in text
+        and ("status_code=400" in text or "status=400" in text or "400 bad request" in text)
+    )
+
+
+def _exception_order_id(exc: Exception) -> str | None:
+    text = str(exc)
+    match = re.search(r"['\"]orderID['\"]\s*:\s*['\"]([^'\"]+)['\"]", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"['\"]orderId['\"]\s*:\s*['\"]([^'\"]+)['\"]", text)
+    return match.group(1) if match else None
+
+
+def _fok_no_fill_response(exc: Exception) -> str:
+    payload = {
+        "classification": "AUTHORITATIVE_FOK_KILLED_NO_FILL",
+        "exception": type(exc).__name__,
+        "orderID": _exception_order_id(exc),
+        "message": str(exc)[:700],
+    }
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True)[:1000]
 
 
 class All5mMarketBuyController(All5mLiveController):
@@ -36,6 +73,7 @@ class All5mMarketBuyController(All5mLiveController):
                 "order_mode": "MARKET_BUY_FOK_USDC",
                 "market_buy_usdc": _MARKET_BUY_FLOOR_USDC,
                 "local_share_min_gate": False,
+                "fok_kill_is_no_fill": True,
             }
         )
         return payload
@@ -108,6 +146,66 @@ class All5mMarketBuyController(All5mLiveController):
             order_type=OrderType.FOK,
         )
 
+    def _record_authoritative_fok_no_fill(
+        self,
+        *,
+        trigger: All5mLiveTrigger,
+        client,
+        before: float,
+        exc: Exception,
+    ) -> None:  # noqa: ANN001
+        """Record CLOB-confirmed FOK kill as no-fill; halt only if balance changed."""
+        order_id = _exception_order_id(exc)
+        response_json = _fok_no_fill_response(exc)
+        try:
+            after = self._conditional_balance(client, trigger.token_id, refresh=True)
+            delta = max(0.0, float(after) - float(before))
+        except Exception as balance_exc:  # noqa: BLE001
+            self.ledger.update(
+                trigger.claim_key,
+                status="ERROR_AFTER_RESERVE_HALT",
+                order_id=order_id,
+                response_json=response_json,
+                error=(
+                    "FOK_KILL_BALANCE_VERIFY_FAILED: "
+                    f"{type(balance_exc).__name__}: {str(balance_exc)[:180]}"
+                ),
+            )
+            self._halt("ERROR_AFTER_RESERVE_HALT")
+            return
+
+        epsilon = 1e-6
+        if delta <= epsilon:
+            status = "NO_FILL_FOK_KILLED"
+            self._last_reason = f"{status}_{trigger.combo_key}"
+            self.ledger.update(
+                trigger.claim_key,
+                status=status,
+                order_id=order_id,
+                filled_shares=0.0,
+                response_json=response_json,
+            )
+            log.info(
+                "all5m FOK killed with no fill combo=%s order_id=%s; LIVE session continues",
+                trigger.combo_key,
+                order_id,
+            )
+            return
+
+        # FOK should be all-or-none. A non-zero balance delta contradicts the explicit
+        # killed response, so preserve the conservative fail-closed behavior.
+        status = "EXPOSURE_UNCERTAIN_HALT"
+        self._last_reason = f"{status}_{trigger.combo_key}"
+        self.ledger.update(
+            trigger.claim_key,
+            status=status,
+            order_id=order_id,
+            filled_shares=delta,
+            response_json=response_json,
+            error="FOK_KILL_RESPONSE_BUT_CONDITIONAL_BALANCE_INCREASED",
+        )
+        self._halt(status)
+
     def _submit_one(self, trigger: All5mLiveTrigger) -> None:
         reserved = False
         try:
@@ -141,8 +239,6 @@ class All5mMarketBuyController(All5mLiveController):
                 float(trigger.paper_fill_cap) * (1.0 + drift),
             )
 
-            # Directional paper currently uses $1.00. Keep at least $1.00 for the
-            # official market-order path while preserving the global LIVE hard cap.
             live_amount_usdc = max(_MARKET_BUY_FLOOR_USDC, float(trigger.paper_stake_usdc))
             max_stake = float(self.cfg.p25_live_max_stake_usdc)
             if live_amount_usdc > max_stake + 1e-9:
@@ -183,18 +279,27 @@ class All5mMarketBuyController(All5mLiveController):
                 self.ledger.update(trigger.claim_key, status="DISARMED_BEFORE_SUBMIT")
                 return
 
-            raw = self._post_market_buy(
-                client,
-                token_id=trigger.token_id,
-                amount_usdc=live_amount_usdc,
-                protected_price=float(protected_price),
-            )
+            try:
+                raw = self._post_market_buy(
+                    client,
+                    token_id=trigger.token_id,
+                    amount_usdc=live_amount_usdc,
+                    protected_price=float(protected_price),
+                )
+            except Exception as exc:  # noqa: BLE001
+                if _is_authoritative_fok_no_fill(exc):
+                    self._record_authoritative_fok_no_fill(
+                        trigger=trigger,
+                        client=client,
+                        before=before,
+                        exc=exc,
+                    )
+                    return
+                raise
+
             response_json = _sanitize_order_response(raw)
             order_id = _order_id(raw)
 
-            # FOK should be all-or-none. Balance-delta verification still protects
-            # against stale/ambiguous responses. Use a conservative 90% lower bound
-            # on the fresh-book expected shares so fee/rounding cannot create a false halt.
             min_verified_shares = max(1e-6, expected_shares * _FILL_VERIFY_RATIO)
             delta = self._wait_for_fill_delta(
                 client,
