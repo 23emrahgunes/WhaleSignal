@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import p25_main
-from p25_live_all5m import All5mLiveController
+from p25_live_all5m_market import All5mMarketBuyController
 from p25_live_xrp import XRP5mLivePilot
 
 
@@ -37,13 +37,16 @@ def test_repository_baseline_keeps_legacy_xrp_controller_for_deploy_smoke(tmp_pa
     assert controller.status()["scope"] == "XRP:5m"
 
 
-def test_directional_v2_switches_to_dry_first_all5m_controller(tmp_path):
+def test_directional_v2_switches_to_dry_first_all5m_market_buy_controller(tmp_path):
     controller, profile = p25_main._build_live_controller(
         _cfg(tmp_path, "INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2")
     )
-    assert isinstance(controller, All5mLiveController)
-    assert profile == "ALL5M_DRY_FIRST"
+    assert isinstance(controller, All5mMarketBuyController)
+    assert profile == "ALL5M_MARKET_BUY_DRY_FIRST"
     status = controller.status()
     assert status["scope"] == "BTC/ETH/SOL/XRP:5m"
     assert status["dry_ready"] is False
     assert status["armed"] is False
+    assert status["order_mode"] == "MARKET_BUY_FOK_USDC"
+    assert status["market_buy_usdc"] == 1.0
+    assert status["local_share_min_gate"] is False
