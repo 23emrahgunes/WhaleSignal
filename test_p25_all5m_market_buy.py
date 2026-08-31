@@ -127,7 +127,8 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
     status = controller.status()
     assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
     assert status["partial_fill_ok"] is True
-    assert status["min_fak_depth_usdc"] == 0.25
+    assert status["positive_depth_only"] is True
+    assert 0.0 < status["min_fak_depth_usdc"] <= 1e-8
     assert status["armed"] is True
     assert status["halted"] is False
     assert status["last_reason"] == "PARTIAL_FILL_VERIFIED_SOL:5m"
@@ -179,24 +180,51 @@ def test_fak_zero_fill_is_normal_and_session_continues(tmp_path, monkeypatch):
     assert controller.status()["halted"] is False
 
 
-def test_fak_does_not_submit_below_quarter_dollar_protected_depth(tmp_path, monkeypatch):
-    # $0.20 of allowed liquidity: below the $0.25 pre-submit floor.
+def test_fak_submits_even_with_one_cent_of_positive_protected_depth(tmp_path, monkeypatch):
+    # Only $0.01 of allowed liquidity. "Fill as much as possible" means this must
+    # still reach the authenticated FAK submit path instead of being locally rejected.
     controller, _client = _controller(
         tmp_path,
         monkeypatch,
-        _Book([_Level("0.50", "0.4")], min_order_size="5"),
+        _Book([_Level("0.50", "0.02")], min_order_size="5"),
+    )
+    posted = {"count": 0}
+
+    def fake_post(_client, *, token_id, amount_usdc, protected_price):
+        posted["count"] += 1
+        assert token_id == "sol-down"
+        assert amount_usdc == 1.0
+        assert protected_price == 0.50
+        return {"success": True, "orderID": "fak-one-cent", "status": "matched"}
+
+    monkeypatch.setattr(controller, "_post_market_buy", fake_post)
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.02)
+    controller._submit_one(_trigger("cond-one-cent"))
+
+    assert posted["count"] == 1
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "PARTIAL_FILL_VERIFIED"
+    assert controller.status()["halted"] is False
+
+
+def test_fak_does_not_submit_when_protected_depth_is_zero(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([], min_order_size="5"),
     )
     posted = {"count": 0}
 
     def fake_post(*_args, **_kwargs):
         posted["count"] += 1
-        raise AssertionError("must not post below the $0.25 protected-depth floor")
+        raise AssertionError("must not post when there is no protected ask liquidity")
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
-    controller._submit_one(_trigger("cond-too-thin"))
+    controller._submit_one(_trigger("cond-zero-depth"))
 
     assert posted["count"] == 0
-    assert controller.status()["last_reason"] == "FRESH_DEPTH_BELOW_FAK_MIN_SOL:5m"
+    assert controller.status()["last_reason"] == "FRESH_DEPTH_ZERO_OR_MOVED_SOL:5m"
 
 
 def test_market_buy_source_uses_fak_not_fok():
