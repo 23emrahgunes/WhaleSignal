@@ -9,11 +9,15 @@ remainder; verified partial fills are normal and do not halt the continuous sess
 No local share ``min_order_size`` gate or arbitrary dollar-depth floor is applied to
 this market-order path. If any positive protected ask liquidity exists, the FAK is
 submitted and the authenticated CLOB response plus post-order conditional-token
-balance are authoritative. Unknown post-reserve exceptions still halt fail-closed.
+balance are authoritative. An explicit CLOB 400 saying no orders matched a FAK is a
+normal terminal no-fill/partial-fill outcome and does not halt LIVE. Unknown
+post-reserve exceptions still halt fail-closed.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from p25_live_all5m import (
@@ -27,9 +31,42 @@ from p25_live_all5m import (
 log = logging.getLogger("direction_engine.p25.live_all5m_market")
 
 _MARKET_BUY_FLOOR_USDC = 1.00
-# Effectively "any positive protected depth" while avoiding pure floating-point dust.
 _POSITIVE_DEPTH_EPS_USDC = 1e-9
 _FULL_FILL_VERIFY_RATIO = 0.90
+_FAK_NO_MATCH_TEXT = "no orders found to match with fak order"
+_FAK_TERMINAL_TEXT = "fak orders are partially filled or killed if no match is found"
+
+
+def _is_authoritative_fak_terminal(exc: Exception) -> bool:
+    """Recognize the CLOB's explicit FAK immediate terminal response."""
+    text = str(exc).lower()
+    return (
+        _FAK_NO_MATCH_TEXT in text
+        and _FAK_TERMINAL_TEXT in text
+        and ("status_code=400" in text or "status=400" in text or "400 bad request" in text)
+    )
+
+
+def _exception_order_id(exc: Exception) -> str | None:
+    text = str(exc)
+    for key in ("orderID", "orderId"):
+        match = re.search(rf"['\"]{key}['\"]\s*:\s*['\"]([^'\"]+)['\"]", text)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _fak_terminal_response(exc: Exception) -> str:
+    return json.dumps(
+        {
+            "classification": "AUTHORITATIVE_FAK_TERMINAL",
+            "exception": type(exc).__name__,
+            "orderID": _exception_order_id(exc),
+            "message": str(exc)[:700],
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    )[:1000]
 
 
 class All5mMarketBuyController(All5mLiveController):
@@ -41,12 +78,11 @@ class All5mMarketBuyController(All5mLiveController):
             {
                 "order_mode": "MARKET_BUY_FAK_USDC",
                 "market_buy_usdc": _MARKET_BUY_FLOOR_USDC,
-                # Backwards-compatible status field. A tiny non-zero value also keeps
-                # the existing browser `||` fallback from falsely displaying $0.25.
                 "min_fak_depth_usdc": _POSITIVE_DEPTH_EPS_USDC,
                 "positive_depth_only": True,
                 "local_share_min_gate": False,
                 "partial_fill_ok": True,
+                "fak_no_match_is_normal": True,
             }
         )
         return payload
@@ -59,12 +95,7 @@ class All5mMarketBuyController(All5mLiveController):
         amount_usdc: float,
         max_live_limit_price: float,
     ) -> tuple[float | None, float, float]:  # noqa: ANN001
-        """Return (worst_price, expected_available_shares, capacity_usdc) under cap.
-
-        This quote does not require the full $1 amount or any arbitrary dollar floor.
-        It consumes up to ``amount_usdc`` from asks at or below the protected price
-        ceiling and reports whatever positive executable liquidity currently exists.
-        """
+        """Return (worst_price, expected_available_shares, capacity_usdc) under cap."""
         book = client.get_order_book(str(token_id))
         levels: list[tuple[float, float]] = []
         for level in (_field(book, "asks", []) or []):
@@ -90,8 +121,6 @@ class All5mMarketBuyController(All5mLiveController):
                 expected_shares += take_usdc / price
                 remaining -= take_usdc
                 worst_price = price
-            # Capacity is capped at the requested amount because excess depth does not
-            # improve this $1 FAK order's execution envelope.
             capacity_usdc += min(level_capacity, max(0.0, float(amount_usdc) - capacity_usdc))
             if capacity_usdc + 1e-9 >= float(amount_usdc):
                 break
@@ -118,6 +147,48 @@ class All5mMarketBuyController(All5mLiveController):
                 price=float(protected_price),
             ),
             order_type=OrderType.FAK,
+        )
+
+    def _record_authoritative_fak_terminal(
+        self,
+        *,
+        trigger: All5mLiveTrigger,
+        client,
+        before: float,
+        exc: Exception,
+    ) -> None:  # noqa: ANN001
+        """Reconcile an explicit FAK terminal response without halting normal no-fills."""
+        order_id = _exception_order_id(exc)
+        response_json = _fak_terminal_response(exc)
+        # FAK may legitimately partial-fill before the remainder is killed. Wait for
+        # any positive token delta; zero after the normal verification window is no-fill.
+        delta = self._wait_for_fill_delta(
+            client,
+            token_id=trigger.token_id,
+            before=before,
+            requested_shares=1e-6,
+        )
+        if delta <= 1e-6:
+            status = "NO_FILL_FAK_KILLED"
+            filled = 0.0
+        else:
+            status = "PARTIAL_FILL_VERIFIED"
+            filled = float(delta)
+
+        self._last_reason = f"{status}_{trigger.combo_key}"
+        self.ledger.update(
+            trigger.claim_key,
+            status=status,
+            order_id=order_id,
+            filled_shares=filled,
+            response_json=response_json,
+        )
+        log.info(
+            "all5m authoritative FAK terminal combo=%s status=%s shares=%.8f order_id=%s; LIVE continues",
+            trigger.combo_key,
+            status,
+            filled,
+            order_id,
         )
 
     def _submit_one(self, trigger: All5mLiveTrigger) -> None:
@@ -165,8 +236,6 @@ class All5mMarketBuyController(All5mLiveController):
                 amount_usdc=live_amount_usdc,
                 max_live_limit_price=max_live_limit,
             )
-            # FAK means "fill whatever is immediately available, cancel the rest".
-            # Therefore any genuine positive protected liquidity is enough to submit.
             if protected_price is None or capacity_usdc <= _POSITIVE_DEPTH_EPS_USDC:
                 self._last_reason = f"FRESH_DEPTH_ZERO_OR_MOVED_{trigger.combo_key}"
                 return
@@ -195,18 +264,27 @@ class All5mMarketBuyController(All5mLiveController):
                 self.ledger.update(trigger.claim_key, status="DISARMED_BEFORE_SUBMIT")
                 return
 
-            raw = self._post_market_buy(
-                client,
-                token_id=trigger.token_id,
-                amount_usdc=live_amount_usdc,
-                protected_price=float(protected_price),
-            )
+            try:
+                raw = self._post_market_buy(
+                    client,
+                    token_id=trigger.token_id,
+                    amount_usdc=live_amount_usdc,
+                    protected_price=float(protected_price),
+                )
+            except Exception as exc:  # noqa: BLE001
+                if _is_authoritative_fak_terminal(exc):
+                    self._record_authoritative_fak_terminal(
+                        trigger=trigger,
+                        client=client,
+                        before=before,
+                        exc=exc,
+                    )
+                    return
+                raise
+
             response_json = _sanitize_order_response(raw)
             order_id = _order_id(raw)
 
-            # A full $1 spend at prices no worse than protected_price must acquire at
-            # least amount/protected_price shares. Use a 90% tolerance for fee/rounding.
-            # Anything positive below that is a valid FAK partial fill, not uncertainty.
             full_fill_min_shares = max(
                 1e-6,
                 (live_amount_usdc / float(protected_price)) * _FULL_FILL_VERIFY_RATIO,

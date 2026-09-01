@@ -2,7 +2,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from p25_live_all5m import All5mLiveTrigger
-from p25_live_all5m_market import All5mMarketBuyController
+from p25_live_all5m_market import (
+    All5mMarketBuyController,
+    _exception_order_id,
+    _is_authoritative_fak_terminal,
+)
 
 
 class _Level:
@@ -83,8 +87,6 @@ def _controller(tmp_path, monkeypatch, book):
 
 
 def test_market_quote_allows_partial_usdc_capacity_and_ignores_share_minimum():
-    # Only $0.60 protected liquidity exists, while book metadata says 5-share minimum.
-    # FAK is allowed to take the available portion and cancel the rest.
     client = _Client(_Book([_Level("0.50", "1.2")], min_order_size="5"))
     price, shares, capacity = All5mMarketBuyController._fresh_market_quote_for_usdc(
         client,
@@ -114,7 +116,6 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
         return {"success": True, "orderID": "fak-partial-1", "status": "matched"}
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
-    # Full $1 at 50c is ~2 shares. One share is a real, verified partial fill.
     monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 1.0)
 
     controller._submit_one(_trigger("cond-partial"))
@@ -128,6 +129,7 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
     assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
     assert status["partial_fill_ok"] is True
     assert status["positive_depth_only"] is True
+    assert status["fak_no_match_is_normal"] is True
     assert 0.0 < status["min_fak_depth_usdc"] <= 1e-8
     assert status["armed"] is True
     assert status["halted"] is False
@@ -180,9 +182,64 @@ def test_fak_zero_fill_is_normal_and_session_continues(tmp_path, monkeypatch):
     assert controller.status()["halted"] is False
 
 
+def test_authoritative_fak_no_match_is_no_fill_and_live_continues(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "1.2")], min_order_size="5"),
+    )
+    exc = RuntimeError(
+        "PolyApiException[status_code=400, error_message={'error': "
+        "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
+        "'orderID': '0xfakdead'}]"
+    )
+    assert _is_authoritative_fak_terminal(exc) is True
+    assert _exception_order_id(exc) == "0xfakdead"
+    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.0)
+
+    controller._submit_one(_trigger("cond-fak-no-match"))
+
+    status = controller.status()
+    assert status["armed"] is True
+    assert status["halted"] is False
+    assert status["last_reason"] == "NO_FILL_FAK_KILLED_SOL:5m"
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "NO_FILL_FAK_KILLED"
+    assert latest["order_id"] == "0xfakdead"
+    assert float(latest["filled_shares"]) == 0.0
+    assert "AUTHORITATIVE_FAK_TERMINAL" in str(latest["response_json"])
+
+
+def test_authoritative_fak_terminal_with_balance_delta_is_partial_fill(tmp_path, monkeypatch):
+    controller, _client = _controller(
+        tmp_path,
+        monkeypatch,
+        _Book([_Level("0.50", "1.2")], min_order_size="5"),
+    )
+    exc = RuntimeError(
+        "PolyApiException[status_code=400, error_message={'error': "
+        "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
+        "'orderID': '0xfakpartial'}]"
+    )
+    monkeypatch.setattr(controller, "_post_market_buy", lambda *_a, **_k: (_ for _ in ()).throw(exc))
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.25)
+
+    controller._submit_one(_trigger("cond-fak-partial-terminal"))
+
+    status = controller.status()
+    assert status["armed"] is True
+    assert status["halted"] is False
+    assert status["last_reason"] == "PARTIAL_FILL_VERIFIED_SOL:5m"
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "PARTIAL_FILL_VERIFIED"
+    assert latest["order_id"] == "0xfakpartial"
+    assert abs(float(latest["filled_shares"]) - 0.25) < 1e-9
+
+
 def test_fak_submits_even_with_one_cent_of_positive_protected_depth(tmp_path, monkeypatch):
-    # Only $0.01 of allowed liquidity. "Fill as much as possible" means this must
-    # still reach the authenticated FAK submit path instead of being locally rejected.
     controller, _client = _controller(
         tmp_path,
         monkeypatch,
@@ -232,3 +289,4 @@ def test_market_buy_source_uses_fak_not_fok():
     assert "OrderType.FAK" in text
     assert "MARKET_BUY_FAK_USDC" in text
     assert "PARTIAL_FILL_VERIFIED" in text
+    assert "NO_FILL_FAK_KILLED" in text
