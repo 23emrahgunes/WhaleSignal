@@ -1,19 +1,21 @@
-"""Fast USDC-denominated FAK executor for guarded ALL-5m LIVE.
+"""Immediate USDC-denominated FAK executor for guarded ALL-5m LIVE.
 
-The paper signal decides *what* to buy.  LIVE execution decides *what price is still
-acceptable now*.  It deliberately does not anchor the live order to the old paper
-fill price: a fast market can move several cents between paper persistence and the
-network submit.  Instead, every order uses a marketable FAK price ceiling derived
-from the paper side probability minus the configured paper minimum edge, bounded by
-the absolute LIVE hard cap.  Thus an order can follow the current book while the
-forecast still has value, but it cannot chase through the edge or the 83c hard cap.
+The paper signal decides *what* to buy. LIVE execution derives a limit ceiling from
+the persisted side probability, not from the stale paper fill price. On every new
+paper OPEN, the controller immediately posts a $1 BUY FAK with:
 
-BTC/ETH/SOL/XRP executions use independent in-flight lanes.  A slow balance/fill
-verification on one asset therefore cannot serialize and delay the other assets.
-Each market condition is still claimed at most once per operator session.  FAK may
-fill any immediately available portion and cancels the remainder.  An explicit CLOB
-400 saying no orders matched a FAK is a normal terminal no-fill/partial-fill outcome;
-unknown post-reserve exceptions remain fail-closed HALT events.
+    limit = min(absolute hard cap, selected side probability - minimum live edge)
+
+The ceiling is rounded down to a conservative cent. There is deliberately no live
+order-book pre-read in the submit path: the FAK limit itself is the atomic liquidity
+and price check at the CLOB matching engine. If asks exist at or below the ceiling,
+whatever is immediately available may fill and the remainder is killed; if nothing
+matches, the authoritative FAK no-match response is a normal zero-fill outcome.
+
+BTC/ETH/SOL/XRP executions use independent in-flight lanes. A slow fill verification
+on one asset therefore cannot serialize and delay the other assets. Each condition is
+still claimed at most once per operator session. Unknown post-reserve exceptions
+remain fail-closed HALT events.
 """
 from __future__ import annotations
 
@@ -28,7 +30,6 @@ from typing import Any
 from p25_live_all5m import (
     All5mLiveController,
     All5mLiveTrigger,
-    _field,
     _order_id,
     _sanitize_order_response,
     evaluate_all5m_trigger_scope,
@@ -37,7 +38,6 @@ from p25_live_all5m import (
 log = logging.getLogger("direction_engine.p25.live_all5m_market")
 
 _MARKET_BUY_FLOOR_USDC = 1.00
-_POSITIVE_DEPTH_EPS_USDC = 1e-9
 _FULL_FILL_VERIFY_RATIO = 0.90
 _FAK_NO_MATCH_TEXT = "no orders found to match with fak order"
 _FAK_TERMINAL_TEXT = "fak orders are partially filled or killed if no match is found"
@@ -102,17 +102,16 @@ def _selected_probability_from_paper(paper: dict[str, Any], side: str) -> float 
         edge = float(paper.get("forecast_edge") or 0.0)
     except (TypeError, ValueError):
         return None
-    candidate = fill + edge
-    return _safe_probability(candidate)
+    return _safe_probability(fill + edge)
 
 
 def _cent_floor(value: float) -> float:
-    """Conservative 1-cent price cap accepted by every current 5m book tick size."""
+    """Conservative 1-cent price cap valid for current short crypto markets."""
     return max(0.01, math.floor((float(value) + 1e-12) * 100.0) / 100.0)
 
 
 class All5mMarketBuyController(All5mLiveController):
-    """Persistent ALL-5m LIVE controller using immediate marketable FAK orders."""
+    """Persistent ALL-5m LIVE controller using immediate signal-triggered FAKs."""
 
     def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002,ANN003
         super().__init__(*args, **kwargs)
@@ -131,16 +130,16 @@ class All5mMarketBuyController(All5mLiveController):
             active = dict(self._fast_inflight)
         payload.update(
             {
-                "order_mode": "MARKETABLE_FAK_LIVE_EDGE_CAP",
+                "order_mode": "SIGNAL_IMMEDIATE_FAK_LIVE_EDGE_CAP",
                 "market_buy_usdc": _MARKET_BUY_FLOOR_USDC,
-                "min_fak_depth_usdc": _POSITIVE_DEPTH_EPS_USDC,
-                "positive_depth_only": True,
                 "local_share_min_gate": False,
                 "partial_fill_ok": True,
                 "fak_no_match_is_normal": True,
                 "paper_drift_enforced": False,
                 "live_min_edge": self._live_edge_floor(),
-                "execution_price_mode": "CURRENT_BOOK_WITH_LIVE_EDGE_CAP",
+                "execution_price_mode": "SIGNAL_IMMEDIATE_LIMIT_CAP",
+                "pre_submit_book_check": False,
+                "matching_engine_is_liquidity_gate": True,
                 "parallel_execution": True,
                 "max_parallel_workers": 4,
                 "parallel_workers": len(active),
@@ -169,9 +168,7 @@ class All5mMarketBuyController(All5mLiveController):
         if not result.get("ok") or not bool(getattr(self.cfg, "p25_live_armed", False)):
             return result
 
-        # Build authenticated clients before the first signal so key/bootstrap work
-        # never sits in the terminal execution path.  One client per asset avoids
-        # cross-thread use of a single SDK client.
+        # Warm one authenticated SDK client per asset before any signal arrives.
         try:
             clients = {
                 asset: self._client_factory(
@@ -186,7 +183,7 @@ class All5mMarketBuyController(All5mLiveController):
             return {"ok": False, "reason": self._last_reason, "status": self.status()}
         with self._fast_lock:
             self._asset_clients = clients
-        self._last_reason = "ARMED_ALL5M_FAST_LANES_WAITING_FOR_NEW_PAPER_OPEN"
+        self._last_reason = "ARMED_ALL5M_IMMEDIATE_FAST_LANES_WAITING_FOR_NEW_PAPER_OPEN"
         return {"ok": True, "reason": self._last_reason, "status": self.status()}
 
     def disarm(self) -> dict[str, Any]:
@@ -249,9 +246,9 @@ class All5mMarketBuyController(All5mLiveController):
         return client
 
     def _live_geoblock(self) -> dict[str, Any]:
-        # The DRY probe already made a real jurisdiction request.  Reuse it for a
-        # bounded five-minute window so an HTTP geoblock round-trip does not delay
-        # every signal.  Once stale, refresh before execution; no bypass is attempted.
+        # DRY made the real jurisdiction call. Reuse it briefly so the hot submit
+        # path is not delayed by another unrelated HTTP round trip. Once stale,
+        # refresh normally; there is no geoblock bypass.
         age = time.monotonic() - self._geo_cache_at
         if self._geo_cache is not None and age <= 300.0:
             return dict(self._geo_cache)
@@ -262,46 +259,6 @@ class All5mMarketBuyController(All5mLiveController):
         return geo
 
     @staticmethod
-    def _fresh_market_quote_for_usdc(
-        client,
-        *,
-        token_id: str,
-        amount_usdc: float,
-        max_live_limit_price: float,
-    ) -> tuple[float | None, float, float]:  # noqa: ANN001
-        """Return (worst observed price, shares, USDC capacity) under live edge cap."""
-        book = client.get_order_book(str(token_id))
-        levels: list[tuple[float, float]] = []
-        for level in (_field(book, "asks", []) or []):
-            try:
-                price = float(_field(level, "price"))
-                size = max(0.0, float(_field(level, "size")))
-            except (TypeError, ValueError):
-                continue
-            if 0 < price <= float(max_live_limit_price) + 1e-12 and size > 0:
-                levels.append((price, size))
-        levels.sort(key=lambda item: item[0])
-
-        remaining = max(0.0, float(amount_usdc))
-        expected_shares = 0.0
-        capacity_usdc = 0.0
-        worst_price: float | None = None
-        for price, size in levels:
-            level_capacity = price * size
-            if level_capacity <= 0:
-                continue
-            take_usdc = min(remaining, level_capacity) if remaining > 1e-9 else 0.0
-            if take_usdc > 0:
-                expected_shares += take_usdc / price
-                remaining -= take_usdc
-                worst_price = price
-            capacity_usdc += min(level_capacity, max(0.0, float(amount_usdc) - capacity_usdc))
-            if capacity_usdc + 1e-9 >= float(amount_usdc):
-                break
-
-        return worst_price, expected_shares, min(capacity_usdc, float(amount_usdc))
-
-    @staticmethod
     def _post_market_buy(
         client,
         *,
@@ -309,7 +266,7 @@ class All5mMarketBuyController(All5mLiveController):
         amount_usdc: float,
         protected_price: float,
     ):  # noqa: ANN001,ANN201
-        """Post a marketable $USDC BUY FAK with a value-derived limit ceiling."""
+        """Immediately post a $USDC BUY FAK with a value-derived limit ceiling."""
         from py_clob_client_v2 import MarketOrderArgs, OrderType, Side
 
         return client.create_and_post_market_order(
@@ -392,7 +349,7 @@ class All5mMarketBuyController(All5mLiveController):
 
             probability = _safe_probability(selected_probability)
             if probability is None:
-                # Compatibility only for direct deterministic unit calls.  Production
+                # Compatibility only for direct deterministic unit calls. Production
                 # submit_async always supplies the persisted selected probability.
                 probability = min(
                     0.99,
@@ -415,21 +372,14 @@ class All5mMarketBuyController(All5mLiveController):
                 return
 
             client = self._client_for_combo(trigger.combo_key)
-            observed_worst, _available_shares, capacity_usdc = self._fresh_market_quote_for_usdc(
-                client,
-                token_id=trigger.token_id,
-                amount_usdc=live_amount_usdc,
-                max_live_limit_price=order_limit_price,
-            )
-            if observed_worst is None or capacity_usdc <= _POSITIVE_DEPTH_EPS_USDC:
-                self._last_reason = f"LIVE_EDGE_NO_EXECUTABLE_ASK_{trigger.combo_key}"
-                return
 
+            # Keep only balance/exposure safety reads before submit. There is no
+            # order-book pre-read: CLOB atomically applies the FAK price ceiling.
             collateral = self._collateral_balance(client)
             if collateral + 1e-9 < live_amount_usdc:
                 self._last_reason = f"INSUFFICIENT_COLLATERAL_{trigger.combo_key}"
                 return
-            before = self._conditional_balance(client, trigger.token_id, refresh=True)
+            before = self._conditional_balance(client, trigger.token_id, refresh=False)
 
             if not bool(getattr(self.cfg, "p25_live_armed", False)):
                 self._last_reason = "DISARMED_BEFORE_RESERVE"
@@ -450,11 +400,10 @@ class All5mMarketBuyController(All5mLiveController):
                 return
 
             log.info(
-                "all5m immediate FAK submit combo=%s side=%s p=%.4f observed=%.4f cap=%.4f edge_floor=%.4f usdc=%.2f",
+                "all5m SIGNAL-IMMEDIATE FAK submit combo=%s side=%s p=%.4f limit=%.4f edge_floor=%.4f usdc=%.2f",
                 trigger.combo_key,
                 trigger.side,
                 probability,
-                float(observed_worst),
                 order_limit_price,
                 min_edge,
                 live_amount_usdc,
