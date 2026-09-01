@@ -24,23 +24,23 @@ from p25_paper_records import (
 
 _ALL5M_JS = r"""
 <script>
-let all5mState={armed:false,dry_ready:false,halted:false,max_stake_usdc:1.10,max_price_drift_pct:.10,max_limit_price:.83,min_arm_collateral_usdc:4.40,positive_depth_only:true,last_reason:'IDLE'};
+let all5mState={armed:false,dry_ready:false,halted:false,max_stake_usdc:1.10,max_limit_price:.83,min_arm_collateral_usdc:4.40,live_min_edge:.08,parallel_execution:true,max_parallel_workers:4,paper_drift_enforced:false,last_reason:'IDLE'};
 function all5mRender(s){
  all5mState=s||all5mState;
  const dry=document.getElementById('all5mDryBtn'),live=document.getElementById('all5mLiveBtn'),m=document.getElementById('all5mLiveMeta');
  if(!dry||!live||!m)return;
  const armed=!!s.armed,halted=!!s.halted,dryReady=!!s.dry_ready;
- const cap=Number(s.max_stake_usdc==null?1.10:s.max_stake_usdc).toFixed(2);
- const drift=(Number(s.max_price_drift_pct==null?.10:s.max_price_drift_pct)*100).toFixed(0);
  const px=(Number(s.max_limit_price==null?.83:s.max_limit_price)*100).toFixed(0);
  const col=Number(s.min_arm_collateral_usdc==null?4.40:s.min_arm_collateral_usdc).toFixed(2);
+ const edge=(Number(s.live_min_edge==null?.08:s.live_min_edge)*100).toFixed(0);
+ const lanes=Number(s.max_parallel_workers==null?4:s.max_parallel_workers).toFixed(0);
  dry.disabled=armed||halted;
  live.disabled=(!armed&&!dryReady)||halted;
  if(armed){live.textContent='🔴 TÜM 5m CANLI · DURDUR';live.style.background='#6f2027';live.style.borderColor='#a13b43';}
  else{live.textContent='🟢 TÜM 5m CANLIYA GEÇ';live.style.background=dryReady?'#12543f':'#3c4658';live.style.borderColor=dryReady?'#23795e':'#596579';}
  dry.textContent=dryReady?'✅ DRY PASS · TEKRAR TEST':'🟡 TÜM 5m DRY TEST';
  const dryTxt=dryReady?'DRY PASS':'DRY GEREKLİ';
- m.textContent=`BTC/ETH/SOL/XRP 5m · ${dryTxt} · FAK $1 · depth >0 · drift ≤%${drift} · hard ${px}¢ · arm bakiye ≥$${col} · ${s.last_reason||'IDLE'}`;
+ m.textContent=`BTC/ETH/SOL/XRP 5m · ${dryTxt} · FAK $1 · ANLIK EDGE ≥${edge}pt · hard ${px}¢ · paralel ${lanes} · arm bakiye ≥$${col} · ${s.last_reason||'IDLE'}`;
 }
 async function all5mPoll(){
  try{const r=await fetch('/api/all5m-live/status',{cache:'no-store'});if(r.ok)all5mRender(await r.json());}catch(e){}
@@ -49,14 +49,18 @@ function all5mPassword(){return prompt('Operatör şifresi (P25_LIVE_CONTROL_PAS
 async function all5mPost(path,confirmText){
  const password=all5mPassword();if(!password)return null;
  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DirectionEngine-All5m'},body:JSON.stringify({password,confirm:confirmText})});
- const d=await r.json();if(d.status)all5mRender(d.status);return {r,d};
+ const raw=await r.text();let d;
+ try{d=raw?JSON.parse(raw):{};}catch(_e){d={ok:false,reason:`HTTP_${r.status}`,message:raw.slice(0,300)};}
+ if(d.status)all5mRender(d.status);
+ if(!r.ok&&!d.reason)d.reason=`HTTP_${r.status}`;
+ return {r,d};
 }
 async function all5mDry(){
  if(!confirm('BTC/ETH/SOL/XRP 5m için gerçek DRY bağlantı testi çalışsın mı?\n\nGeoblock + kimlik + CLOB bakiye + 8 adet UP/DOWN order-book isteği yapılır.\nEMİR OLUŞTURULMAZ, post_orders ÇAĞRILMAZ.'))return;
  try{
   const x=await all5mPost('/api/all5m-live/dry','ALL 5M DRY');if(!x)return;
   const d=x.d,net=(d.checks||{}).network||{},acc=(d.checks||{}).account||{},geo=(d.checks||{}).geoblock||{};
-  alert(`${d.ok?'✅ DRY PASS':'❌ DRY FAIL'}\n${d.reason||''}\nÜlke: ${geo.country||'—'}\nAuthenticated account request: ${acc.authenticated_request_ok?'PASS':'FAIL'}\nCollateral: $${Number(acc.collateral_usdc||0).toFixed(2)}\nBook requests: ${net.book_requests_ok||0}/${net.book_requests_expected||8}\npost_orders çağrıldı mı: ${net.post_orders_called?'EVET':'HAYIR'}`);
+  alert(`${d.ok?'✅ DRY PASS':'❌ DRY FAIL'}\n${d.reason||''}${d.message?'\n'+d.message:''}\nÜlke: ${geo.country||'—'}\nAuthenticated account request: ${acc.authenticated_request_ok?'PASS':'FAIL'}\nCollateral: $${Number(acc.collateral_usdc||0).toFixed(2)}\nBook requests: ${net.book_requests_ok||0}/${net.book_requests_expected||8}\npost_orders çağrıldı mı: ${net.post_orders_called?'EVET':'HAYIR'}`);
  }catch(e){alert('DRY kontrol hatası: '+e);}
  await all5mPoll();
 }
@@ -64,12 +68,12 @@ async function all5mToggle(){
  const s=all5mState||{};
  if(s.armed){
   if(!confirm('BTC/ETH/SOL/XRP 5m LIVE oturumu durdurulsun mu?'))return;
-  try{const x=await all5mPost('/api/all5m-live/disarm','ALL 5M DURDUR');if(x)alert((x.d.ok?'BAŞARILI: ':'RED: ')+(x.d.reason||''));}catch(e){alert('LIVE durdurma hatası: '+e);}
+  try{const x=await all5mPost('/api/all5m-live/disarm','ALL 5M DURDUR');if(x)alert((x.d.ok?'BAŞARILI: ':'RED: ')+(x.d.reason||'')+(x.d.message?'\n'+x.d.message:''));}catch(e){alert('LIVE durdurma hatası: '+e);}
  }else{
   if(!s.dry_ready){alert('Önce DRY TEST PASS olmalı.');return;}
-  const cap=Number(s.max_stake_usdc||1.10).toFixed(2),px=(Number(s.max_limit_price||.83)*100).toFixed(0);
-  if(!confirm(`BTC/ETH/SOL/XRP 5m CANLI oturum açılacak.\n\nYalnız yeni Directional Edge V2 PAPER OPEN sinyalleri izlenir.\nHer market condition için en fazla 1 FAK $1 BUY denemesi.\nProtected fiyat altında herhangi bir pozitif likidite varsa FAK gönderilir; ne kadar dolarsa alınır, kalan miktar iptal edilir.\nMaksimum hard cap $${cap}/emir, fiyat cap ${px}¢.\nDoğrulanmış PARTIAL FILL normaldir ve LIVE devam eder.\nBelirsiz exposure/network hatası olursa tüm LIVE fail-closed HALT olur.\n\nDevam edilsin mi?`))return;
-  try{const x=await all5mPost('/api/all5m-live/arm','ALL 5M CANLI');if(x)alert((x.d.ok?'✅ CANLI AKTİF: ':'❌ RED: ')+(x.d.reason||''));}catch(e){alert('LIVE arm hatası: '+e);}
+  const cap=Number(s.max_stake_usdc||1.10).toFixed(2),px=(Number(s.max_limit_price||.83)*100).toFixed(0),edge=(Number(s.live_min_edge==null?.08:s.live_min_edge)*100).toFixed(0),lanes=Number(s.max_parallel_workers||4).toFixed(0);
+  if(!confirm(`BTC/ETH/SOL/XRP 5m CANLI oturum açılacak.\n\nYalnız yeni Directional Edge V2 PAPER OPEN sinyalleri izlenir.\nHer market condition için en fazla 1 FAK $1 BUY denemesi.\nPAPER FİYATINA %10 DRIFT BAĞI YOKTUR.\nCanlı fiyat tavanı = min(${px}¢ hard cap, seçilen yön olasılığı - ${edge} puan minimum edge).\nO anki CLOB ask bu tavanın altındaysa FAK hemen gönderilir; ne kadar dolarsa alınır, kalan iptal edilir.\nBTC/ETH/SOL/XRP en fazla ${lanes} bağımsız execution lane ile birbirini beklemez.\nMaksimum notional $${cap}/emir.\nDoğrulanmış PARTIAL FILL normaldir ve LIVE devam eder.\nBelirsiz exposure/network hatası olursa tüm LIVE fail-closed HALT olur.\n\nDevam edilsin mi?`))return;
+  try{const x=await all5mPost('/api/all5m-live/arm','ALL 5M CANLI');if(x)alert((x.d.ok?'✅ CANLI AKTİF: ':'❌ RED: ')+(x.d.reason||'')+(x.d.message?'\n'+x.d.message:''));}catch(e){alert('LIVE arm hatası: '+e);}
  }
  await all5mPoll();
 }
@@ -113,7 +117,7 @@ def _main_html() -> str:
     )
     html = html.replace(
         '<b>XRP 5m LIVE</b> yalnız operatör ARM ederse aynı paper OPEN tetikleyicisini FOK emirle izler; maksimum notional $1.10 ve paper fill’e göre en fazla %10 fiyat sapması uygulanır.',
-        '<b>ALL 5m LIVE</b> DRY PASS sonrası operatör ARM ederse BTC/ETH/SOL/XRP 5m yeni paper OPEN tetikleyicilerini $1 FAK emirle izler. Protected fiyat altında pozitif likidite varsa ne kadar dolarsa alınır; doğrulanmış kısmi fill normaldir. DRY sırasında gerçek auth/book istekleri yapılır ama emir gönderilmez.',
+        '<b>ALL 5m LIVE</b> DRY PASS sonrası operatör ARM ederse BTC/ETH/SOL/XRP 5m yeni paper OPEN tetikleyicilerini $1 FAK emirle izler. LIVE fiyatı eski paper fill’e bağlanmaz; anlık CLOB fiyatı yalnız seçilen yön olasılığı eksi minimum edge ve 83¢ hard cap içinde kalıyorsa marketable FAK gönderilir. Dört asset bağımsız execution lane kullanır.',
         1,
     )
     return html.replace("</body>", _ALL5M_JS + "\n</body>", 1)
@@ -154,12 +158,16 @@ def _live_status(engine) -> dict:  # noqa: ANN001
             "scope": "BTC/ETH/SOL/XRP:5m",
             "assets": ["BTC", "ETH", "SOL", "XRP"],
             "max_stake_usdc": 1.10,
-            "max_price_drift_pct": 0.10,
             "max_limit_price": 0.83,
             "min_arm_collateral_usdc": 4.40,
             "min_fak_depth_usdc": 1e-9,
             "positive_depth_only": True,
-            "order_mode": "MARKET_BUY_FAK_USDC",
+            "order_mode": "MARKETABLE_FAK_LIVE_EDGE_CAP",
+            "execution_price_mode": "CURRENT_BOOK_WITH_LIVE_EDGE_CAP",
+            "paper_drift_enforced": False,
+            "live_min_edge": 0.08,
+            "parallel_execution": True,
+            "max_parallel_workers": 4,
             "partial_fill_ok": True,
             "dry_ready": False,
             "last_reason": "CONTROLLER_NOT_ATTACHED",

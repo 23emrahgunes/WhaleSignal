@@ -11,6 +11,7 @@ from p25_web_records import run_web as run_legacy_xrp_web
 def _cfg(tmp_path: Path, strategy: str):
     return SimpleNamespace(
         paper_strategy_version=strategy,
+        paper_min_edge=0.08,
         p25_live_feature_enabled=False,
         p25_live_armed=False,
         p25_live_arm_nonce="",
@@ -42,7 +43,7 @@ def test_repository_baseline_keeps_legacy_xrp_controller_for_deploy_smoke(tmp_pa
     assert web_profile == "XRP5M_LEGACY_WEB"
 
 
-def test_directional_v2_switches_to_dry_first_all5m_market_buy_controller(tmp_path):
+def test_directional_v2_switches_to_signal_immediate_all5m_fak_controller(tmp_path):
     controller, profile = p25_main._build_live_controller(
         _cfg(tmp_path, "INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2")
     )
@@ -55,9 +56,14 @@ def test_directional_v2_switches_to_dry_first_all5m_market_buy_controller(tmp_pa
     assert status["scope"] == "BTC/ETH/SOL/XRP:5m"
     assert status["dry_ready"] is False
     assert status["armed"] is False
-    assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
+    assert status["order_mode"] == "SIGNAL_IMMEDIATE_FAK_LIVE_EDGE_CAP"
+    assert status["execution_price_mode"] == "SIGNAL_IMMEDIATE_LIMIT_CAP"
+    assert status["paper_drift_enforced"] is False
+    assert status["live_min_edge"] == 0.08
+    assert status["pre_submit_book_check"] is False
+    assert status["matching_engine_is_liquidity_gate"] is True
+    assert status["parallel_execution"] is True
+    assert status["max_parallel_workers"] == 4
     assert status["market_buy_usdc"] == 1.0
-    assert status["positive_depth_only"] is True
-    assert 0.0 < status["min_fak_depth_usdc"] <= 1e-8
     assert status["partial_fill_ok"] is True
     assert status["local_share_min_gate"] is False

@@ -14,8 +14,15 @@ def _assert_all5m_controls(html: str) -> None:
     assert "FAK $1" in html
     assert "ne kadar dolarsa alınır" in html
     assert "PARTIAL FILL" in html
-    assert "depth >0" in html
-    assert "herhangi bir pozitif likidite" in html
+    assert "ANLIK EDGE" in html
+    assert "PAPER FİYATINA %10 DRIFT BAĞI YOKTUR" in html
+    assert "seçilen yön olasılığı" in html
+    assert "bağımsız execution lane" in html
+    assert "paralel" in html
+    assert "JSON.parse(raw)" in html
+    assert "HTTP_${r.status}" in html
+    # The old live paper-price drift contract must not be advertised anymore.
+    assert "drift ≤%" not in html
 
 
 def test_main_dashboard_has_dry_then_all5m_live_controls():
