@@ -36,6 +36,18 @@ def test_strict_deploy_profile_contains_directional_v2_contract():
     assert "min_fak_depth_usdc" in text
     assert "positive_depth_only" in text
     assert "partial_fill_ok" in text
+    assert "fak_no_match_is_normal" in text
+
+
+def test_strict_deploy_is_transactional_and_never_runs_baseline_deploy():
+    text = Path("deploy_p25_strict.sh").read_text(encoding="utf-8")
+    assert "bash ./deploy_p25.sh" not in text
+    assert "STRICT PRECHECK: TESTS" in text
+    assert "CANDIDATE CONFIG PASS" in text
+    assert "ACTIVATE DIRECTIONAL EDGE V2 (atomic)" in text
+    assert "ROLLBACK: previous profile restarted" in text
+    assert text.index("STRICT PRECHECK: TESTS") < text.index("ACTIVATE DIRECTIONAL EDGE V2 (atomic)")
+    assert text.index("CANDIDATE CONFIG PASS") < text.index("pkill -f 'python.*p25_main.py'")
 
 
 def test_strict_deploy_success_banner_is_safe_under_nounset_without_positional_args():
@@ -51,6 +63,7 @@ def test_strict_deploy_success_banner_is_safe_under_nounset_without_positional_a
         text=True,
     )
     assert result.returncode == 0, result.stderr
+    assert "transactional=true" in result.stdout
     assert "order=FAK-$1" in result.stdout
     assert "min_fak_depth=>0" in result.stdout
     assert "max=$1.10/order" in result.stdout

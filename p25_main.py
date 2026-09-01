@@ -31,7 +31,8 @@ from p25_paper_reconcile import PaperTradeReconciler
 from p25_deep_value_engine import P25Engine
 from p25_deep_value_recorder import P25DeepValuePaperRecorder
 from p25_snapshot_cache import SnapshotCache
-from p25_all5m_web import run_web
+from p25_all5m_web import run_web as run_all5m_web
+from p25_web_records import run_web as run_legacy_xrp_web
 from p25_live_all5m_market import All5mMarketBuyController
 from p25_live_xrp import XRP5mLivePilot
 from reference import ReferenceRouter
@@ -53,6 +54,13 @@ def _build_live_controller(cfg):  # noqa: ANN001,ANN201
     if str(cfg.paper_strategy_version) == _DIRECTIONAL_ALL5M_STRATEGY:
         return All5mMarketBuyController(cfg), "ALL5M_MARKET_BUY_DRY_FIRST"
     return XRP5mLivePilot(cfg), "XRP5M_LEGACY_BASELINE"
+
+
+def _web_runner_for_live_profile(live_profile: str):  # noqa: ANN201
+    """Never expose ALL-5m controls while the legacy XRP controller is active."""
+    if live_profile == "ALL5M_MARKET_BUY_DRY_FIRST":
+        return run_all5m_web, "ALL5M_WEB"
+    return run_legacy_xrp_web, "XRP5M_LEGACY_WEB"
 
 
 async def run() -> None:
@@ -103,10 +111,12 @@ async def run() -> None:
         live_controller, live_profile = _build_live_controller(cfg)
         engine.attach_xrp5m_live_pilot(live_controller)
         live_status = live_controller.status()
+        web_runner, web_profile = _web_runner_for_live_profile(live_profile)
         log.info(
-            "LIVE controller=%s strategy=%s feature=%s armed=%s max_notional=%.2f "
+            "LIVE controller=%s web=%s strategy=%s feature=%s armed=%s max_notional=%.2f "
             "drift=%.0f%% hard_price_cap=%.3f order_mode=%s market_buy_usdc=%s",
             live_profile,
+            web_profile,
             cfg.paper_strategy_version,
             cfg.p25_live_feature_enabled,
             cfg.p25_live_armed,
@@ -164,7 +174,7 @@ async def run() -> None:
             tasks.append(
                 asyncio.create_task(
                     _supervise(
-                        "web", lambda event: run_web(engine, cfg, event), stop
+                        "web", lambda event: web_runner(engine, cfg, event), stop
                     ),
                     name="web",
                 )
