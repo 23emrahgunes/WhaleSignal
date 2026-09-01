@@ -11,6 +11,7 @@ from p25_web_records import run_web as run_legacy_xrp_web
 def _cfg(tmp_path: Path, strategy: str):
     return SimpleNamespace(
         paper_strategy_version=strategy,
+        paper_min_edge=0.08,
         p25_live_feature_enabled=False,
         p25_live_armed=False,
         p25_live_arm_nonce="",
@@ -55,7 +56,12 @@ def test_directional_v2_switches_to_dry_first_all5m_market_buy_controller(tmp_pa
     assert status["scope"] == "BTC/ETH/SOL/XRP:5m"
     assert status["dry_ready"] is False
     assert status["armed"] is False
-    assert status["order_mode"] == "MARKET_BUY_FAK_USDC"
+    assert status["order_mode"] == "MARKETABLE_FAK_LIVE_EDGE_CAP"
+    assert status["execution_price_mode"] == "CURRENT_BOOK_WITH_LIVE_EDGE_CAP"
+    assert status["paper_drift_enforced"] is False
+    assert status["live_min_edge"] == 0.08
+    assert status["parallel_execution"] is True
+    assert status["max_parallel_workers"] == 4
     assert status["market_buy_usdc"] == 1.0
     assert status["positive_depth_only"] is True
     assert 0.0 < status["min_fak_depth_usdc"] <= 1e-8
