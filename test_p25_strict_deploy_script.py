@@ -32,7 +32,12 @@ def test_strict_deploy_profile_contains_directional_v2_contract():
     assert "P25_LIVE_MAX_STAKE_USDC': '1.10'" in text
     assert "P25_LIVE_ARMED': 'false'" in text
     assert "ALL5M LIVE=DRY_REQUIRED+UNARMED" in text
-    assert "MARKET_BUY_FAK_USDC" in text
+    assert "MARKETABLE_FAK_LIVE_EDGE_CAP" in text
+    assert "CURRENT_BOOK_WITH_LIVE_EDGE_CAP" in text
+    assert "paper_drift_enforced" in text
+    assert "live_min_edge" in text
+    assert "parallel_execution" in text
+    assert "max_parallel_workers" in text
     assert "min_fak_depth_usdc" in text
     assert "positive_depth_only" in text
     assert "partial_fill_ok" in text
@@ -64,6 +69,8 @@ def test_strict_deploy_success_banner_is_safe_under_nounset_without_positional_a
     )
     assert result.returncode == 0, result.stderr
     assert "transactional=true" in result.stdout
-    assert "order=FAK-$1" in result.stdout
-    assert "min_fak_depth=>0" in result.stdout
+    assert "order=FAK-$1@LIVE_EDGE" in result.stdout
+    assert "paper_drift=OFF" in result.stdout
+    assert "live_edge>=8pt" in result.stdout
+    assert "parallel=4" in result.stdout
     assert "max=$1.10/order" in result.stdout
