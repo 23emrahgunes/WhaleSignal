@@ -11,24 +11,8 @@ from p25_live_all5m_market import (
 )
 
 
-class _Level:
-    def __init__(self, price, size):
-        self.price = str(price)
-        self.size = str(size)
-
-
-class _Book:
-    def __init__(self, asks, min_order_size="5"):
-        self.asks = asks
-        self.min_order_size = min_order_size
-
-
 class _Client:
-    def __init__(self, book):
-        self.book = book
-
-    def get_order_book(self, _token):
-        return self.book
+    pass
 
 
 class _Value:
@@ -105,8 +89,8 @@ def _paper(asset="BTC", *, probability=0.90, fill=0.50):
     }
 
 
-def _controller(tmp_path, monkeypatch, book):
-    client = _Client(book)
+def _controller(tmp_path, monkeypatch):
+    client = _Client()
     controller = All5mMarketBuyController(
         _cfg(tmp_path),
         client_factory=lambda **_kwargs: client,
@@ -126,25 +110,8 @@ def _controller(tmp_path, monkeypatch, book):
     return controller, client
 
 
-def test_market_quote_allows_partial_usdc_capacity_and_ignores_share_minimum():
-    client = _Client(_Book([_Level("0.50", "1.2")], min_order_size="5"))
-    price, shares, capacity = All5mMarketBuyController._fresh_market_quote_for_usdc(
-        client,
-        token_id="sol-down",
-        amount_usdc=1.0,
-        max_live_limit_price=0.5555,
-    )
-    assert price == 0.50
-    assert abs(shares - 1.2) < 1e-9
-    assert abs(capacity - 0.60) < 1e-9
-
-
-def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "1.2")], min_order_size="5"),
-    )
+def test_signal_immediate_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatch):
+    controller, _client = _controller(tmp_path, monkeypatch)
     posted = {}
 
     def fake_post(_client, *, token_id, amount_usdc, protected_price):
@@ -158,7 +125,7 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
     monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 1.0)
 
-    # p=58%, live edge floor=8pt -> exact 50c marketable cap.
+    # p=58%, live edge floor=8pt -> exact 50c FAK limit.
     controller._submit_one(_trigger("cond-partial"), selected_probability=0.58)
 
     assert posted == {
@@ -167,15 +134,15 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
         "protected_price": 0.50,
     }
     status = controller.status()
-    assert status["order_mode"] == "MARKETABLE_FAK_LIVE_EDGE_CAP"
-    assert status["execution_price_mode"] == "CURRENT_BOOK_WITH_LIVE_EDGE_CAP"
+    assert status["order_mode"] == "SIGNAL_IMMEDIATE_FAK_LIVE_EDGE_CAP"
+    assert status["execution_price_mode"] == "SIGNAL_IMMEDIATE_LIMIT_CAP"
     assert status["paper_drift_enforced"] is False
     assert status["live_min_edge"] == 0.08
     assert status["parallel_execution"] is True
+    assert status["pre_submit_book_check"] is False
+    assert status["matching_engine_is_liquidity_gate"] is True
     assert status["partial_fill_ok"] is True
-    assert status["positive_depth_only"] is True
     assert status["fak_no_match_is_normal"] is True
-    assert 0.0 < status["min_fak_depth_usdc"] <= 1e-8
     assert status["armed"] is True
     assert status["halted"] is False
     assert status["last_reason"] == "PARTIAL_FILL_VERIFIED_SOL:5m"
@@ -186,22 +153,14 @@ def test_fak_partial_fill_is_verified_and_session_continues(tmp_path, monkeypatc
     assert abs(float(latest["filled_shares"]) - 1.0) < 1e-9
 
 
-def test_live_edge_cap_follows_current_book_instead_of_old_paper_drift(tmp_path, monkeypatch):
-    # Old logic: paper 30c * 1.10 = 33c, so a live 60c ask was skipped.
-    # New logic: p=95%, edge floor=8pt, hard cap=83c -> marketable FAK cap is 83c.
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.60", "10")], min_order_size="5"),
-    )
+def test_live_edge_cap_ignores_old_paper_drift_and_posts_immediately(tmp_path, monkeypatch):
+    # Old logic: paper 30c * 1.10 = 33c. New logic: p=95%, edge floor=8pt,
+    # hard cap=83c -> immediately submit a FAK with 83c price protection.
+    controller, _client = _controller(tmp_path, monkeypatch)
     posted = {}
 
     def fake_post(_client, *, token_id, amount_usdc, protected_price):
-        posted.update(
-            token_id=token_id,
-            amount_usdc=amount_usdc,
-            protected_price=protected_price,
-        )
+        posted.update(token_id=token_id, amount_usdc=amount_usdc, protected_price=protected_price)
         return {"success": True, "orderID": "edge-cap-follow", "status": "matched"}
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
@@ -211,43 +170,49 @@ def test_live_edge_cap_follows_current_book_instead_of_old_paper_drift(tmp_path,
         selected_probability=0.95,
     )
 
-    assert posted["amount_usdc"] == 1.0
-    assert posted["protected_price"] == 0.83
+    assert posted == {
+        "token_id": "sol-down",
+        "amount_usdc": 1.0,
+        "protected_price": 0.83,
+    }
     latest = controller.ledger.latest()
     assert latest is not None
     assert float(latest["live_limit_price"]) == 0.83
     assert latest["status"] == "FILLED_VERIFIED"
 
 
-def test_live_edge_cap_refuses_price_that_erases_forecast_edge(tmp_path, monkeypatch):
-    # p=70%, min live edge=8pt -> cap is 62c. A 63c ask must not be chased.
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.63", "10")], min_order_size="5"),
+def test_live_edge_price_cap_is_sent_to_matching_engine_not_checked_with_local_book(tmp_path, monkeypatch):
+    # p=70%, edge floor=8pt -> 62c limit. We submit immediately at 62c. If the
+    # real best ask is 63c, the CLOB itself atomically kills the FAK as no-match.
+    controller, _client = _controller(tmp_path, monkeypatch)
+    posted = {}
+    exc = RuntimeError(
+        "PolyApiException[status_code=400, error_message={'error': "
+        "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
+        "'orderID': '0xedgecap'}]"
     )
-    posted = {"count": 0}
 
-    def fake_post(*_a, **_k):
-        posted["count"] += 1
-        raise AssertionError("must not submit above live edge cap")
+    def fake_post(_client, *, token_id, amount_usdc, protected_price):
+        posted.update(token_id=token_id, amount_usdc=amount_usdc, protected_price=protected_price)
+        raise exc
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.0)
     controller._submit_one(
         _trigger("cond-edge-erased", fill=0.30),
         selected_probability=0.70,
     )
 
-    assert posted["count"] == 0
-    assert controller.status()["last_reason"] == "LIVE_EDGE_NO_EXECUTABLE_ASK_SOL:5m"
+    assert posted["protected_price"] == 0.62
+    latest = controller.ledger.latest()
+    assert latest is not None
+    assert latest["status"] == "NO_FILL_FAK_KILLED"
+    assert latest["order_id"] == "0xedgecap"
+    assert controller.status()["halted"] is False
 
 
-def test_fak_full_fill_is_verified(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "10")], min_order_size="5"),
-    )
+def test_full_fill_is_verified(tmp_path, monkeypatch):
+    controller, _client = _controller(tmp_path, monkeypatch)
     monkeypatch.setattr(
         controller,
         "_post_market_buy",
@@ -262,12 +227,8 @@ def test_fak_full_fill_is_verified(tmp_path, monkeypatch):
     assert controller.status()["halted"] is False
 
 
-def test_fak_zero_fill_is_normal_and_session_continues(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "1.2")], min_order_size="5"),
-    )
+def test_zero_fill_return_payload_is_normal_and_session_continues(tmp_path, monkeypatch):
+    controller, _client = _controller(tmp_path, monkeypatch)
     monkeypatch.setattr(
         controller,
         "_post_market_buy",
@@ -284,11 +245,7 @@ def test_fak_zero_fill_is_normal_and_session_continues(tmp_path, monkeypatch):
 
 
 def test_authoritative_fak_no_match_is_no_fill_and_live_continues(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "1.2")], min_order_size="5"),
-    )
+    controller, _client = _controller(tmp_path, monkeypatch)
     exc = RuntimeError(
         "PolyApiException[status_code=400, error_message={'error': "
         "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
@@ -314,11 +271,7 @@ def test_authoritative_fak_no_match_is_no_fill_and_live_continues(tmp_path, monk
 
 
 def test_authoritative_fak_terminal_with_balance_delta_is_partial_fill(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "1.2")], min_order_size="5"),
-    )
+    controller, _client = _controller(tmp_path, monkeypatch)
     exc = RuntimeError(
         "PolyApiException[status_code=400, error_message={'error': "
         "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
@@ -340,57 +293,32 @@ def test_authoritative_fak_terminal_with_balance_delta_is_partial_fill(tmp_path,
     assert abs(float(latest["filled_shares"]) - 0.25) < 1e-9
 
 
-def test_fak_submits_even_with_one_cent_of_positive_protected_depth(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "0.02")], min_order_size="5"),
-    )
+def test_no_local_book_precheck_even_when_matching_engine_has_no_liquidity(tmp_path, monkeypatch):
+    controller, _client = _controller(tmp_path, monkeypatch)
     posted = {"count": 0}
+    exc = RuntimeError(
+        "PolyApiException[status_code=400, error_message={'error': "
+        "'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.', "
+        "'orderID': '0xempty'}]"
+    )
 
-    def fake_post(_client, *, token_id, amount_usdc, protected_price):
+    def fake_post(*_args, **_kwargs):
         posted["count"] += 1
-        assert token_id == "sol-down"
-        assert amount_usdc == 1.0
-        assert protected_price == 0.50
-        return {"success": True, "orderID": "fak-one-cent", "status": "matched"}
+        raise exc
 
     monkeypatch.setattr(controller, "_post_market_buy", fake_post)
-    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.02)
-    controller._submit_one(_trigger("cond-one-cent"), selected_probability=0.58)
+    monkeypatch.setattr(controller, "_wait_for_fill_delta", lambda *_a, **_k: 0.0)
+    controller._submit_one(_trigger("cond-no-book-precheck"), selected_probability=0.58)
 
     assert posted["count"] == 1
     latest = controller.ledger.latest()
     assert latest is not None
-    assert latest["status"] == "PARTIAL_FILL_VERIFIED"
-    assert controller.status()["halted"] is False
-
-
-def test_fak_does_not_submit_when_live_edge_depth_is_zero(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([], min_order_size="5"),
-    )
-    posted = {"count": 0}
-
-    def fake_post(*_args, **_kwargs):
-        posted["count"] += 1
-        raise AssertionError("must not post when there is no edge-protected ask liquidity")
-
-    monkeypatch.setattr(controller, "_post_market_buy", fake_post)
-    controller._submit_one(_trigger("cond-zero-depth"), selected_probability=0.58)
-
-    assert posted["count"] == 0
-    assert controller.status()["last_reason"] == "LIVE_EDGE_NO_EXECUTABLE_ASK_SOL:5m"
+    assert latest["status"] == "NO_FILL_FAK_KILLED"
+    assert controller.status()["pre_submit_book_check"] is False
 
 
 def test_submit_async_runs_different_assets_in_parallel_not_one_global_queue(tmp_path, monkeypatch):
-    controller, _client = _controller(
-        tmp_path,
-        monkeypatch,
-        _Book([_Level("0.50", "10")], min_order_size="5"),
-    )
+    controller, _client = _controller(tmp_path, monkeypatch)
     release = threading.Event()
     both_started = threading.Event()
     started: list[str] = []
@@ -423,11 +351,13 @@ def test_submit_async_runs_different_assets_in_parallel_not_one_global_queue(tmp
     assert controller.status()["parallel_workers"] == 0
 
 
-def test_market_buy_source_uses_live_edge_fak_not_paper_drift_or_fok():
+def test_market_buy_source_is_signal_immediate_fak_and_has_no_paper_drift_or_book_precheck():
     text = Path("p25_live_all5m_market.py").read_text(encoding="utf-8")
     assert "OrderType.FAK" in text
-    assert "MARKETABLE_FAK_LIVE_EDGE_CAP" in text
-    assert "paper_drift_enforced\": False" in text
+    assert "SIGNAL_IMMEDIATE_FAK_LIVE_EDGE_CAP" in text
+    assert '"paper_drift_enforced": False' in text
+    assert '"pre_submit_book_check": False' in text
     assert "PARTIAL_FILL_VERIFIED" in text
     assert "NO_FILL_FAK_KILLED" in text
     assert "paper_fill_cap) * (1.0 + drift)" not in text
+    assert "get_order_book" not in text
