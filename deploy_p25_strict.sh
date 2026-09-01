@@ -135,6 +135,8 @@ wanted = {
     'P25_LIVE_HORIZON': '5m',
     'P25_LIVE_STRATEGY_VERSION': 'INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2',
     'P25_LIVE_MAX_STAKE_USDC': '1.10',
+    # Retained only for backwards-compatible config loading. The ALL5m fast-lane
+    # executor no longer anchors its live price to paper_fill * (1+drift).
     'P25_LIVE_MAX_PRICE_DRIFT_PCT': '0.10',
     'P25_LIVE_MAX_LIMIT_PRICE': '0.83',
     'P25_LIVE_LEDGER_PATH': 'data/p25_live_direction.sqlite',
@@ -297,6 +299,11 @@ print('live_scope=', live.get('scope'))
 print('live_armed=', live.get('armed'))
 print('dry_ready=', live.get('dry_ready'))
 print('live_order_mode=', live.get('order_mode'))
+print('live_execution_price_mode=', live.get('execution_price_mode'))
+print('live_paper_drift_enforced=', live.get('paper_drift_enforced'))
+print('live_min_edge=', live.get('live_min_edge'))
+print('live_parallel_execution=', live.get('parallel_execution'))
+print('live_max_parallel_workers=', live.get('max_parallel_workers'))
 print('live_market_buy_usdc=', live.get('market_buy_usdc'))
 print('live_min_fak_depth_usdc=', live.get('min_fak_depth_usdc'))
 print('live_positive_depth_only=', live.get('positive_depth_only'))
@@ -333,7 +340,12 @@ assert live.get('dry_ready') is False
 assert live.get('continuous_session') is True
 assert live.get('one_attempt_per_condition') is True
 assert live.get('post_orders_called_by_dry') is False
-assert live.get('order_mode') == 'MARKET_BUY_FAK_USDC'
+assert live.get('order_mode') == 'MARKETABLE_FAK_LIVE_EDGE_CAP'
+assert live.get('execution_price_mode') == 'CURRENT_BOOK_WITH_LIVE_EDGE_CAP'
+assert live.get('paper_drift_enforced') is False
+assert abs(float(live.get('live_min_edge')) - 0.08) < 1e-9
+assert live.get('parallel_execution') is True
+assert int(live.get('max_parallel_workers')) == 4
 assert abs(float(live.get('market_buy_usdc')) - 1.00) < 1e-9
 assert 0.0 < float(live.get('min_fak_depth_usdc')) <= 1e-8
 assert live.get('positive_depth_only') is True
@@ -346,4 +358,4 @@ PY
 
 applied=0
 trap - ERR
-printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | transactional=true | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | order=FAK-$1 | min_fak_depth=>0 | max=$1.10/order | hard=83c'
+printf '%s\n' 'DIRECTIONAL EDGE V2 DEPLOY PASS | transactional=true | strategy=INDEP_PTB_BINANCE_DIRECTIONAL_5M_V2 | entry=T-75..T-60 | P=<=33/>=67 | z>=0.45 | flip<=0.68 | stability=3s | ask=5-75c | edge>=8pt | value>=1.12x | book<=750ms | depth>=1.5x | ALL5M LIVE=DRY_REQUIRED+UNARMED | order=FAK-$1@LIVE_EDGE | paper_drift=OFF | live_edge>=8pt | parallel=4 | max=$1.10/order | hard=83c'
