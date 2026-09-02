@@ -1,15 +1,16 @@
 """Binance micro-structure confirmation for Direction Engine 5m entries.
 
-This module intentionally does not create a standalone trading signal.  It converts
-recent Binance spot ticks into 5-second OHLC micro-bars and detects three structural
-Smart Money Concepts (SMC) events:
+The module converts recent Binance spot marks into five-second OHLC micro-bars and
+extracts three structural Smart Money Concepts (SMC) confirmations:
 
-* liquidity sweep + reclaim,
+* liquidity sweep plus reclaim/rejection,
 * BOS/CHOCH-style structure break with displacement,
-* three-candle fair-value-gap (FVG) displacement.
+* FVG/displacement imbalance.
 
-The three components are later used as a strict confirmation gate for the independent
-PTB+Binance alpha.  They never read Polymarket prices and never submit orders.
+The FVG detector accepts both a classical three-candle wick gap and a conservative
+"retained displacement" form.  The latter is important for continuously traded,
+highly liquid crypto pairs where literal five-second wick gaps are rare even after a
+real impulsive break.  SMC never reads Polymarket prices and never submits orders.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from typing import Iterable
 
 BAR_MS = 5_000
 LOOKBACK_MS = 90_000
-EVENT_MAX_AGE_SEC = 20.0
+EVENT_MAX_AGE_SEC = 30.0
 SWING_BARS = 5
 MIN_BARS = 12
 
@@ -124,7 +125,7 @@ def build_micro_bars(
     bars: list[MicroBar] = []
     for start in sorted(buckets):
         pts = sorted(buckets[start], key=lambda item: item[0])
-        values = [p for _, p in pts]
+        values = [price for _, price in pts]
         bars.append(
             MicroBar(
                 start_ms=start,
@@ -141,18 +142,18 @@ def build_micro_bars(
 def _atr_price(bars: list[MicroBar], n: int = 10) -> float:
     if len(bars) < 2:
         return 0.0
-    trs: list[float] = []
+    true_ranges: list[float] = []
     for i in range(max(1, len(bars) - n), len(bars)):
         bar = bars[i]
-        prev_close = bars[i - 1].close
-        trs.append(
+        previous_close = bars[i - 1].close
+        true_ranges.append(
             max(
                 bar.high - bar.low,
-                abs(bar.high - prev_close),
-                abs(bar.low - prev_close),
+                abs(bar.high - previous_close),
+                abs(bar.low - previous_close),
             )
         )
-    return float(statistics.median(trs)) if trs else 0.0
+    return float(statistics.median(true_ranges)) if true_ranges else 0.0
 
 
 def _event_age(now_ms: int, bar: MicroBar) -> float:
@@ -166,44 +167,50 @@ def _latest_sweep(bars: list[MicroBar], now_ms: int, atr: float) -> SMCEvent:
         age = _event_age(now_ms, bar)
         if age > EVENT_MAX_AGE_SEC:
             continue
-        prev = bars[i - SWING_BARS : i]
-        swing_high = max(x.high for x in prev)
-        swing_low = min(x.low for x in prev)
-        threshold = max(atr * 0.10, bar.close * 0.00004)  # ~0.4bp floor
-        rng = max(bar.range, 1e-12)
+        previous = bars[i - SWING_BARS : i]
+        swing_high = max(item.high for item in previous)
+        swing_low = min(item.low for item in previous)
+        threshold = max(atr * 0.10, bar.close * 0.00004)
+        candle_range = max(bar.range, 1e-12)
 
-        bull_excursion = swing_low - bar.low
-        bull_reclaim = (bar.close - bar.low) / rng
-        bull = (
-            bull_excursion > threshold
+        bullish_excursion = swing_low - bar.low
+        bullish_reclaim = (bar.close - bar.low) / candle_range
+        bullish = (
+            bullish_excursion > threshold
             and bar.close > swing_low
             and bar.close >= bar.open
-            and bull_reclaim >= 0.65
+            and bullish_reclaim >= 0.65
         )
 
-        bear_excursion = bar.high - swing_high
-        bear_reclaim = (bar.high - bar.close) / rng
-        bear = (
-            bear_excursion > threshold
+        bearish_excursion = bar.high - swing_high
+        bearish_reclaim = (bar.high - bar.close) / candle_range
+        bearish = (
+            bearish_excursion > threshold
             and bar.close < swing_high
             and bar.close <= bar.open
-            and bear_reclaim >= 0.65
+            and bearish_reclaim >= 0.65
         )
 
-        if bull and not bear:
-            strength = min(1.0, 0.55 + 0.45 * bull_excursion / max(atr, threshold))
+        if bullish and not bearish:
+            strength = min(
+                1.0,
+                0.55 + 0.45 * bullish_excursion / max(atr, threshold),
+            )
             best = SMCEvent(+1, age, strength, "SELL_SIDE_SWEEP_RECLAIM")
-        elif bear and not bull:
-            strength = min(1.0, 0.55 + 0.45 * bear_excursion / max(atr, threshold))
+        elif bearish and not bullish:
+            strength = min(
+                1.0,
+                0.55 + 0.45 * bearish_excursion / max(atr, threshold),
+            )
             best = SMCEvent(-1, age, strength, "BUY_SIDE_SWEEP_REJECT")
     return best
 
 
-def _prior_trend_sign(bars: list[MicroBar], i: int) -> int:
-    start = max(0, i - 6)
-    if i - start < 3:
+def _prior_trend_sign(bars: list[MicroBar], index: int) -> int:
+    start = max(0, index - 6)
+    if index - start < 3:
         return 0
-    delta = bars[i - 1].close - bars[start].close
+    delta = bars[index - 1].close - bars[start].close
     return 1 if delta > 0 else (-1 if delta < 0 else 0)
 
 
@@ -214,21 +221,21 @@ def _latest_structure(bars: list[MicroBar], now_ms: int, atr: float) -> SMCEvent
         age = _event_age(now_ms, bar)
         if age > EVENT_MAX_AGE_SEC:
             continue
-        prev = bars[i - SWING_BARS : i]
-        swing_high = max(x.high for x in prev)
-        swing_low = min(x.low for x in prev)
+        previous = bars[i - SWING_BARS : i]
+        swing_high = max(item.high for item in previous)
+        swing_low = min(item.low for item in previous)
         threshold = max(atr * 0.08, bar.close * 0.00004)
         displacement = bar.body >= max(atr * 0.45, bar.close * 0.00003)
         quality = bar.body_ratio >= 0.55 and displacement
         trend = _prior_trend_sign(bars, i)
 
-        bull = quality and bar.close > swing_high + threshold
-        bear = quality and bar.close < swing_low - threshold
-        if bull and not bear:
+        bullish = quality and bar.close > swing_high + threshold
+        bearish = quality and bar.close < swing_low - threshold
+        if bullish and not bearish:
             kind = "BULL_CHOCH" if trend < 0 else "BULL_BOS"
             strength = min(1.0, 0.55 + 0.45 * bar.body / max(atr, threshold))
             best = SMCEvent(+1, age, strength, kind)
-        elif bear and not bull:
+        elif bearish and not bullish:
             kind = "BEAR_CHOCH" if trend > 0 else "BEAR_BOS"
             strength = min(1.0, 0.55 + 0.45 * bar.body / max(atr, threshold))
             best = SMCEvent(-1, age, strength, kind)
@@ -236,27 +243,98 @@ def _latest_structure(bars: list[MicroBar], now_ms: int, atr: float) -> SMCEvent
 
 
 def _latest_fvg(bars: list[MicroBar], now_ms: int, atr: float) -> SMCEvent:
+    """Return the latest classical FVG or retained displacement imbalance.
+
+    Literal wick gaps on five-second BTC/ETH/SOL/XRP data are uncommon because the
+    market trades continuously.  A valid displacement imbalance is therefore also
+    accepted when the impulse candle breaks the two-bars-back extreme and the next
+    candle preserves at least 20% of the impulse body without closing back through
+    the broken level.  This is intentionally stricter than treating every large body
+    as an FVG.
+    """
     best = SMCEvent()
     for i in range(2, len(bars)):
-        a, b, c = bars[i - 2], bars[i - 1], bars[i]
-        age = _event_age(now_ms, c)
+        first, impulse, follow = bars[i - 2], bars[i - 1], bars[i]
+        age = _event_age(now_ms, follow)
         if age > EVENT_MAX_AGE_SEC:
             continue
-        min_gap = max(atr * 0.05, c.close * 0.00002)  # ~0.2bp floor
-        displaced = b.body_ratio >= 0.60 and b.body >= max(atr * 0.55, b.close * 0.00004)
+
+        minimum_gap = max(atr * 0.05, follow.close * 0.00002)
+        displaced = (
+            impulse.body_ratio >= 0.60
+            and impulse.body >= max(atr * 0.55, impulse.close * 0.00004)
+        )
         if not displaced:
             continue
 
-        bull_gap = c.low - a.high
-        bear_gap = a.low - c.high
-        bull = b.close > b.open and bull_gap > min_gap
-        bear = b.close < b.open and bear_gap > min_gap
-        if bull and not bear:
-            strength = min(1.0, 0.55 + 0.45 * bull_gap / max(atr, min_gap))
-            best = SMCEvent(+1, age, strength, "BULL_FVG_DISPLACEMENT")
-        elif bear and not bull:
-            strength = min(1.0, 0.55 + 0.45 * bear_gap / max(atr, min_gap))
-            best = SMCEvent(-1, age, strength, "BEAR_FVG_DISPLACEMENT")
+        classical_bull_gap = follow.low - first.high
+        classical_bear_gap = first.low - follow.high
+
+        bull_retention_floor = impulse.open + 0.20 * impulse.body
+        bear_retention_ceiling = impulse.open - 0.20 * impulse.body
+
+        bullish_classical = (
+            impulse.close > impulse.open
+            and classical_bull_gap > minimum_gap
+        )
+        bearish_classical = (
+            impulse.close < impulse.open
+            and classical_bear_gap > minimum_gap
+        )
+
+        bullish_retained = (
+            impulse.close > impulse.open
+            and impulse.close > first.high + minimum_gap
+            and follow.close > first.high
+            and follow.low > bull_retention_floor
+        )
+        bearish_retained = (
+            impulse.close < impulse.open
+            and impulse.close < first.low - minimum_gap
+            and follow.close < first.low
+            and follow.high < bear_retention_ceiling
+        )
+
+        bullish = bullish_classical or bullish_retained
+        bearish = bearish_classical or bearish_retained
+        if bullish and not bearish:
+            retained = max(
+                0.0,
+                min(1.0, (follow.low - impulse.open) / max(impulse.body, 1e-12)),
+            )
+            gap_ratio = max(0.0, classical_bull_gap) / max(atr, minimum_gap)
+            strength = min(
+                1.0,
+                0.55
+                + 0.20 * min(1.0, impulse.body / max(atr, minimum_gap))
+                + 0.15 * retained
+                + 0.10 * min(1.0, gap_ratio),
+            )
+            kind = (
+                "BULL_FVG_CLASSICAL"
+                if bullish_classical
+                else "BULL_FVG_RETAINED_DISPLACEMENT"
+            )
+            best = SMCEvent(+1, age, strength, kind)
+        elif bearish and not bullish:
+            retained = max(
+                0.0,
+                min(1.0, (impulse.open - follow.high) / max(impulse.body, 1e-12)),
+            )
+            gap_ratio = max(0.0, classical_bear_gap) / max(atr, minimum_gap)
+            strength = min(
+                1.0,
+                0.55
+                + 0.20 * min(1.0, impulse.body / max(atr, minimum_gap))
+                + 0.15 * retained
+                + 0.10 * min(1.0, gap_ratio),
+            )
+            kind = (
+                "BEAR_FVG_CLASSICAL"
+                if bearish_classical
+                else "BEAR_FVG_RETAINED_DISPLACEMENT"
+            )
+            best = SMCEvent(-1, age, strength, kind)
     return best
 
 
@@ -296,9 +374,12 @@ def analyze_smc_bars(bars: list[MicroBar], *, now_ms: int) -> SMCState:
     fvg = _latest_fvg(bars, now_ms, atr)
     events = (sweep, structure, fvg)
     weights = (0.40, 0.35, 0.25)
-    score = sum(weight * event.sign * event.strength for weight, event in zip(weights, events))
-    up = sum(1 for event in events if event.sign > 0)
-    down = sum(1 for event in events if event.sign < 0)
+    score = sum(
+        weight * event.sign * event.strength
+        for weight, event in zip(weights, events)
+    )
+    confirmations_up = sum(1 for event in events if event.sign > 0)
+    confirmations_down = sum(1 for event in events if event.sign < 0)
     return SMCState(
         ready=True,
         reason="OK",
@@ -308,8 +389,8 @@ def analyze_smc_bars(bars: list[MicroBar], *, now_ms: int) -> SMCState:
         structure=structure,
         fvg=fvg,
         score=max(-1.0, min(1.0, score)),
-        confirmations_up=up,
-        confirmations_down=down,
+        confirmations_up=confirmations_up,
+        confirmations_down=confirmations_down,
     )
 
 
