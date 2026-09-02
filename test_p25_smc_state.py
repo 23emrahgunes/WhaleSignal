@@ -119,6 +119,8 @@ def _engine():
 
 
 def test_operational_state_never_scans_sqlite_and_keeps_four_5m_cards():
+    # The exploding recorder makes this a functional no-SQL proof: any accidental
+    # stats/analytics call fails the test immediately.
     state = build_operational_state(_engine())
 
     assert state["forecast_analytics"] == {
@@ -151,6 +153,5 @@ def test_smc_entrypoint_installs_zero_blocking_state_after_smc_patch():
     assert runtime < structural < zero_blocking
 
     state_text = Path("p25_smc_state.py").read_text(encoding="utf-8")
-    assert "engine.recorder.stats" in state_text  # documented forbidden invariant
-    assert "recorder.stats()" not in state_text
-    assert "forecast_analytics()" not in state_text
+    assert "SMC_V3_ZERO_BLOCKING_OPERATIONAL_STATE" in state_text
+    assert "core_engine.P25Engine.snapshot = build_operational_state" in state_text
