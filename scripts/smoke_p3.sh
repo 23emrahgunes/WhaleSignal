@@ -16,7 +16,7 @@ wait_http_200() {
   return 1
 }
 
-pgrep -f 'p25_main\.py' >/dev/null 2>&1 || { echo "FAIL p25_process_missing"; exit 1; }
+pgrep -f 'p25_main(_smc)?\.py' >/dev/null 2>&1 || { echo "FAIL p25_process_missing"; exit 1; }
 if ! P3="$(wait_http_200 p3 http://127.0.0.1:8093/health /tmp/p3-smoke-health.json 30)"; then
   systemctl --no-pager --full status direction-engine-p3-arbitrage.service || true
   tail -n 120 logs/p3-arbitrage.log || true
@@ -31,6 +31,7 @@ done
 import json
 from pathlib import Path
 from p3_config import get_p3_settings
+from p3_dual40_store import connect_dual40
 from p3_live_ledger import ensure_live_ledger_schema
 from p3_schema import connect_p3, ensure_p3_schema, integrity_check
 
@@ -40,22 +41,30 @@ assert health['ok'] is True
 assert health['mode'] == 'DRY', health
 assert health['execution_enabled'] is False, health
 assert health['order_submission_enabled'] is False, health
+assert health.get('strategy') == s.strategy_mode, health
 assert s.live_target_quantity_shares > 0
 assert s.live_target_quantity_shares <= s.live_max_quantity_shares
-assert s.live_max_capital_per_cycle_usdc >= 0  # compatibility only; never sizing input
+assert s.live_max_capital_per_cycle_usdc >= 0
 assert s.live_max_single_leg_notional_usdc > 0
 assert s.live_emergency_unwind_loss_usdc >= s.live_max_projected_unwind_loss_usdc
 assert s.live_rolling_24h_gross_loss_limit_usdc > 0
 conn=connect_p3(s.p3_db_path); ensure_p3_schema(conn); ensure_live_ledger_schema(conn)
 assert integrity_check(conn)=='ok'
 assert conn.execute("SELECT name FROM sqlite_master WHERE name='p3_live_ledger'").fetchone()
+conn.close()
+if s.dual40_active:
+    dual=connect_dual40(s.p3_db_path)
+    assert dual.execute("SELECT name FROM sqlite_master WHERE name='p3_dual40_state'").fetchone()
+    assert dual.execute("SELECT name FROM sqlite_master WHERE name='p3_dual40_cycles'").fetchone()
+    assert s.dual40_ladder() == (5.0,10.0,30.0)
+    assert abs(s.dual40_price-0.40) < 1e-12
+    dual.close()
 assert s.p26_db_path != s.p3_db_path
 print(
     "P3_AWS_SMOKE_PASS starts=DRY p3=200 "
-    f"sizing=equal_shares target={s.live_target_quantity_shares} "
-    f"live_feature={s.live_feature_enabled} live_auto={s.live_auto_execute_enabled}"
+    f"strategy={s.strategy_mode} live_feature={s.live_feature_enabled} "
+    f"live_auto={s.live_auto_execute_enabled}"
 )
-conn.close()
 PY
 
 AUTH_REQUIRED="$("$PY" - <<'PY'

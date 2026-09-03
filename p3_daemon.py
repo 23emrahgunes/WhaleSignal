@@ -1,12 +1,14 @@
-"""P3 structural-arbitrage daemon with DRY default and guarded LIVE arming.
+"""P3 daemon with structural-arbitrage and DUAL40 maker-recovery modes.
 
-Research scanner/replay always remains available. LIVE state is process-local and
-starts DRY after every restart. Authenticated operator actions and analytics share
-the 8093 web process; there is no second LIVE control listener.
+Every process starts DRY. ``P3_STRATEGY_MODE`` selects exactly one engine family:
 
-Pilot policy: one real network-submit cycle per operator arm. Pre-submit skips do not
-consume the arm. Once a two-leg FOK cycle reaches a terminal network outcome, LIVE
-halts and waits for the operator to review/re-arm before another real cycle.
+* ``STRUCTURAL_BUY_MERGE_V3`` keeps the existing immediate FOK BUY+MERGE research
+  scanner and one-network-cycle-per-arm LIVE pilot.
+* ``DUAL40_MAKER_RECOVERY_V1`` runs the isolated, stateful post-only 40-cent maker
+  engine with one global 5 -> 10 -> 30 recovery ladder and persistent hard stop.
+
+Authenticated operator actions and analytics share port 8093. There is no secondary
+LIVE listener and no strategy is allowed to auto-arm after restart.
 """
 from __future__ import annotations
 
@@ -16,23 +18,17 @@ import signal
 import time
 
 from p3_config import P3Settings, get_p3_settings
+from p3_dual40_runtime import ProductionDual40MakerEngine as Dual40MakerEngine
 from p3_entry_replay import P3EntryReplayEngine
 from p3_live_executor_v3 import P3LiveExecutorV3
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
-from p3_web import run_web
+from p3_web_router import run_web
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
 
-# Static-safety compatibility marker: P3LiveExecutorV3 subclasses P3LiveExecutorV2
-# and deliberately preserves its equal-share/FOK/unwind/ledger safety contract.
 
-
-# These statuses are possible only after the LIVE executor has crossed the real
-# network-submit boundary (post_two_leg_fok) or is already fail-closed because that
-# boundary may have been crossed. Skipped/pre-submit outcomes intentionally do not
-# consume the one-cycle pilot arm.
 _NETWORK_CYCLE_TERMINAL_STATUSES = {
     "MERGED_VERIFIED",
     "NO_FILL_VERIFIED",
@@ -45,12 +41,7 @@ _NETWORK_CYCLE_TERMINAL_STATUSES = {
 
 
 def _halt_after_network_cycle(state: LiveState, result: dict) -> bool:
-    """Enforce one real network cycle per operator arm.
-
-    Returns True when the result consumes the current arm. Calling halt on an
-    already-halted one-leg/ambiguity result is harmless and keeps one consistent
-    operator-facing reason for the pilot policy.
-    """
+    """Enforce one real structural network cycle per operator arm."""
     status = str(result.get("status") or "")
     if status not in _NETWORK_CYCLE_TERMINAL_STATUSES:
         return False
@@ -58,7 +49,11 @@ def _halt_after_network_cycle(state: LiveState, result: dict) -> bool:
     return True
 
 
-async def scanner_loop(scanner: StructuralArbScanner, interval_ms: int, stop: asyncio.Event) -> None:
+async def scanner_loop(
+    scanner: StructuralArbScanner,
+    interval_ms: int,
+    stop: asyncio.Event,
+) -> None:
     while not stop.is_set():
         started = time.monotonic()
         try:
@@ -109,20 +104,30 @@ async def research_replay_loop(settings: P3Settings, stop: asyncio.Event) -> Non
             pass
 
 
-async def live_executor_loop(
+async def structural_live_executor_loop(
     settings: P3Settings,
     state: LiveState,
     stop: asyncio.Event,
 ) -> None:
-    """Wait for a valid candidate and allow at most one real network cycle per arm."""
+    """Wait for a structural candidate and allow one network cycle per arm."""
     while not stop.is_set():
         if state.can_auto_execute():
             try:
-                result = await asyncio.to_thread(P3LiveExecutorV3(settings, state).process_once)
+                result = await asyncio.to_thread(
+                    P3LiveExecutorV3(settings, state).process_once
+                )
                 status = str(result.get("status") or "")
                 consumed_arm = _halt_after_network_cycle(state, result)
-                if status not in {"NO_CONFIRMED_WINDOW", "IDLE_NOT_AUTO_ARMED", "IDLE_NOT_ARMED"}:
-                    log.warning("P3 LIVE v3 result=%s one_cycle_arm_consumed=%s", result, consumed_arm)
+                if status not in {
+                    "NO_CONFIRMED_WINDOW",
+                    "IDLE_NOT_AUTO_ARMED",
+                    "IDLE_NOT_ARMED",
+                }:
+                    log.warning(
+                        "P3 LIVE v3 result=%s one_cycle_arm_consumed=%s",
+                        result,
+                        consumed_arm,
+                    )
             except Exception:  # noqa: BLE001
                 state.halt("LIVE_LOOP_EXCEPTION")
                 log.exception("P3 LIVE v3 loop failed closed")
@@ -131,6 +136,43 @@ async def live_executor_loop(
                 stop.wait(),
                 timeout=max(0.02, settings.live_poll_interval_ms / 1000.0),
             )
+        except asyncio.TimeoutError:
+            pass
+
+
+async def dual40_loop(
+    engine: Dual40MakerEngine,
+    interval_ms: int,
+    stop: asyncio.Event,
+) -> None:
+    """Run one DUAL40 state-machine tick at a time outside the event loop."""
+    last_status = ""
+    while not stop.is_set():
+        started = time.monotonic()
+        try:
+            result = await asyncio.to_thread(engine.tick)
+            status = str(result.get("status") or "")
+            if status != last_status or status not in {
+                "WAITING_FOR_BALANCED_MARKET",
+                "PAPER_RESTING",
+                "LIVE_RESTING",
+                "WAIT_RESOLUTION",
+            }:
+                level = logging.WARNING if (
+                    status.startswith("HALT")
+                    or status.endswith("_HALT")
+                    or status.startswith("LIVE_")
+                ) else logging.INFO
+                log.log(level, "DUAL40 result=%s", result)
+                last_status = status
+        except Exception:  # noqa: BLE001
+            if engine.state.is_armed():
+                engine.state.halt("DUAL40_LOOP_EXCEPTION")
+            log.exception("DUAL40 loop failed closed")
+        elapsed = time.monotonic() - started
+        wait = max(0.02, interval_ms / 1000.0 - elapsed)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=wait)
         except asyncio.TimeoutError:
             pass
 
@@ -156,9 +198,9 @@ async def run() -> None:
         auto_execute_enabled=settings.live_auto_execute_enabled,
     )
     log.info(
-        "P3 starting mode=DRY p26_db=%s p3_db=%s scan=%dms web=%s:%d "
-        "web_auth=%s live_feature=%s live_auto=%s live_sizing=equal_shares target=%.3f "
-        "live_policy=fresh_pair_economics+one_network_cycle_per_arm",
+        "P3 starting mode=DRY strategy=%s p26_db=%s p3_db=%s tick=%dms "
+        "web=%s:%d web_auth=%s live_feature=%s live_auto=%s",
+        settings.strategy_mode,
         settings.p26_db_path,
         settings.p3_db_path,
         settings.scan_interval_ms,
@@ -167,31 +209,78 @@ async def run() -> None:
         settings.web_auth_required,
         settings.live_feature_enabled,
         settings.live_auto_execute_enabled,
-        settings.live_target_quantity_shares,
     )
+
     stop = asyncio.Event()
     install_handlers(asyncio.get_running_loop(), stop)
     tasks: list[asyncio.Task] = []
     scanner: StructuralArbScanner | None = None
+    dual40: Dual40MakerEngine | None = None
+
+    if settings.dual40_active:
+        dual40 = Dual40MakerEngine(settings, live_state)
+        log.info(
+            "DUAL40 profile price=%.2f ladder=%s balanced=[%.2f,%.2f] "
+            "lookback=%.1fs confirm=%.1fs min_tte=%.1fs cancel_tte=%.1fs "
+            "one_global_market=true hard_stop_after_30=true",
+            settings.dual40_price,
+            settings.dual40_ladder(),
+            settings.dual40_balanced_mid_low,
+            settings.dual40_balanced_mid_high,
+            settings.dual40_lookback_sec,
+            settings.dual40_confirm_sec,
+            settings.dual40_min_tte_sec,
+            settings.dual40_cancel_tte_sec,
+        )
 
     if settings.web_enabled:
-        tasks.append(asyncio.create_task(run_web(settings, stop, live_state=live_state)))
+        tasks.append(
+            asyncio.create_task(
+                run_web(
+                    settings,
+                    stop,
+                    live_state=live_state,
+                    dual40_engine=dual40,
+                )
+            )
+        )
         await asyncio.sleep(0.10)
-    if settings.scanner_enabled:
-        scanner = StructuralArbScanner(settings)
-        tasks.append(asyncio.create_task(scanner_loop(scanner, settings.scan_interval_ms, stop)))
-        tasks.append(asyncio.create_task(research_replay_loop(settings, stop)))
 
-    # Optional LIVE SDK imports stay lazy until an armed process reaches execution.
-    tasks.append(asyncio.create_task(live_executor_loop(settings, live_state, stop)))
+    if settings.dual40_active:
+        assert dual40 is not None
+        tasks.append(
+            asyncio.create_task(
+                dual40_loop(dual40, settings.scan_interval_ms, stop)
+            )
+        )
+    else:
+        if settings.scanner_enabled:
+            scanner = StructuralArbScanner(settings)
+            tasks.append(
+                asyncio.create_task(
+                    scanner_loop(scanner, settings.scan_interval_ms, stop)
+                )
+            )
+            tasks.append(asyncio.create_task(research_replay_loop(settings, stop)))
+        tasks.append(
+            asyncio.create_task(
+                structural_live_executor_loop(settings, live_state, stop)
+            )
+        )
 
     if not tasks:
         raise RuntimeError("P3 has no enabled tasks")
     try:
         await asyncio.gather(*tasks)
     finally:
-        live_state.disarm("process_shutdown")
         stop.set()
+        if dual40 is not None:
+            try:
+                await asyncio.to_thread(dual40.shutdown)
+            except Exception:  # noqa: BLE001
+                live_state.halt("DUAL40_SHUTDOWN_EXCEPTION")
+                log.exception("DUAL40 shutdown failed closed")
+        live_state.disarm("process_shutdown")
         if scanner is not None:
             scanner.close()
 

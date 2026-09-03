@@ -32,7 +32,18 @@ jobs:
           PHASE: P1
           MODEL_TRAINING_ENABLED: 'false'
           CALIBRATION_ENABLED: 'false'
-        run: pytest -q
+        run: |
+          set -o pipefail
+          pytest -q --tb=short 2>&1 | tee pytest-full.log
+
+      - name: Upload pytest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-full-log
+          path: pytest-full.log
+          if-no-files-found: warn
+          retention-days: 1
 
   live-sdk-contract:
     runs-on: ubuntu-latest
