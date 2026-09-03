@@ -1,8 +1,8 @@
-"""Configuration for P3 structural arbitrage DRY research and guarded LIVE mode.
+"""Configuration for P3 structural and DUAL40 maker-recovery strategies.
 
-DRY remains the default. LIVE is separately armed through the authenticated 8093
-operator surface. LIVE v2 sizes UP/DOWN in equal shares and treats dollar notional
-as a derived safety metric instead of a proportional sizing input.
+Every process starts DRY. LIVE is separately armed through the authenticated 8093
+operator surface. ``P3_STRATEGY_MODE`` selects either the existing immediate
+BUY+MERGE engine or the isolated post-only DUAL40 maker-recovery cohort.
 """
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ from pathlib import Path
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+STRUCTURAL_MODE = "STRUCTURAL_BUY_MERGE_V3"
+DUAL40_MODE = "DUAL40_MAKER_RECOVERY_V1"
 
 
 class P3Settings(BaseSettings):
@@ -23,6 +27,7 @@ class P3Settings(BaseSettings):
         populate_by_name=True,
     )
 
+    strategy_mode: str = Field(default=STRUCTURAL_MODE, alias="P3_STRATEGY_MODE")
     p26_db_path: str = Field(default="data/p26_research.sqlite", alias="P3_P26_DB_PATH")
     p3_db_path: str = Field(default="data/p3_arbitrage.sqlite", alias="P3_DB_PATH")
     reports_dir: str = Field(default="reports/p3", alias="P3_REPORTS_DIR")
@@ -53,7 +58,7 @@ class P3Settings(BaseSettings):
         default=20, alias="P3_REPLAY_RUNTIME_BATCH_SIZE"
     )
 
-    # STRICT DRY policy: one independent simulated attempt per opportunity window.
+    # STRICT DRY policy for the existing immediate complete-set engine.
     dry_enabled: bool = Field(default=True, alias="P3_DRY_ENABLED")
     dry_latency_ms: int = Field(default=100, alias="P3_DRY_LATENCY_MS")
     dry_entry_confirm_ms: int = Field(default=250, alias="P3_DRY_ENTRY_CONFIRM_MS")
@@ -65,7 +70,6 @@ class P3Settings(BaseSettings):
     dry_min_net_profit_usdc: float = Field(default=0.01, alias="P3_DRY_MIN_NET_PROFIT_USDC")
     dry_min_net_roi: float = Field(default=0.0025, alias="P3_DRY_MIN_NET_ROI")
 
-    # Research promotion gates. These are also the default LIVE arming gates.
     readiness_min_windows: int = Field(default=100, alias="P3_READINESS_MIN_WINDOWS")
     readiness_min_pair_completion: float = Field(
         default=0.97, alias="P3_READINESS_MIN_PAIR_COMPLETION"
@@ -81,7 +85,50 @@ class P3Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
-    # Guarded LIVE v2. Disabled by default.
+    # DUAL40 maker-recovery cohort. One global market at a time.
+    # -------------------------------------------------------------------------
+    dual40_paper_enabled: bool = Field(default=True, alias="P3_DUAL40_PAPER_ENABLED")
+    dual40_assets_csv: str = Field(default="BTC,ETH,SOL,XRP", alias="P3_DUAL40_ASSETS")
+    dual40_horizon: str = Field(default="5m", alias="P3_DUAL40_HORIZON")
+    dual40_price: float = Field(default=0.40, alias="P3_DUAL40_PRICE")
+    dual40_ladder_csv: str = Field(default="5,10,30", alias="P3_DUAL40_LADDER")
+    dual40_market_age_sec: float = Field(default=30.0, alias="P3_DUAL40_MARKET_AGE_SEC")
+    dual40_min_tte_sec: float = Field(default=90.0, alias="P3_DUAL40_MIN_TTE_SEC")
+    dual40_cancel_tte_sec: float = Field(default=40.0, alias="P3_DUAL40_CANCEL_TTE_SEC")
+    dual40_lookback_sec: float = Field(default=20.0, alias="P3_DUAL40_LOOKBACK_SEC")
+    dual40_confirm_sec: float = Field(default=5.0, alias="P3_DUAL40_CONFIRM_SEC")
+    dual40_balanced_mid_low: float = Field(default=0.44, alias="P3_DUAL40_BALANCED_MID_LOW")
+    dual40_balanced_mid_high: float = Field(default=0.56, alias="P3_DUAL40_BALANCED_MID_HIGH")
+    dual40_max_mid_range: float = Field(default=0.10, alias="P3_DUAL40_MAX_MID_RANGE")
+    dual40_max_net_drift: float = Field(default=0.04, alias="P3_DUAL40_MAX_NET_DRIFT")
+    dual40_max_abs_slope_per_sec: float = Field(
+        default=0.0030, alias="P3_DUAL40_MAX_ABS_SLOPE_PER_SEC"
+    )
+    dual40_max_one_way_ratio: float = Field(
+        default=0.72, alias="P3_DUAL40_MAX_ONE_WAY_RATIO"
+    )
+    dual40_max_single_jump: float = Field(default=0.06, alias="P3_DUAL40_MAX_SINGLE_JUMP")
+    dual40_max_complement_residual: float = Field(
+        default=0.04, alias="P3_DUAL40_MAX_COMPLEMENT_RESIDUAL"
+    )
+    dual40_max_spread_each: float = Field(default=0.10, alias="P3_DUAL40_MAX_SPREAD_EACH")
+    dual40_near_touch_price: float = Field(default=0.41, alias="P3_DUAL40_NEAR_TOUCH_PRICE")
+    dual40_book_fresh_ms: int = Field(default=1500, alias="P3_DUAL40_BOOK_FRESH_MS")
+    dual40_heartbeat_sec: float = Field(default=5.0, alias="P3_DUAL40_HEARTBEAT_SEC")
+    dual40_balance_poll_sec: float = Field(default=1.0, alias="P3_DUAL40_BALANCE_POLL_SEC")
+    dual40_resolution_poll_sec: float = Field(
+        default=10.0, alias="P3_DUAL40_RESOLUTION_POLL_SEC"
+    )
+    dual40_gamma_host: str = Field(
+        default="https://gamma-api.polymarket.com", alias="P3_DUAL40_GAMMA_HOST"
+    )
+    dual40_min_collateral_to_arm_usdc: float = Field(
+        default=35.0, alias="P3_DUAL40_MIN_COLLATERAL_TO_ARM_USDC"
+    )
+    dual40_fill_epsilon: float = Field(default=0.00001, alias="P3_DUAL40_FILL_EPSILON")
+
+    # -------------------------------------------------------------------------
+    # Guarded LIVE. Disabled by default and always starts unarmed.
     # -------------------------------------------------------------------------
     live_feature_enabled: bool = Field(default=False, alias="P3_LIVE_FEATURE_ENABLED")
     live_auto_execute_enabled: bool = Field(
@@ -91,32 +138,19 @@ class P3Settings(BaseSettings):
         default=True, alias="P3_LIVE_REQUIRE_DRY_VALIDATED"
     )
     live_buy_merge_only: bool = Field(default=True, alias="P3_LIVE_BUY_MERGE_ONLY")
-
-    # Equal-share sizing. Q is selected as min(STRICT optimum, target, hard max,
-    # fresh UP depth, fresh DOWN depth). The same exact Q is submitted on both legs.
     live_target_quantity_shares: float = Field(
         default=5.0, alias="P3_LIVE_TARGET_QUANTITY_SHARES"
     )
     live_max_quantity_shares: float = Field(
         default=10.0, alias="P3_LIVE_MAX_QUANTITY_SHARES"
     )
-
-    # Backward-compatible knob from LIVE v1. It is intentionally NOT used for
-    # proportional scaling anymore. Keep 0 to make that explicit; nonzero legacy
-    # env values are accepted but ignored by LIVE v2 sizing.
     live_max_capital_per_cycle_usdc: float = Field(
         default=0.0, alias="P3_LIVE_MAX_CAPITAL_PER_CYCLE_USDC"
     )
-
-    # LIVE edge gates are recomputed from fresh CLOB depth at the selected equal Q.
     live_min_net_profit_usdc: float = Field(
         default=0.01, alias="P3_LIVE_MIN_NET_PROFIT_USDC"
     )
     live_min_net_roi: float = Field(default=0.0025, alias="P3_LIVE_MIN_NET_ROI")
-
-    # Single-leg controls. The notional cap bounds the worst capital exposed if one
-    # FOK leg fills while its pair is killed. Before entry, BOTH possible one-leg
-    # outcomes must have full visible unwind depth and acceptable projected loss.
     live_min_collateral_to_arm_usdc: float = Field(
         default=5.0, alias="P3_LIVE_MIN_COLLATERAL_TO_ARM_USDC"
     )
@@ -141,7 +175,6 @@ class P3Settings(BaseSettings):
     live_rolling_24h_gross_loss_limit_usdc: float = Field(
         default=2.0, alias="P3_LIVE_ROLLING_24H_GROSS_LOSS_LIMIT_USDC"
     )
-
     live_poll_interval_ms: int = Field(default=100, alias="P3_LIVE_POLL_INTERVAL_MS")
     live_settlement_wait_sec: float = Field(
         default=15.0, alias="P3_LIVE_SETTLEMENT_WAIT_SEC"
@@ -160,14 +193,10 @@ class P3Settings(BaseSettings):
         default=True, alias="P3_LIVE_REQUIRE_GEOBLOCK_CLEAR"
     )
 
-    # Deprecated compatibility knobs from the first LIVE prototype. The daemon no
-    # longer starts a second control server; all operator actions are served on 8093.
     live_control_enabled: bool = Field(default=False, alias="P3_LIVE_CONTROL_ENABLED")
     live_control_host: str = Field(default="127.0.0.1", alias="P3_LIVE_CONTROL_HOST")
     live_control_port: int = Field(default=8094, alias="P3_LIVE_CONTROL_PORT")
 
-    # Main analytics + operator dashboard. When LIVE is enabled, authentication is
-    # mandatory. The password is redacted by SecretStr and is never returned by APIs.
     web_enabled: bool = Field(default=True, alias="P3_WEB_ENABLED")
     web_host: str = Field(default="127.0.0.1", alias="P3_WEB_HOST")
     web_port: int = Field(default=8093, alias="P3_WEB_PORT")
@@ -179,6 +208,26 @@ class P3Settings(BaseSettings):
     web_cookie_secure: bool = Field(default=False, alias="P3_WEB_COOKIE_SECURE")
     web_login_max_failures: int = Field(default=5, alias="P3_WEB_LOGIN_MAX_FAILURES")
     web_login_window_sec: int = Field(default=600, alias="P3_WEB_LOGIN_WINDOW_SEC")
+
+    @property
+    def dual40_active(self) -> bool:
+        return self.strategy_mode.strip().upper() == DUAL40_MODE
+
+    def dual40_assets(self) -> tuple[str, ...]:
+        values = tuple(
+            asset.strip().upper()
+            for asset in self.dual40_assets_csv.split(",")
+            if asset.strip()
+        )
+        if not values:
+            raise ValueError("P3_DUAL40_ASSETS cannot be empty")
+        return values
+
+    def dual40_ladder(self) -> tuple[float, ...]:
+        values = tuple(float(value.strip()) for value in self.dual40_ladder_csv.split(",") if value.strip())
+        if not values:
+            raise ValueError("P3_DUAL40_LADDER cannot be empty")
+        return values
 
     @staticmethod
     def _parse_nonnegative_ms(raw: str, *, name: str) -> tuple[int, ...]:
@@ -208,6 +257,9 @@ class P3Settings(BaseSettings):
         return self.web_password.get_secret_value() if self.web_password is not None else ""
 
     def validate_research_safety(self) -> None:
+        mode = self.strategy_mode.strip().upper()
+        if mode not in {STRUCTURAL_MODE, DUAL40_MODE}:
+            raise ValueError(f"unsupported P3_STRATEGY_MODE: {self.strategy_mode}")
         if Path(self.p26_db_path).resolve() == Path(self.p3_db_path).resolve():
             raise ValueError("P3_DB_PATH must be separate from P2.6 database")
         if self.scan_interval_ms < 20:
@@ -264,7 +316,6 @@ class P3Settings(BaseSettings):
         if self.live_feature_enabled and not self.web_auth_required:
             raise ValueError("P3 WEB authentication is required whenever LIVE feature is enabled")
 
-        # LIVE v2 structural safety contract.
         if self.live_target_quantity_shares <= 0 or self.live_max_quantity_shares <= 0:
             raise ValueError("LIVE target/max share quantities must be positive")
         if self.live_target_quantity_shares > self.live_max_quantity_shares:
@@ -292,11 +343,46 @@ class P3Settings(BaseSettings):
         if self.live_settlement_wait_sec <= 0 or self.live_settlement_poll_sec <= 0:
             raise ValueError("LIVE settlement timings must be positive")
         if self.live_chain_id != 137:
-            raise ValueError("P3 LIVE v2 supports Polygon mainnet chain_id=137 only")
-        if not self.live_buy_merge_only:
-            raise ValueError("P3 LIVE v2 only supports BUY+MERGE; SPLIT+SELL stays disabled")
+            raise ValueError("P3 LIVE supports Polygon mainnet chain_id=137 only")
+        if mode == STRUCTURAL_MODE and not self.live_buy_merge_only:
+            raise ValueError("structural LIVE supports BUY+MERGE only")
         if self.live_auto_execute_enabled and not self.live_feature_enabled:
             raise ValueError("LIVE auto execution cannot be enabled while LIVE feature is disabled")
+
+        if self.dual40_active:
+            allowed_assets = {"BTC", "ETH", "SOL", "XRP"}
+            assets = self.dual40_assets()
+            if set(assets) - allowed_assets:
+                raise ValueError("DUAL40 assets must be BTC/ETH/SOL/XRP")
+            if len(set(assets)) != len(assets):
+                raise ValueError("DUAL40 assets cannot contain duplicates")
+            if self.dual40_horizon.strip().lower() != "5m":
+                raise ValueError("DUAL40 currently supports 5m only")
+            ladder = self.dual40_ladder()
+            if ladder != (5.0, 10.0, 30.0):
+                raise ValueError("DUAL40 recovery ladder is hard-locked to 5,10,30")
+            if abs(self.dual40_price - 0.40) > 1e-12:
+                raise ValueError("DUAL40 maker price is hard-locked to 0.40")
+            if self.dual40_near_touch_price < self.dual40_price:
+                raise ValueError("DUAL40 near-touch price cannot be below maker price")
+            if self.dual40_market_age_sec < self.dual40_lookback_sec:
+                raise ValueError("DUAL40 market age must cover lookback")
+            if self.dual40_min_tte_sec <= self.dual40_cancel_tte_sec:
+                raise ValueError("DUAL40 min TTE must exceed cancel TTE")
+            if self.dual40_confirm_sec <= 0:
+                raise ValueError("DUAL40 confirmation must be positive")
+            if not 0.0 <= self.dual40_max_one_way_ratio <= 1.0:
+                raise ValueError("DUAL40 one-way ratio must be in [0,1]")
+            if self.dual40_book_fresh_ms <= 0:
+                raise ValueError("DUAL40 book freshness must be positive")
+            if self.dual40_heartbeat_sec <= 0 or self.dual40_balance_poll_sec <= 0:
+                raise ValueError("DUAL40 heartbeat/balance polling must be positive")
+            if self.dual40_resolution_poll_sec <= 0:
+                raise ValueError("DUAL40 resolution polling must be positive")
+            if self.dual40_min_collateral_to_arm_usdc + 1e-9 < 30.0:
+                raise ValueError("DUAL40 LIVE arm collateral cannot be below $30")
+            if self.dual40_fill_epsilon <= 0:
+                raise ValueError("DUAL40 fill epsilon must be positive")
 
     def ensure_directories(self) -> None:
         Path(self.p3_db_path).parent.mkdir(parents=True, exist_ok=True)
