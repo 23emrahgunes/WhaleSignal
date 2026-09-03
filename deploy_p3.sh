@@ -8,6 +8,10 @@ Usage: ./deploy_p3.sh [--no-pull] [--skip-tests]
 Deploy the P3 strategy selected by P3_STRATEGY_MODE. The process always starts DRY.
 Guarded LIVE support requires authenticated 8093, preflight and explicit operator
 arming before any real order may be submitted.
+
+Optional environment controls:
+  P3_DEPLOY_BRANCH    Expected branch to fetch/check out (default: direction-engine)
+  P3_EXPECTED_COMMIT  Exact commit required before service restart
 EOF
 }
 
@@ -27,6 +31,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 SUDO=""
 [[ "$EUID" -eq 0 ]] || SUDO=sudo
+DEPLOY_BRANCH="${P3_DEPLOY_BRANCH:-direction-engine}"
+EXPECTED_COMMIT="${P3_EXPECTED_COMMIT:-}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -41,14 +47,17 @@ p25_alive() {
 
 if [[ "$DO_PULL" == "1" ]]; then
   [[ -z "$(git status --porcelain --untracked-files=all)" ]] || fail "working tree dirty"
-  git fetch origin direction-engine
-  git checkout direction-engine
-  git pull --ff-only origin direction-engine
+  git fetch origin "$DEPLOY_BRANCH"
+  git checkout "$DEPLOY_BRANCH"
+  git pull --ff-only origin "$DEPLOY_BRANCH"
 fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-[[ "$BRANCH" == "direction-engine" ]] || fail "expected direction-engine branch"
+[[ "$BRANCH" == "$DEPLOY_BRANCH" ]] || fail "expected branch=$DEPLOY_BRANCH actual=$BRANCH"
 COMMIT="$(git rev-parse HEAD)"
+if [[ -n "$EXPECTED_COMMIT" && "$COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  fail "expected commit=$EXPECTED_COMMIT actual=$COMMIT"
+fi
 echo "branch=$BRANCH commit=$COMMIT"
 
 p25_alive || fail "P2.5 process is not running"
@@ -171,4 +180,4 @@ $SUDO systemctl is-active --quiet direction-engine-p3-arbitrage.service || fail 
 bash scripts/smoke_p3.sh
 p25_alive || fail "P2.5 process stopped during P3 deploy"
 
-echo "P3 DEPLOY PASS | starts=DRY | strategy=$STRATEGY_MODE | control=authenticated_8093 | live_feature=$LIVE_FEATURE | p25=process_alive"
+echo "P3 DEPLOY PASS | starts=DRY | branch=$BRANCH | commit=$COMMIT | strategy=$STRATEGY_MODE | control=authenticated_8093 | live_feature=$LIVE_FEATURE | p25=process_alive"
