@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from p3_config import P3Settings
 from p3_dry_run import build_dry_summary
+from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import Dual40Policy
 from p3_dual40_store import active_cycle, connect_dual40, ladder_state
 from p3_live_clients import (
@@ -275,22 +276,53 @@ def run_live_preflight(
             if for_arming:
                 reasons.append("STRICT_DRY_CHECK_FAILED")
 
+    dual40_required_collateral: float | None = None
+    dual40_level_index: int | None = None
     if settings.dual40_active:
         policy = Dual40Policy(
             price=settings.dual40_price,
             ladder=settings.dual40_ladder(),
         )
+        try:
+            ladder = (dual40_check or {}).get("ladder_state") or {}
+            dual40_level_index = int(ladder.get("level_index") or 0)
+            dual40_required_collateral = required_live_collateral(
+                policy=policy,
+                level_index=dual40_level_index,
+                initial_arm_floor_usdc=(
+                    settings.dual40_min_collateral_to_arm_usdc
+                ),
+            )
+            operator_buffer = max(
+                0.0,
+                float(settings.dual40_min_collateral_to_arm_usdc)
+                - float(policy.full_ladder_capital),
+            )
+            capital_error = None
+        except Exception as exc:  # noqa: BLE001
+            operator_buffer = None
+            capital_error = {
+                "type": type(exc).__name__,
+                "message": str(exc)[:200],
+            }
+            if for_arming:
+                reasons.append("DUAL40_CAPITAL_PATH_INVALID")
+
         checks["risk_config"] = {
             "strategy": "DUAL40_MAKER_RECOVERY_V1",
             "order": "POST_ONLY_GTC",
             "price_each_side": settings.dual40_price,
             "ladder": list(settings.dual40_ladder()),
+            "current_level_index": dual40_level_index,
             "hard_stop_after_30": True,
             "one_global_market_only": True,
             "full_ladder_capital_usdc": policy.full_ladder_capital,
-            "min_collateral_to_arm_usdc": (
+            "initial_arm_floor_usdc": (
                 settings.dual40_min_collateral_to_arm_usdc
             ),
+            "required_collateral_now_usdc": dual40_required_collateral,
+            "operator_buffer_usdc": operator_buffer,
+            "capital_path_error": capital_error,
             "cancel_tte_sec": settings.dual40_cancel_tte_sec,
         }
     else:
@@ -336,12 +368,14 @@ def run_live_preflight(
             reasons.append("STRICT_DRY_NOT_VALIDATED")
 
         required_collateral = (
-            float(settings.dual40_min_collateral_to_arm_usdc)
+            dual40_required_collateral
             if settings.dual40_active
             else float(settings.live_min_collateral_to_arm_usdc)
         )
         if collateral_usdc is None:
             reasons.append("COLLATERAL_BALANCE_UNKNOWN")
+        elif required_collateral is None:
+            reasons.append("DUAL40_CAPITAL_PATH_INVALID")
         elif collateral_usdc + 1e-9 < required_collateral:
             reasons.append("INSUFFICIENT_COLLATERAL")
         if allowance_ready is False:
@@ -387,6 +421,11 @@ def run_live_preflight(
                 float(settings.dual40_ladder()[-1])
                 if settings.dual40_active
                 else float(settings.live_max_quantity_shares)
+            ),
+            "required_collateral_now_usdc": (
+                dual40_required_collateral
+                if settings.dual40_active
+                else float(settings.live_min_collateral_to_arm_usdc)
             ),
             "require_dry_validated": bool(
                 settings.live_require_dry_validated
