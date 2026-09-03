@@ -25,11 +25,30 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
             or heartbeat_id
         )
         return {
-            "ok": not bool(value.get("error")),
+            "ok": not bool(value.get("error") or value.get("errorMsg")),
             "heartbeat_id": str(returned or ""),
             "response": _sanitize_response(value),
             "sent_at_ms": int(time.time() * 1000),
         }
+
+    def cancel_all_orders(self) -> dict[str, Any]:
+        """Fail-closed cancellation for submissions whose order IDs are unknown."""
+        try:
+            raw = self.clob.cancel_all()
+            value = raw if isinstance(raw, dict) else {"value": str(raw)}
+            return {
+                "ok": not bool(value.get("error") or value.get("errorMsg")),
+                "scope": "ALL_OPEN_ORDERS",
+                "response": _sanitize_response(value),
+                "cancelled_at_ms": int(time.time() * 1000),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "scope": "ALL_OPEN_ORDERS",
+                "error": {"type": type(exc).__name__, "message": str(exc)[:240]},
+                "cancelled_at_ms": int(time.time() * 1000),
+            }
 
     def post_pair_post_only_gtc(
         self,
@@ -90,12 +109,18 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
                 post_only=True,
             )
         except Exception as exc:  # noqa: BLE001
+            # The server may have accepted one or both orders before the response was
+            # lost. Cancel every open order immediately; the strategy layer will then
+            # reconcile conditional-token balances before deciding the cycle result.
+            emergency_cancel = self.cancel_all_orders()
             return {
                 "ok": False,
                 "response_uncertain": True,
+                "reconciliation_required": True,
                 "error_code": "POST_ONLY_BATCH_EXCEPTION",
                 "error": {"type": type(exc).__name__, "message": str(exc)[:240]},
                 "heartbeat": hb,
+                "emergency_cancel_all": emergency_cancel,
                 "up_order_id": None,
                 "down_order_id": None,
             }
@@ -125,28 +150,33 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
             return result
 
         # Batch posting is parallel, not atomic. If one order was accepted while the
-        # other was rejected, remove the accepted resting order immediately.
-        cancel = None
-        if accepted:
-            try:
-                cancel = self.clob.cancel_orders(accepted)
-            except Exception as exc:  # noqa: BLE001
-                cancel = {"error": type(exc).__name__, "message": str(exc)[:200]}
+        # other was rejected, remove the accepted resting order immediately and force
+        # balance reconciliation before the cycle can be declared a no-fill.
+        cancel = self.cancel_pair(*accepted) if accepted else None
+        cancel_all = None
+        if accepted and not bool((cancel or {}).get("ok")):
+            cancel_all = self.cancel_all_orders()
         result["error_code"] = "POST_ONLY_PAIR_NOT_BOTH_ACCEPTED"
         result["accepted_order_ids"] = accepted
         result["compensating_cancel"] = cancel
+        result["emergency_cancel_all"] = cancel_all
+        result["reconciliation_required"] = bool(accepted)
         return result
 
     def cancel_pair(self, *order_ids: str | None) -> dict[str, Any]:
         values = [str(order_id) for order_id in order_ids if order_id]
         if not values:
-            return {"ok": True, "order_ids": [], "response": {}}
+            result = self.cancel_all_orders()
+            result["fallback"] = "CANCEL_ALL_NO_ORDER_IDS"
+            result["order_ids"] = []
+            return result
         try:
             raw = self.clob.cancel_orders(values)
+            value = raw if isinstance(raw, dict) else {"value": str(raw)}
             return {
-                "ok": True,
+                "ok": not bool(value.get("error") or value.get("errorMsg")),
                 "order_ids": values,
-                "response": raw if isinstance(raw, dict) else {"value": str(raw)},
+                "response": _sanitize_response(value),
                 "cancelled_at_ms": int(time.time() * 1000),
             }
         except Exception as exc:  # noqa: BLE001
