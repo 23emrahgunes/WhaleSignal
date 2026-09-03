@@ -1,7 +1,7 @@
 """Authenticated CLOB adapter for DUAL40 post-only resting orders.
 
 Both 40-cent BUY orders are signed first and submitted in one CLOB batch as GTC with
-``post_only=True``.  The batch is not assumed atomic: both returned order IDs are
+``post_only=True``. The batch is not assumed atomic: both returned order IDs are
 required, balances are reconciled separately, and any ambiguous submit result is a
 hard-stop condition for the strategy layer.
 """
@@ -178,23 +178,46 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
         matched_shares: float,
         before_up: float,
         before_down: float,
+        acquired_up: float,
+        acquired_down: float,
     ) -> dict[str, Any]:
+        """Merge only the matched inventory and verify any directional remainder."""
         matched = max(0.0, float(matched_shares))
         if matched <= 1e-6:
             return {"verified": True, "skipped": True, "matched_shares": 0.0}
+
+        expected_up = float(before_up) + max(0.0, float(acquired_up) - matched)
+        expected_down = float(before_down) + max(0.0, float(acquired_down) - matched)
         merge = self.merge_positions(
             condition_id=str(condition_id),
             quantity_shares=matched,
         )
-        verify = self.wait_for_merge(
-            up_token_id=str(up_token_id),
-            down_token_id=str(down_token_id),
-            before_up=float(before_up),
-            before_down=float(before_down),
-        )
+
+        deadline = time.monotonic() + float(self.settings.live_settlement_wait_sec)
+        last = {"up": float("nan"), "down": float("nan")}
+        verified = False
+        while time.monotonic() <= deadline:
+            try:
+                last = self.pair_balances(
+                    up_token_id=str(up_token_id),
+                    down_token_id=str(down_token_id),
+                    refresh=True,
+                )
+                tolerance = max(1e-5, matched * 1e-5)
+                if (
+                    abs(float(last["up"]) - expected_up) <= tolerance
+                    and abs(float(last["down"]) - expected_down) <= tolerance
+                ):
+                    verified = True
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(float(self.settings.live_settlement_poll_sec))
+
         return {
-            "verified": bool(merge.get("verified")) and bool(verify.get("verified")),
+            "verified": bool(merge.get("verified")) and verified,
             "merge": merge,
-            "verify": verify,
+            "after": last,
+            "expected_after": {"up": expected_up, "down": expected_down},
             "matched_shares": matched,
         }
