@@ -9,7 +9,7 @@ Installs the DUAL40_MAKER_RECOVERY_V1 P3 profile. The service always restarts DR
 The script does not clear paper history or a persistent hard stop.
 
 Optional environment controls:
-  P3_DUAL40_DEPLOY_BRANCH   Branch to deploy
+  P3_DUAL40_DEPLOY_BRANCH   Branch to deploy (default: current checked-out branch)
   P3_DUAL40_EXPECTED_COMMIT Exact commit required after pull
 EOF
 }
@@ -30,7 +30,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 SUDO=""
 [[ "$EUID" -eq 0 ]] || SUDO=sudo
-DEPLOY_BRANCH="${P3_DUAL40_DEPLOY_BRANCH:-direction-engine-dual40-hardstop-v2}"
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[[ "$CURRENT_BRANCH" != "HEAD" ]] || {
+  echo "ERROR: detached HEAD is not deployable; checkout an explicit branch" >&2
+  exit 1
+}
+DEPLOY_BRANCH="${P3_DUAL40_DEPLOY_BRANCH:-$CURRENT_BRANCH}"
 EXPECTED_COMMIT="${P3_DUAL40_EXPECTED_COMMIT:-}"
 
 if [[ "$DO_PULL" == "1" ]]; then
@@ -160,6 +165,7 @@ PY
 env -i PATH="$PATH" HOME="$HOME" "$PY" - "$candidate" <<'PY'
 import sys
 from p3_config import DUAL40_MODE, P3Settings
+from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import Dual40Policy
 
 s=P3Settings(_env_file=(sys.argv[1], '.env.p26', '.env'))
@@ -170,6 +176,9 @@ assert s.dual40_ladder() == (5.0,10.0,30.0)
 assert abs(s.dual40_price-0.40) < 1e-12
 assert s.dual40_min_collateral_to_arm_usdc >= 35.0
 assert policy.full_ladder_capital == 30.0
+assert required_live_collateral(policy=policy, level_index=0, initial_arm_floor_usdc=35.0) == 35.0
+assert required_live_collateral(policy=policy, level_index=1, initial_arm_floor_usdc=35.0) == 33.0
+assert required_live_collateral(policy=policy, level_index=2, initial_arm_floor_usdc=35.0) == 29.0
 assert s.live_feature_enabled is True
 assert s.live_auto_execute_enabled is True
 assert s.web_auth_required is True
@@ -222,4 +231,4 @@ PY
 
 trap - ERR
 printf '%s\n' \
-  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | one_global_market=true | paper_fill=ask<=40c | near_touch_41=diagnostic | live_arm_min=\$35"
+  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | one_global_market=true | paper_fill=ask<=40c | near_touch_41=diagnostic | initial_live_arm_floor=\$35 | remaining_path_floor=35->33->29"
