@@ -11,7 +11,15 @@ def test_dual40_gateway_uses_post_only_gtc_batch_and_heartbeat():
     assert "OrderType.GTC" in text
     assert "post_heartbeat" in text
     assert "POST_ONLY_PAIR_NOT_BOTH_ACCEPTED" in text
-    assert "cancel_orders(accepted)" in text
+
+    # Known accepted IDs are cancelled directly. Unknown/ambiguous submissions
+    # are cancelled only within the two DUAL40 outcome-token scopes and are then
+    # balance-reconciled by the runtime.
+    assert "cancel_orders(values)" in text
+    assert "cancel_market_orders(" in text
+    assert "OrderMarketCancelParams(asset_id=token_id)" in text
+    assert '"reconciliation_required": True' in text
+    assert "cancel_all(" not in text
 
 
 def test_dual40_gateway_never_uses_fok_or_fak_for_entry():
