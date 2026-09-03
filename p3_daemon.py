@@ -18,7 +18,7 @@ import signal
 import time
 
 from p3_config import P3Settings, get_p3_settings
-from p3_dual40_engine import Dual40MakerEngine
+from p3_dual40_runtime import ProductionDual40MakerEngine as Dual40MakerEngine
 from p3_entry_replay import P3EntryReplayEngine
 from p3_live_executor_v3 import P3LiveExecutorV3
 from p3_live_state import LiveState
@@ -166,8 +166,6 @@ async def dual40_loop(
                 log.log(level, "DUAL40 result=%s", result)
                 last_status = status
         except Exception:  # noqa: BLE001
-            # Paper/runtime exceptions must not silently arm or submit. If LIVE was
-            # armed, halt it immediately and require operator review.
             if engine.state.is_armed():
                 engine.state.halt("DUAL40_LOOP_EXCEPTION")
             log.exception("DUAL40 loop failed closed")
