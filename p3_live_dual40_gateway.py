@@ -31,24 +31,50 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
             "sent_at_ms": int(time.time() * 1000),
         }
 
-    def cancel_all_orders(self) -> dict[str, Any]:
-        """Fail-closed cancellation for submissions whose order IDs are unknown."""
-        try:
-            raw = self.clob.cancel_all()
-            value = raw if isinstance(raw, dict) else {"value": str(raw)}
-            return {
-                "ok": not bool(value.get("error") or value.get("errorMsg")),
-                "scope": "ALL_OPEN_ORDERS",
-                "response": _sanitize_response(value),
-                "cancelled_at_ms": int(time.time() * 1000),
-            }
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "ok": False,
-                "scope": "ALL_OPEN_ORDERS",
-                "error": {"type": type(exc).__name__, "message": str(exc)[:240]},
-                "cancelled_at_ms": int(time.time() * 1000),
-            }
+    def cancel_market_pair(
+        self,
+        *,
+        up_token_id: str,
+        down_token_id: str,
+    ) -> dict[str, Any]:
+        """Cancel only orders for the two DUAL40 outcome tokens, never the account."""
+        from py_clob_client_v2 import OrderMarketCancelParams  # type: ignore
+
+        responses: list[dict[str, Any]] = []
+        ok = True
+        for token_id in dict.fromkeys((str(up_token_id), str(down_token_id))):
+            try:
+                raw = self.clob.cancel_market_orders(
+                    OrderMarketCancelParams(asset_id=token_id)
+                )
+                value = raw if isinstance(raw, dict) else {"value": str(raw)}
+                item_ok = not bool(value.get("error") or value.get("errorMsg"))
+                ok = ok and item_ok
+                responses.append(
+                    {
+                        "token_id": token_id,
+                        "ok": item_ok,
+                        "response": _sanitize_response(value),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                responses.append(
+                    {
+                        "token_id": token_id,
+                        "ok": False,
+                        "error": {
+                            "type": type(exc).__name__,
+                            "message": str(exc)[:240],
+                        },
+                    }
+                )
+        return {
+            "ok": ok,
+            "scope": "DUAL40_TOKEN_PAIR",
+            "responses": responses,
+            "cancelled_at_ms": int(time.time() * 1000),
+        }
 
     def post_pair_post_only_gtc(
         self,
@@ -110,9 +136,12 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
             )
         except Exception as exc:  # noqa: BLE001
             # The server may have accepted one or both orders before the response was
-            # lost. Cancel every open order immediately; the strategy layer will then
-            # reconcile conditional-token balances before deciding the cycle result.
-            emergency_cancel = self.cancel_all_orders()
+            # lost. Cancel only the two involved outcome-token scopes immediately;
+            # the strategy layer then reconciles balances before classifying the cycle.
+            emergency_cancel = self.cancel_market_pair(
+                up_token_id=str(up_token_id),
+                down_token_id=str(down_token_id),
+            )
             return {
                 "ok": False,
                 "response_uncertain": True,
@@ -120,7 +149,7 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
                 "error_code": "POST_ONLY_BATCH_EXCEPTION",
                 "error": {"type": type(exc).__name__, "message": str(exc)[:240]},
                 "heartbeat": hb,
-                "emergency_cancel_all": emergency_cancel,
+                "emergency_cancel_pair": emergency_cancel,
                 "up_order_id": None,
                 "down_order_id": None,
             }
@@ -152,22 +181,51 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
         # Batch posting is parallel, not atomic. If one order was accepted while the
         # other was rejected, remove the accepted resting order immediately and force
         # balance reconciliation before the cycle can be declared a no-fill.
-        cancel = self.cancel_pair(*accepted) if accepted else None
-        cancel_all = None
+        cancel = (
+            self.cancel_pair(
+                *accepted,
+                up_token_id=str(up_token_id),
+                down_token_id=str(down_token_id),
+            )
+            if accepted
+            else None
+        )
+        scoped_fallback = None
         if accepted and not bool((cancel or {}).get("ok")):
-            cancel_all = self.cancel_all_orders()
+            scoped_fallback = self.cancel_market_pair(
+                up_token_id=str(up_token_id),
+                down_token_id=str(down_token_id),
+            )
         result["error_code"] = "POST_ONLY_PAIR_NOT_BOTH_ACCEPTED"
         result["accepted_order_ids"] = accepted
         result["compensating_cancel"] = cancel
-        result["emergency_cancel_all"] = cancel_all
+        result["emergency_cancel_pair"] = scoped_fallback
         result["reconciliation_required"] = bool(accepted)
         return result
 
-    def cancel_pair(self, *order_ids: str | None) -> dict[str, Any]:
+    def cancel_pair(
+        self,
+        *order_ids: str | None,
+        up_token_id: str | None = None,
+        down_token_id: str | None = None,
+    ) -> dict[str, Any]:
         values = [str(order_id) for order_id in order_ids if order_id]
         if not values:
-            result = self.cancel_all_orders()
-            result["fallback"] = "CANCEL_ALL_NO_ORDER_IDS"
+            if not up_token_id or not down_token_id:
+                return {
+                    "ok": False,
+                    "order_ids": [],
+                    "error": {
+                        "type": "MissingCancellationScope",
+                        "message": "unknown order IDs require both DUAL40 token IDs",
+                    },
+                    "cancelled_at_ms": int(time.time() * 1000),
+                }
+            result = self.cancel_market_pair(
+                up_token_id=str(up_token_id),
+                down_token_id=str(down_token_id),
+            )
+            result["fallback"] = "CANCEL_DUAL40_TOKEN_PAIR_NO_ORDER_IDS"
             result["order_ids"] = []
             return result
         try:
