@@ -136,8 +136,10 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 "last_down_book_id": down["id"],
                 "last_up_best_ask": up["best_ask"],
                 "last_down_best_ask": down["best_ask"],
-                "max_observed_up_capacity_at_maker": up_capacity,
-                "max_observed_down_capacity_at_maker": down_capacity,
+                "last_visible_up_capacity_at_maker": up_capacity,
+                "last_visible_down_capacity_at_maker": down_capacity,
+                "max_observed_up_fill": up_filled,
+                "max_observed_down_fill": down_filled,
             },
         )
         cycle.update(
@@ -207,6 +209,8 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         cancel = gateway.cancel_pair(
             cycle.get("up_order_id"),
             cycle.get("down_order_id"),
+            up_token_id=str(cycle["up_token_id"]),
+            down_token_id=str(cycle["down_token_id"]),
         )
         if not cancel.get("ok"):
             code = "DUAL40_CANCEL_RETRY_REQUIRED"
