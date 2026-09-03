@@ -1,3 +1,5 @@
+import pytest
+
 from p3_dual40_core import (
     Dual40Policy,
     MidPoint,
@@ -103,15 +105,12 @@ def test_partial_fill_pnl_uses_actual_fills_and_official_result():
         up_filled=30,
         down_filled=18,
         official_result="UP",
-    ) == 10.8
+    ) == pytest.approx(10.8)
 
     # Same inventory if DOWN wins pays $18 -> -$1.20.
-    assert round(
-        realized_cycle_pnl(
-            price=0.40,
-            up_filled=30,
-            down_filled=18,
-            official_result="DOWN",
-        ),
-        10,
-    ) == -1.2
+    assert realized_cycle_pnl(
+        price=0.40,
+        up_filled=30,
+        down_filled=18,
+        official_result="DOWN",
+    ) == pytest.approx(-1.2)
