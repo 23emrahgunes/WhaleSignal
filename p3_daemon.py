@@ -24,7 +24,7 @@ from p3_live_executor_v3 import P3LiveExecutorV3
 from p3_live_state import LiveState
 from p3_replay_scheduler import P3ReplayEngine
 from p3_scanner_resilient import ReconnectAwareStructuralArbScanner as StructuralArbScanner
-from p3_web import run_web
+from p3_web_router import run_web
 
 log = logging.getLogger("direction_engine.p3.arbitrage")
 
