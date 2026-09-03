@@ -1,8 +1,8 @@
 """Fail-closed preflight for P3 LIVE arming.
 
 Connectivity probes never post an order. Structural BUY+MERGE keeps its historical
-STRICT DRY gate. DUAL40 instead verifies the persistent ladder hard-stop, absence of
-an active cycle, live P2.6 books, maker-zero-fee lineage and enough collateral to
+STRICT DRY gate. DUAL40 verifies the persistent ladder hard-stop, absence of an
+active cycle, live P2.6 books, maker-zero-fee lineage and enough collateral to
 complete the capped 5 -> 10 -> 30 ladder.
 """
 from __future__ import annotations
@@ -24,7 +24,11 @@ from p3_live_clients import (
 from p3_schema import connect_p3, ensure_p3_schema, open_p26_read_only
 
 
-def _geoblock(settings: P3Settings, *, opener: Callable | None = None) -> dict[str, Any]:
+def _geoblock(
+    settings: P3Settings,
+    *,
+    opener: Callable | None = None,
+) -> dict[str, Any]:
     open_fn = opener or urllib.request.urlopen
     req = urllib.request.Request(
         settings.live_geoblock_url,
@@ -61,55 +65,67 @@ def _dual40_runtime_check(settings: P3Settings) -> dict[str, Any]:
     conn = connect_dual40(settings.p3_db_path)
     p26 = open_p26_read_only(settings.p26_db_path)
     try:
-        live_state = ladder_state(conn, "LIVE")
+        live_ladder = ladder_state(conn, "LIVE")
         current = active_cycle(conn)
-        transport_row = p26.execute(
-            "SELECT value FROM p26_meta WHERE key='book_transport_status_json'"
+        health_row = p26.execute(
+            "SELECT value FROM p26_meta WHERE key='book_collector_health_json'"
         ).fetchone()
         try:
-            transport = json.loads(str(transport_row[0])) if transport_row else {}
+            health = json.loads(str(health_row[0])) if health_row else {}
         except (TypeError, ValueError, json.JSONDecodeError):
-            transport = {}
-        last_receive = int((transport or {}).get("last_receive_ms") or 0)
-        transport_age = max(0, now_ms - last_receive) if last_receive else None
+            health = {}
+        heartbeat = int((health or {}).get("heartbeat_ts_ms") or 0)
+        last_message = int((health or {}).get("last_message_recv_ms") or 0)
+        heartbeat_age = max(0, now_ms - heartbeat) if heartbeat else None
+        message_age = max(0, now_ms - last_message) if last_message else None
         transport_ok = bool(
-            (transport or {}).get("connected")
-            and transport_age is not None
-            and transport_age <= max(5000, int(settings.dual40_book_fresh_ms) * 3)
+            (health or {}).get("connected")
+            and heartbeat_age is not None
+            and heartbeat_age
+            <= max(5000, int(settings.dual40_book_fresh_ms) * 3)
         )
 
-        placeholders = ",".join("?" for _ in settings.dual40_assets())
+        assets = settings.dual40_assets()
+        placeholders = ",".join("?" for _ in assets)
         rows = p26.execute(
             f"""
             SELECT mt.condition_id,mt.combo_key,COUNT(DISTINCT mt.side) AS sides,
-                   COUNT(DISTINCT CASE WHEN fs.taker_only=1 THEN mt.side END) AS maker_fee_sides
+                   COUNT(DISTINCT CASE WHEN fs.taker_only=1 THEN mt.side END)
+                     AS maker_fee_sides
             FROM p26_market_tokens mt
             LEFT JOIN p26_fee_schedules fs
               ON fs.condition_id=mt.condition_id AND fs.token_id=mt.token_id
             WHERE mt.active=1
               AND mt.market_end_ts_ms>?
-              AND substr(mt.combo_key,1,instr(mt.combo_key,':')-1) IN ({placeholders})
+              AND substr(mt.combo_key,1,instr(mt.combo_key,':')-1)
+                    IN ({placeholders})
               AND mt.combo_key LIKE '%:5m'
             GROUP BY mt.condition_id,mt.combo_key
-            HAVING sides=2
+            HAVING COUNT(DISTINCT mt.side)=2
             """,
-            (now_ms, *settings.dual40_assets()),
+            (now_ms, *assets),
         ).fetchall()
         markets = [dict(row) for row in rows]
-        maker_ready = sum(1 for row in markets if int(row["maker_fee_sides"]) == 2)
+        maker_ready = sum(
+            1
+            for row in markets
+            if int(row.get("maker_fee_sides") or 0) == 2
+        )
         return {
             "ok": bool(
-                not live_state["hard_stopped"]
+                not live_ladder["hard_stopped"]
                 and current is None
                 and transport_ok
                 and maker_ready >= 1
             ),
-            "ladder_state": live_state,
+            "ladder_state": live_ladder,
             "active_cycle": current,
             "transport": {
-                "connected": bool((transport or {}).get("connected")),
-                "age_ms": transport_age,
+                "connected": bool((health or {}).get("connected")),
+                "heartbeat_age_ms": heartbeat_age,
+                "last_message_age_ms": message_age,
                 "ok": transport_ok,
+                "raw": health,
             },
             "active_5m_markets": len(markets),
             "maker_zero_fee_markets": maker_ready,
@@ -146,27 +162,43 @@ def run_live_preflight(
         else:
             warnings.append("GEOBLOCK_CHECK_FAILED_BUT_NOT_REQUIRED")
 
-    secrets = secret_reader()
-    signature_type = int(secrets.signature_type)
-    funder_configured = bool(secrets.funder)
-    checks["credentials"] = {
-        "private_key_present": bool(secrets.has_private_key),
-        "wallet_configured": bool(secrets.wallet or secrets.funder),
-        "funder_configured": funder_configured,
-        "clob_api_creds_present": bool(secrets.has_full_clob_creds),
-        "signature_type": signature_type,
-    }
-    if not secrets.has_private_key:
-        reasons.append("PRIVATE_KEY_MISSING")
-    if signature_type != 0 and not funder_configured:
-        reasons.append("FUNDER_REQUIRED_FOR_SIGNATURE_TYPE")
+    try:
+        secrets = secret_reader()
+    except Exception as exc:  # noqa: BLE001
+        secrets = None
+        checks["credentials"] = {
+            "private_key_present": False,
+            "wallet_configured": False,
+            "funder_configured": False,
+            "clob_api_creds_present": False,
+            "signature_type": None,
+            "error": type(exc).__name__,
+        }
+        reasons.append("CREDENTIAL_CONFIG_INVALID")
+
+    if secrets is not None:
+        signature_type = int(secrets.signature_type)
+        funder_configured = bool(secrets.funder)
+        checks["credentials"] = {
+            "private_key_present": bool(secrets.has_private_key),
+            "wallet_configured": bool(secrets.wallet or secrets.funder),
+            "funder_configured": funder_configured,
+            "clob_api_creds_present": bool(secrets.has_full_clob_creds),
+            "signature_type": signature_type,
+        }
+        if not secrets.has_private_key:
+            reasons.append("PRIVATE_KEY_MISSING")
+        if signature_type != 0 and not funder_configured:
+            reasons.append("FUNDER_REQUIRED_FOR_SIGNATURE_TYPE")
 
     collateral_usdc: float | None = None
     allowance_ready: bool | None = None
-    credential_gate_clear = (
-        secrets.has_private_key
+    credential_gate_clear = bool(
+        secrets is not None
+        and secrets.has_private_key
         and "JURISDICTION_BLOCKED" not in reasons
         and "FUNDER_REQUIRED_FOR_SIGNATURE_TYPE" not in reasons
+        and "CREDENTIAL_CONFIG_INVALID" not in reasons
     )
     if credential_gate_clear:
         try:
@@ -200,9 +232,17 @@ def run_live_preflight(
         try:
             dual40_check = _dual40_runtime_check(settings)
             checks["dual40"] = dual40_check
-            dry_status = "DUAL40_RUNTIME_READY" if dual40_check.get("ok") else "DUAL40_RUNTIME_BLOCKED"
+            dry_status = (
+                "DUAL40_RUNTIME_READY"
+                if dual40_check.get("ok")
+                else "DUAL40_RUNTIME_BLOCKED"
+            )
         except Exception as exc:  # noqa: BLE001
-            dual40_check = {"ok": False, "error": type(exc).__name__, "message": str(exc)[:200]}
+            dual40_check = {
+                "ok": False,
+                "error": type(exc).__name__,
+                "message": str(exc)[:200],
+            }
             checks["dual40"] = dual40_check
             dry_status = "ERROR"
             if for_arming:
@@ -215,21 +255,31 @@ def run_live_preflight(
                 dry = dry_summary_builder(conn, settings)
             finally:
                 conn.close()
-            dry_status = str((dry.get("readiness") or {}).get("status") or "UNKNOWN")
+            dry_status = str(
+                (dry.get("readiness") or {}).get("status") or "UNKNOWN"
+            )
             checks["strict_dry"] = {
                 "status": dry_status,
                 "attempts": int(dry.get("attempts_executed") or 0),
                 "pnl_usdc": float(dry.get("cumulative_pnl_usdc") or 0.0),
-                "pair_completion_rate": float(dry.get("pair_completion_rate") or 0.0),
+                "pair_completion_rate": float(
+                    dry.get("pair_completion_rate") or 0.0
+                ),
                 "one_leg_rate": float(dry.get("one_leg_rate") or 0.0),
             }
         except Exception as exc:  # noqa: BLE001
-            checks["strict_dry"] = {"status": "ERROR", "error": type(exc).__name__}
+            checks["strict_dry"] = {
+                "status": "ERROR",
+                "error": type(exc).__name__,
+            }
             if for_arming:
                 reasons.append("STRICT_DRY_CHECK_FAILED")
 
     if settings.dual40_active:
-        policy = Dual40Policy(price=settings.dual40_price, ladder=settings.dual40_ladder())
+        policy = Dual40Policy(
+            price=settings.dual40_price,
+            ladder=settings.dual40_ladder(),
+        )
         checks["risk_config"] = {
             "strategy": "DUAL40_MAKER_RECOVERY_V1",
             "order": "POST_ONLY_GTC",
@@ -238,20 +288,32 @@ def run_live_preflight(
             "hard_stop_after_30": True,
             "one_global_market_only": True,
             "full_ladder_capital_usdc": policy.full_ladder_capital,
-            "min_collateral_to_arm_usdc": settings.dual40_min_collateral_to_arm_usdc,
+            "min_collateral_to_arm_usdc": (
+                settings.dual40_min_collateral_to_arm_usdc
+            ),
             "cancel_tte_sec": settings.dual40_cancel_tte_sec,
         }
     else:
         checks["risk_config"] = {
             "sizing_mode": "EQUAL_SHARES_FRESH_DEPTH",
-            "target_quantity_shares": float(settings.live_target_quantity_shares),
+            "target_quantity_shares": float(
+                settings.live_target_quantity_shares
+            ),
             "max_quantity_shares": float(settings.live_max_quantity_shares),
             "legacy_capital_scaling_enabled": False,
-            "max_single_leg_notional_usdc": float(settings.live_max_single_leg_notional_usdc),
-            "max_projected_unwind_loss_usdc": float(settings.live_max_projected_unwind_loss_usdc),
-            "emergency_unwind_loss_usdc": float(settings.live_emergency_unwind_loss_usdc),
+            "max_single_leg_notional_usdc": float(
+                settings.live_max_single_leg_notional_usdc
+            ),
+            "max_projected_unwind_loss_usdc": float(
+                settings.live_max_projected_unwind_loss_usdc
+            ),
+            "emergency_unwind_loss_usdc": float(
+                settings.live_emergency_unwind_loss_usdc
+            ),
             "halt_after_one_leg": bool(settings.live_halt_after_one_leg),
-            "rolling_24h_gross_loss_limit_usdc": float(settings.live_rolling_24h_gross_loss_limit_usdc),
+            "rolling_24h_gross_loss_limit_usdc": float(
+                settings.live_rolling_24h_gross_loss_limit_usdc
+            ),
         }
 
     if for_arming:
@@ -285,14 +347,21 @@ def run_live_preflight(
         if allowance_ready is False:
             reasons.append("TRADING_ALLOWANCE_NOT_READY")
 
+    reasons = list(dict.fromkeys(reasons))
+    warnings = list(dict.fromkeys(warnings))
     hard_probe_reasons = {
         "JURISDICTION_BLOCKED",
         "GEOBLOCK_CHECK_FAILED",
         "PRIVATE_KEY_MISSING",
         "FUNDER_REQUIRED_FOR_SIGNATURE_TYPE",
+        "CREDENTIAL_CONFIG_INVALID",
         "CLOB_AUTH_OR_BALANCE_CHECK_FAILED",
     }
-    ok = not reasons if for_arming else not any(reason in hard_probe_reasons for reason in reasons)
+    ok = (
+        not reasons
+        if for_arming
+        else not any(reason in hard_probe_reasons for reason in reasons)
+    )
     return {
         "ok": bool(ok),
         "purpose": "ARM_LIVE" if for_arming else "CONNECTIVITY_ONLY_NO_ORDER",
@@ -303,7 +372,11 @@ def run_live_preflight(
         "checks": checks,
         "risk": {
             "strategy_mode": settings.strategy_mode,
-            "buy_merge_only": bool(settings.live_buy_merge_only) if not settings.dual40_active else False,
+            "buy_merge_only": (
+                bool(settings.live_buy_merge_only)
+                if not settings.dual40_active
+                else False
+            ),
             "post_only": bool(settings.dual40_active),
             "target_quantity_shares": (
                 float(settings.dual40_ladder()[0])
@@ -315,7 +388,12 @@ def run_live_preflight(
                 if settings.dual40_active
                 else float(settings.live_max_quantity_shares)
             ),
-            "require_dry_validated": bool(settings.live_require_dry_validated and not settings.dual40_active),
-            "auto_execute_enabled": bool(settings.live_auto_execute_enabled),
+            "require_dry_validated": bool(
+                settings.live_require_dry_validated
+                and not settings.dual40_active
+            ),
+            "auto_execute_enabled": bool(
+                settings.live_auto_execute_enabled
+            ),
         },
     }
