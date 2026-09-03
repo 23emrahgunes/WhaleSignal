@@ -305,7 +305,9 @@ def test_p3_static_safety_and_shell_syntax():
     assert "P3_LIVE_AUTO_EXECUTE_ENABLED" in config
     assert "P3_WEB_AUTH_REQUIRED" in config
     assert "P3 WEB authentication is required whenever LIVE feature is enabled" in config
-    assert "P3 LIVE v2 only supports BUY+MERGE" in config
+    assert 'STRUCTURAL_MODE = "STRUCTURAL_BUY_MERGE_V3"' in config
+    assert 'DUAL40_MODE = "DUAL40_MAKER_RECOVERY_V1"' in config
+    assert "live_buy_merge_only" in config
     assert "P3_LIVE_TARGET_QUANTITY_SHARES" in config
     assert "P3_LIVE_MAX_SINGLE_LEG_NOTIONAL_USDC" in config
     assert "P3_LIVE_ROLLING_24H_GROSS_LOSS_LIMIT_USDC" in config
@@ -320,8 +322,10 @@ def test_p3_static_safety_and_shell_syntax():
 
     daemon = Path("p3_daemon.py").read_text(encoding="utf-8")
     assert "run_live_control" not in daemon
-    assert "P3LiveExecutorV2" in daemon
-    assert "live_sizing=equal_shares" in daemon
+    assert "P3LiveExecutorV3" in daemon
+    assert "Dual40MakerEngine" in daemon
+    assert "structural_live_executor_loop" in daemon
+    assert "dual40_loop" in daemon
 
     live_v2 = Path("p3_live_executor_v2.py").read_text(encoding="utf-8")
     assert "select_equal_share_quantity" in live_v2
@@ -334,6 +338,8 @@ def test_p3_static_safety_and_shell_syntax():
     assert "systemctl stop direction-engine-p26" not in deploy
     assert "p3_daemon.py" in deploy
     assert "authenticated_8093" in deploy
+    assert "P3_DEPLOY_BRANCH" in deploy
+    assert "P3_EXPECTED_COMMIT" in deploy
     for script in ("deploy_p3.sh", "scripts/status_p3.sh", "scripts/stop_p3.sh", "scripts/smoke_p3.sh"):
         result = subprocess.run(["bash", "-n", script], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
