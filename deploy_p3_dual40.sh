@@ -7,6 +7,10 @@ Usage: ./deploy_p3_dual40.sh [--no-pull] [--skip-tests]
 
 Installs the DUAL40_MAKER_RECOVERY_V1 P3 profile. The service always restarts DRY.
 The script does not clear paper history or a persistent hard stop.
+
+Optional environment controls:
+  P3_DUAL40_DEPLOY_BRANCH   Branch to deploy
+  P3_DUAL40_EXPECTED_COMMIT Exact commit required after pull
 EOF
 }
 
@@ -26,21 +30,30 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 SUDO=""
 [[ "$EUID" -eq 0 ]] || SUDO=sudo
+DEPLOY_BRANCH="${P3_DUAL40_DEPLOY_BRANCH:-direction-engine-dual40-hardstop-v2}"
+EXPECTED_COMMIT="${P3_DUAL40_EXPECTED_COMMIT:-}"
 
 if [[ "$DO_PULL" == "1" ]]; then
   [[ -z "$(git status --porcelain --untracked-files=all)" ]] || {
     echo "ERROR: working tree dirty" >&2
     exit 1
   }
-  git fetch origin direction-engine
-  git checkout direction-engine
-  git pull --ff-only origin direction-engine
+  git fetch origin "$DEPLOY_BRANCH"
+  git checkout "$DEPLOY_BRANCH"
+  git pull --ff-only origin "$DEPLOY_BRANCH"
 fi
 
-[[ "$(git rev-parse --abbrev-ref HEAD)" == "direction-engine" ]] || {
-  echo "ERROR: expected direction-engine branch" >&2
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+[[ "$BRANCH" == "$DEPLOY_BRANCH" ]] || {
+  echo "ERROR: expected branch=$DEPLOY_BRANCH actual=$BRANCH" >&2
   exit 1
 }
+DEPLOY_COMMIT="$(git rev-parse HEAD)"
+if [[ -n "$EXPECTED_COMMIT" && "$DEPLOY_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  echo "ERROR: expected commit=$EXPECTED_COMMIT actual=$DEPLOY_COMMIT" >&2
+  exit 1
+fi
+echo "dual40_branch=$BRANCH dual40_commit=$DEPLOY_COMMIT"
 
 [[ -x ./.venv/bin/python ]] || python3 -m venv .venv
 PY="$REPO_DIR/.venv/bin/python"
@@ -187,7 +200,9 @@ chmod 600 .env.p3
 
 args=(--no-pull)
 [[ "$RUN_TESTS" == "0" ]] && args+=(--skip-tests)
-bash deploy_p3.sh "${args[@]}"
+P3_DEPLOY_BRANCH="$DEPLOY_BRANCH" \
+P3_EXPECTED_COMMIT="$DEPLOY_COMMIT" \
+  bash deploy_p3.sh "${args[@]}"
 
 "$PY" - <<'PY'
 from p3_config import get_p3_settings
@@ -207,4 +222,4 @@ PY
 
 trap - ERR
 printf '%s\n' \
-  'DUAL40 DEPLOY PASS | starts=DRY | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | one_global_market=true | paper_fill=ask<=40c | near_touch_41=diagnostic | live_arm_min=$35'
+  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | one_global_market=true | paper_fill=ask<=40c | near_touch_41=diagnostic | live_arm_min=\$35"
