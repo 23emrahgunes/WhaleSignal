@@ -35,8 +35,10 @@ def test_p3_daemon_does_not_start_separate_8094_control_server() -> None:
     daemon = Path("p3_daemon.py").read_text(encoding="utf-8")
     assert "run_live_control" not in daemon
     assert "p3_live_control" not in daemon
-    assert "P3LiveExecutorV2" in daemon
-    assert "live_sizing=equal_shares" in daemon
+    assert "P3LiveExecutorV3" in daemon
+    assert "Dual40MakerEngine" in daemon
+    assert "structural_live_executor_loop" in daemon
+    assert "dual40_loop" in daemon
 
 
 def test_health_is_minimal_but_operational_api_is_protected_by_middleware() -> None:
