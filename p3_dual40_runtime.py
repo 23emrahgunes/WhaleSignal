@@ -7,11 +7,16 @@ from typing import Any
 
 from p3_dual40_analytics import build_dual40_summary
 from p3_dual40_engine import Dual40MakerEngine
+from p3_dual40_preflight import run_dual40_preflight
 from p3_schema import open_p26_read_only
 
 
 class ProductionDual40MakerEngine(Dual40MakerEngine):
     """Use the real P2.6 collector-health contract and local official labels."""
+
+    def __init__(self, settings, state, **kwargs):  # noqa: ANN001,ANN003
+        kwargs.setdefault("preflight_fn", run_dual40_preflight)
+        super().__init__(settings, state, **kwargs)
 
     @staticmethod
     def _transport_status(p26) -> dict[str, Any]:  # noqa: ANN001
@@ -26,8 +31,6 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             return {}
         if not isinstance(raw, dict):
             return {}
-        # Base engine consumes a normalized receive timestamp. Collector heartbeat
-        # proves the socket process is alive even when the executable book is flat.
         heartbeat = int(raw.get("heartbeat_ts_ms") or 0)
         last_message = int(raw.get("last_message_recv_ms") or 0)
         return {
@@ -37,9 +40,6 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         }
 
     def _fetch_official_result(self, cycle: dict[str, Any]) -> tuple[str | None, str]:
-        # P2.6 continuously synchronizes the authoritative P2.5 label. Prefer the
-        # local WAL database; it is more robust than repeatedly depending on Gamma's
-        # condition filter after a rolling market closes.
         p26 = open_p26_read_only(self.settings.p26_db_path)
         try:
             row = p26.execute(
