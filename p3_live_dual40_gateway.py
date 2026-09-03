@@ -8,10 +8,100 @@ hard-stop condition for the strategy layer.
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from p3_live_gateway import _order_id, _response_list, _sanitize_response
 from p3_live_gateway_v2 import RiskAwarePolymarketLiveGateway
+
+
+def _field_nonempty(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
+        return bool(value)
+    return bool(value)
+
+
+def _cancelled_id_set(value: Any) -> set[str]:
+    """Normalize the CLOB cancellation acknowledgement into order IDs."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value} if value else set()
+    if isinstance(value, dict):
+        # The API normally returns a list, but accepting mapping keys keeps the
+        # validator fail-safe across SDK serialization variants.
+        return {str(key) for key in value if str(key)}
+    if isinstance(value, Iterable):
+        order_ids: set[str] = set()
+        for item in value:
+            if isinstance(item, dict):
+                order_id = (
+                    item.get("id")
+                    or item.get("order_id")
+                    or item.get("orderID")
+                )
+                if order_id:
+                    order_ids.add(str(order_id))
+            elif item is not None and str(item):
+                order_ids.add(str(item))
+        return order_ids
+    return {str(value)} if str(value) else set()
+
+
+def _cancel_response_ok(
+    value: dict[str, Any],
+    *,
+    requested_order_ids: Iterable[str] = (),
+) -> bool:
+    """Accept a cancellation only when the server acknowledgement is conclusive.
+
+    Known order IDs require every requested ID in ``canceled``/``cancelled``.
+    Market-token scoped cancellation has no complete requested-ID list, so it is
+    accepted only when the response contains a recognized positive acknowledgement
+    and no non-empty ``not_canceled``/``notCanceled`` field.
+    """
+    if not isinstance(value, dict):
+        return False
+    if _field_nonempty(value.get("error")) or _field_nonempty(
+        value.get("errorMsg")
+    ):
+        return False
+    if value.get("success") is False or value.get("ok") is False:
+        return False
+
+    not_cancelled_present = False
+    for key in ("not_canceled", "notCanceled", "not_cancelled", "notCancelled"):
+        if key in value:
+            not_cancelled_present = True
+            if _field_nonempty(value.get(key)):
+                return False
+
+    cancelled_present = False
+    cancelled_ids: set[str] = set()
+    for key in ("canceled", "cancelled"):
+        if key in value:
+            cancelled_present = True
+            cancelled_ids.update(_cancelled_id_set(value.get(key)))
+
+    requested = {str(order_id) for order_id in requested_order_ids if order_id}
+    if requested:
+        # A generic success flag is insufficient for known IDs. We need explicit
+        # proof that every requested order was actually cancelled.
+        return cancelled_present and requested.issubset(cancelled_ids)
+
+    # Token-scoped cancellation may legitimately cancel zero orders. In that case
+    # ``canceled=[]`` plus ``not_canceled={}``, or an explicit success flag, is a
+    # conclusive acknowledgement. An empty/unknown payload is deliberately rejected.
+    return bool(
+        cancelled_present
+        or not_cancelled_present
+        or value.get("success") is True
+        or value.get("ok") is True
+    )
 
 
 class Dual40Gateway(RiskAwarePolymarketLiveGateway):
@@ -48,7 +138,7 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
                     OrderMarketCancelParams(asset_id=token_id)
                 )
                 value = raw if isinstance(raw, dict) else {"value": str(raw)}
-                item_ok = not bool(value.get("error") or value.get("errorMsg"))
+                item_ok = _cancel_response_ok(value)
                 ok = ok and item_ok
                 responses.append(
                     {
@@ -232,7 +322,10 @@ class Dual40Gateway(RiskAwarePolymarketLiveGateway):
             raw = self.clob.cancel_orders(values)
             value = raw if isinstance(raw, dict) else {"value": str(raw)}
             return {
-                "ok": not bool(value.get("error") or value.get("errorMsg")),
+                "ok": _cancel_response_ok(
+                    value,
+                    requested_order_ids=values,
+                ),
                 "order_ids": values,
                 "response": _sanitize_response(value),
                 "cancelled_at_ms": int(time.time() * 1000),
