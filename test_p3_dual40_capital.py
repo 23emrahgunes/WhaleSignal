@@ -165,7 +165,12 @@ def test_preflight_allows_33_after_first_realized_loss(monkeypatch, tmp_path):
 
 def test_runtime_and_preflight_both_use_same_capital_function():
     preflight_source = Path("p3_live_preflight.py").read_text(encoding="utf-8")
-    runtime_source = Path("p3_dual40_runtime.py").read_text(encoding="utf-8")
+    runtime_source = "\n".join(
+        [
+            Path("p3_dual40_runtime.py").read_text(encoding="utf-8"),
+            Path("p3_dual40_runtime_impl.py").read_text(encoding="utf-8"),
+        ]
+    )
 
     assert "required_live_collateral(" in preflight_source
     assert "required_live_collateral(" in runtime_source
