@@ -7,7 +7,7 @@ from typing import Any
 from p3_config import P3Settings
 from p3_live_state import LiveState
 from p3_web import run_web as run_structural_web
-from p3_web_dual40 import run_web as run_dual40_web
+from p3_web_dual40_v2 import run_web as run_dual40_web
 
 
 async def run_web(
