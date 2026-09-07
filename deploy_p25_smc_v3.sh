@@ -56,6 +56,10 @@ wanted = {
     'CALIBRATION_PATH': 'models/calibration_book.pkl',
     'FEATURE_PRICE_RING_MAX': '24000',
     'RESOLUTION_POLL_SEC': '10',
+    # DUAL40 requires a forecast snapshot younger than two seconds. P2.5 has an
+    # in-process stale-while-revalidate cache plus a web response cache, so keep
+    # each layer at 0.5s for the zero-blocking SMC operational state.
+    'P25_WEB_STATE_CACHE_SEC': '0.5',
 
     # Separate cohort: PTB + Binance + SMC structural confirmation.
     'PAPER_TRADING_ENABLED': 'true',
@@ -146,6 +150,7 @@ chmod 600 "$candidate_env"
 echo "=== SMC V3 PRECHECK: CANDIDATE CONFIG ==="
 env -i PATH="$PATH" HOME="$HOME" ./.venv/bin/python - "$candidate_env" <<'PY'
 import sys
+from pathlib import Path
 from p25_deep_value_config import DeepValuePaperSettings
 from p25_smc_patch import SMC_STRATEGY
 
@@ -163,6 +168,12 @@ assert abs(cfg.paper_min_edge - 0.10) < 1e-12
 assert abs(cfg.paper_deep_value_min_value_multiple - 1.15) < 1e-12
 assert cfg.paper_deep_value_max_book_age_ms == 600
 assert cfg.p25_live_armed is False
+candidate_values = dict(
+    line.split('=', 1)
+    for line in Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
+    if '=' in line and not line.lstrip().startswith('#')
+)
+assert candidate_values.get('P25_WEB_STATE_CACHE_SEC') == '0.5'
 print('SMC V3 CANDIDATE CONFIG PASS')
 PY
 

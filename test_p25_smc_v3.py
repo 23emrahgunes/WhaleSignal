@@ -104,6 +104,7 @@ def test_v3_contract_and_transactional_deploy_profile():
     assert "PAPER_MIN_EDGE': '0.10'" in text
     assert "PAPER_DEEP_VALUE_MIN_VALUE_MULTIPLE': '1.15'" in text
     assert "PAPER_DEEP_VALUE_MAX_BOOK_AGE_MS': '600'" in text
+    assert "P25_WEB_STATE_CACHE_SEC': '0.5'" in text
     assert "SMC=STRUCTURE+2of3+score>=0.45" in text
     assert "DRY_REQUIRED+UNARMED" in text
 

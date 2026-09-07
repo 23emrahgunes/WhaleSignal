@@ -123,8 +123,29 @@ class P25StateForecastProvider:
             self._error_reason = f"FORECAST_PROVIDER_ERROR:{type(exc).__name__}"
 
     @staticmethod
-    def _card_age_ms(card: dict[str, Any], fetch_age_ms: int) -> int | None:
-        ages: list[int] = [max(0, int(fetch_age_ms))]
+    def _payload_age_ms(payload: dict[str, Any], now_ms: int) -> int | None:
+        value = payload.get("now")
+        try:
+            timestamp = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(timestamp) or timestamp <= 0:
+            return None
+        timestamp_ms = (
+            int(timestamp * 1000.0)
+            if timestamp < 10_000_000_000
+            else int(timestamp)
+        )
+        return max(0, int(now_ms) - timestamp_ms)
+
+    @staticmethod
+    def _card_age_ms(
+        card: dict[str, Any],
+        *,
+        fetch_age_ms: int,
+        payload_age_ms: int | None,
+    ) -> int | None:
+        ages: list[int] = []
         for key in ("clob_age_ms", "transport_age_ms", "source_age_ms", "book_age_ms"):
             value = card.get(key)
             if value is None:
@@ -133,7 +154,13 @@ class P25StateForecastProvider:
                 ages.append(max(0, int(float(value))))
             except (TypeError, ValueError):
                 return None
-        return max(ages) if len(ages) > 1 else None
+        if not ages:
+            return None
+        elapsed = max(
+            max(0, int(fetch_age_ms)),
+            max(0, int(payload_age_ms)) if payload_age_ms is not None else 0,
+        )
+        return max(ages) + elapsed
 
     def evaluate(
         self,
@@ -177,12 +204,19 @@ class P25StateForecastProvider:
             card_tte = float(card.get("tte_sec"))
         except (TypeError, ValueError):
             return ForecastGateDecision(False, "FORECAST_TTE_MISSING", False)
-        if abs(card_tte - float(tte_sec)) > self.tte_tolerance_sec:
+        fetch_age = max(0, int(now_ms) - self._fetched_at_ms)
+        payload_age = self._payload_age_ms(self._payload, int(now_ms))
+        elapsed_ms = max(fetch_age, payload_age or 0)
+        adjusted_card_tte = max(0.0, card_tte - elapsed_ms / 1000.0)
+        if abs(adjusted_card_tte - float(tte_sec)) > self.tte_tolerance_sec:
             return ForecastGateDecision(False, "FORECAST_MARKET_MISMATCH", False)
         if not bool(card.get("prediction_ready")):
             return ForecastGateDecision(False, "FORECAST_NOT_READY", False)
-        fetch_age = max(0, int(now_ms) - self._fetched_at_ms)
-        age_ms = self._card_age_ms(card, fetch_age)
+        age_ms = self._card_age_ms(
+            card,
+            fetch_age_ms=fetch_age,
+            payload_age_ms=payload_age,
+        )
         return evaluate_forecast_value(
             p_up_external=card.get("p_up_external"),
             confidence=(
