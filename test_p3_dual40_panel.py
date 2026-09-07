@@ -15,10 +15,11 @@ def test_panel_contains_asset_lane_state():
 
     assert "Market Karar Günlüğü" in html
     assert "Gate Kohortları" in html
-    assert "P2.6 Tahmin Paper Readiness" in html
-    assert "Opening Reason" in html
-    assert "PAPER paralellik" in script
-    assert "LIVE paralellik" in script
+    assert "P2.6 Readiness" in html
+    assert "Market Taraması" in html
+    assert "PAPER / LIVE paralellik" in script
+    assert "policy.paper_max_concurrent_assets" in script
+    assert "policy.live_max_concurrent_assets" in script
     for asset in ("BTC", "ETH", "SOL", "XRP"):
         assert asset in script
     assert "one_global_market_only = true" not in html
@@ -26,6 +27,30 @@ def test_panel_contains_asset_lane_state():
     assert "renderCohorts" in script
     assert "renderP26" in script
     assert "forecast_gate_mode" in script
+
+
+def test_operational_panel_hides_diagnostic_logs_by_default():
+    html = Path("p3_web_dual40.py").read_text(encoding="utf-8")
+
+    assert '<details class="diagnostics">' in html
+    assert '<details class="diagnostics" open>' not in html
+    assert "Teşhis ve Günlükler" in html
+    assert "Teknik tablolar varsayılan olarak gizlidir" in html
+    assert html.index("Teşhis ve Günlükler") < html.index("Market Karar Günlüğü")
+    assert html.index("Teşhis ve Günlükler") < html.index("DUAL40 Cycle Günlüğü")
+
+
+def test_operational_panel_prioritizes_asset_lanes_and_market_scan():
+    html = Path("p3_web_dual40.py").read_text(encoding="utf-8")
+    script = Path("p3_dual40_panel.js").read_text(encoding="utf-8")
+
+    assert 'id="lanes"' in html
+    assert "Genel Bakış" in html
+    assert "Market Taraması" in html
+    assert "lane-grid" in html
+    assert 'byId("lanes")' in script
+    assert "JSON.stringify(scan.reason_counts" not in script
+    assert "JSON.stringify(audit.reason_counts" not in script
 
 
 def test_asset_panel_metrics_keep_paper_and_live_scopes_separate(tmp_path):

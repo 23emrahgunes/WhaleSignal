@@ -32,6 +32,30 @@
 
   const pnlClass = (value) => Number(value || 0) >= 0 ? "ok" : "bad";
 
+  const REASON_LABELS = {
+    PASS: "Kontroller geçti",
+    MODEL_ARTIFACT_NOT_READY: "Model bekleniyor",
+    ALPHA_ARTIFACT_NOT_READY: "Alpha profili bekleniyor",
+    BOOK_PAIR_MISSING: "Emir defteri çifti eksik",
+    BOOK_TRANSPORT_NOT_LIVE: "Book bağlantısı hazır değil",
+    FORECAST_MARKET_MISMATCH: "Tahmin marketle eşleşmedi",
+    FORECAST_MISSING: "Tahmin verisi yok",
+    NOT_EVALUATED: "Henüz değerlendirilmedi",
+  };
+
+  const reasonLabel = (value) => {
+    const code = String(value || "");
+    return REASON_LABELS[code] || code.replaceAll("_", " ").toLocaleLowerCase("tr-TR") || "—";
+  };
+
+  const topCount = (counts) => Object.entries(counts || {})
+    .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))[0] || ["—", 0];
+
+  const chip = (label, value, cssClass = "") => (
+    `<span><b class="${escapeHtml(cssClass)}">${escapeHtml(value ?? "—")}</b> ` +
+    `${escapeHtml(label)}</span>`
+  );
+
   const metric = (value, label, cssClass = "") => (
     `<div class="metric"><b class="${escapeHtml(cssClass)}">` +
     `${escapeHtml(value ?? "—")}</b><span>${escapeHtml(label)}</span></div>`
@@ -88,7 +112,6 @@
     const live = data.live || {};
     const states = dual.state || {};
     const paperStates = states.PAPER || {};
-    const liveStates = states.LIVE || {};
     const byAsset = dual.by_asset || {};
     const policy = dual.policy || {};
     const ladder = policy.ladder || dual.ladder || [];
@@ -106,42 +129,50 @@
     const notice = byId("notice");
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
-        ? "<b>CANLI MOD ARM EDİLDİ.</b> LIVE paralellik varsayılan 1; uygun ilk stabil asset lane'inde iki gerçek 40¢ POST-ONLY GTC emir gönderilebilir."
-        : "<b>DRY / PAPER.</b> BTC/ETH/SOL/XRP bağımsız 5 → 10 → 30 recovery lane'leri çalışır. 41¢ yalnız near-touch tanısıdır, fill kanıtı değildir.";
+        ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
+        : "<b>DRY / PAPER.</b> Dört asset bağımsız recovery lane'lerinde izleniyor. 41¢ near-touch yalnız tanıdır; fill kanıtı değildir.";
       if (dual.migration_review) {
-        notice.innerHTML += " <b>LEGACY_GLOBAL_STATE_REVIEW_REQUIRED:</b> Eski global zarar havuzu hiçbir asset'e dağıtılmadı.";
+        notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }
     }
 
     const status = byId("status");
     if (status) {
-      const laneCards = assets.map((asset) => {
-        const paper = ((byAsset[asset] || {}).state || {}).PAPER || paperStates[asset] || {};
-        const liveAsset = liveStates[asset] || {};
-        const paperLevel = paper.level_index == null
-          ? "—"
-          : `${ladder[paper.level_index] ?? "—"} share`;
-        const active = paper.active_cycle || liveAsset.active_cycle;
-        return metric(
-          `${paperLevel} · borç $${number(paper.recovery_debt_usdc ?? paper.loss_pool_usdc)} · atlanan ${paper.markets_skipped ?? 0} · ${paper.hard_stopped ? "HARD" : "AÇIK"} · ${active ? `#${active.id}` : "boş"}`,
-          `${asset} lane`,
-          paper.hard_stopped ? "bad" : Number(paper.loss_pool_usdc || 0) > 0 ? "warn" : "ok"
+      const price = policy.price == null ? "—" : `${Math.round(Number(policy.price) * 100)}¢`;
+      const gateModes = `${policy.opening_gate_mode || "—"} / ${policy.forecast_gate_mode || "—"}`;
+      status.innerHTML =
+        metric(mode, "Çalışma modu", mode === "LIVE_ARMED" ? "bad" : "ok") +
+        metric(`${price} + ${price}`, "Emir çifti") +
+        metric(ladder.join(" → "), "Recovery merdiveni") +
+        metric(gateModes, "Opening / forecast") +
+        metric(`${policy.paper_max_concurrent_assets ?? 4} / ${policy.live_max_concurrent_assets ?? 1}`, "PAPER / LIVE paralellik") +
+        metric(data.db_integrity === "ok" ? "SAĞLAM" : data.db_integrity, "Veritabanı", data.db_integrity === "ok" ? "ok" : "bad");
+    }
+
+    const lanes = byId("lanes");
+    if (lanes) {
+      lanes.innerHTML = assets.map((asset) => {
+        const assetSummary = byAsset[asset] || {};
+        const paper = (assetSummary.state || {}).PAPER || paperStates[asset] || {};
+        const level = paper.level_index == null ? 0 : Number(paper.level_index);
+        const target = ladder[level] ?? "—";
+        const debt = Number(paper.recovery_debt_usdc ?? paper.loss_pool_usdc ?? 0);
+        const active = paper.active_cycle;
+        const hardStopped = Boolean(paper.hard_stopped);
+        const laneClass = hardStopped ? "bad-lane" : debt > 0 ? "warn-lane" : "";
+        const badge = hardStopped ? "HARD STOP" : debt > 0 ? "RECOVERY" : "HAZIR";
+        const activeText = active ? `Cycle #${active.id} · ${active.status || "aktif"}` : "Aktif cycle yok";
+        return (
+          `<article class="lane ${laneClass}">` +
+          `<div class="lane-head"><span class="lane-asset">${asset}</span><span class="lane-badge">${badge}</span></div>` +
+          `<div class="lane-values">` +
+          `<div class="lane-value"><b>${escapeHtml(target)}</b><span>Hedef share</span></div>` +
+          `<div class="lane-value"><b class="${debt > 0 ? "warn" : "ok"}">$${number(debt)}</b><span>Recovery borcu</span></div>` +
+          `<div class="lane-value"><b>${escapeHtml(paper.markets_skipped ?? 0)}</b><span>Atlanan market</span></div>` +
+          `</div><div class="lane-foot" title="${escapeHtml(activeText)}">${escapeHtml(activeText)}</div>` +
+          `</article>`
         );
       }).join("");
-      status.innerHTML =
-        metric(data.strategy_mode, "Strateji") +
-        metric(mode, "Çalışma modu", mode === "LIVE_ARMED" ? "bad" : "ok") +
-        metric(policy.price == null ? "—" : `${Math.round(Number(policy.price) * 100)}¢`, "İki taraf fiyatı") +
-        metric(ladder.join(" → "), "Merdiven") +
-        metric(policy.paper_max_concurrent_assets ?? "4", "PAPER paralellik") +
-        metric(policy.live_max_concurrent_assets ?? "1", "LIVE paralellik") +
-        metric(policy.opening_gate_mode || "—", "Opening gate") +
-        metric(policy.forecast_gate_mode || "—", "Forecast gate") +
-        metric(policy.global_risk_mode || "—", "Global risk") +
-        laneCards +
-        metric(`$${number(policy.full_ladder_capital_usdc)}`, "Tam merdiven minimumu") +
-        metric(`$${number(policy.minimum_live_collateral_usdc)}`, "LIVE arm minimumu") +
-        metric(data.db_integrity === "ok" ? "SAĞLAM" : data.db_integrity, "Veritabanı", data.db_integrity === "ok" ? "ok" : "bad");
     }
   };
 
@@ -154,25 +185,30 @@
     if (!node) return;
 
     node.innerHTML =
-      metric(paper.cycles ?? 0, "Paper cycle") +
-      metric(paper.settled ?? 0, "Paper settled") +
-      metric(`${paper.wins ?? 0}/${paper.losses ?? 0}`, "Paper W/L") +
-      metric(`$${number(paper.realized_pnl_usdc)}`, "Paper PnL", pnlClass(paper.realized_pnl_usdc)) +
-      metric(`$${number(paper.ev_per_settled_usdc)}`, "Paper EV / settled", pnlClass(paper.ev_per_settled_usdc)) +
-      metric(percent(paper.pair_completion_rate), "Paper çift dolum") +
-      metric(percent(paper.single_leg_rate), "Paper tek bacak") +
-      metric(paper.recovery_cycles ?? 0, "Recovery cycle") +
-      metric(`${number(paper.average_recovery_duration_sec, 1)}s`, "Recovery ort. süre") +
-      metric(`$${number(paper.max_drawdown_usdc)}`, "Paper max DD", Number(paper.max_drawdown_usdc || 0) > 0 ? "warn" : "ok") +
-      metric(live.cycles ?? 0, "LIVE cycle") +
-      metric(`$${number(live.realized_pnl_usdc)}`, "LIVE PnL", pnlClass(live.realized_pnl_usdc)) +
-      metric(percent(live.pair_completion_rate), "LIVE çift dolum");
+      metric(`$${number(paper.realized_pnl_usdc)}`, "Gerçekleşen PnL", pnlClass(paper.realized_pnl_usdc)) +
+      metric(`${paper.wins ?? 0} / ${paper.losses ?? 0}`, `Kazanç / kayıp · ${paper.settled ?? 0} settled`) +
+      metric(percent(paper.pair_completion_rate), "Çift bacak dolum") +
+      metric(percent(paper.single_leg_rate), "Tek bacak riski", Number(paper.single_leg_rate || 0) > 0 ? "warn" : "ok") +
+      metric(`$${number(paper.max_drawdown_usdc)}`, "Maksimum düşüş", Number(paper.max_drawdown_usdc || 0) > 0 ? "warn" : "ok") +
+      metric(`${number(paper.average_recovery_duration_sec, 1)} sn`, `${paper.recovery_cycles ?? 0} recovery cycle`) +
+      metric(`$${number(live.realized_pnl_usdc)}`, `LIVE PnL · ${live.cycles ?? 0} cycle`, pnlClass(live.realized_pnl_usdc));
   };
 
   const renderActiveCycle = (data) => {
     const active = (data.dual40 || {}).active_cycles || [];
     const node = byId("active");
-    if (node) node.textContent = active.length ? JSON.stringify(active, null, 2) : "Aktif cycle yok.";
+    if (!node) return;
+    if (!active.length) {
+      node.innerHTML = '<div class="empty">Aktif cycle yok.</div>';
+      return;
+    }
+    node.innerHTML = active.map((cycle) => (
+      `<div class="active-row">` +
+      `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
+      `<span>${escapeHtml(cycle.status || "AKTİF")} · ${number(cycle.target_shares, 1)} share · UP ${number(cycle.up_filled_shares)} / DOWN ${number(cycle.down_filled_shares)}</span>` +
+      `<strong>#${escapeHtml(cycle.id || "—")}</strong>` +
+      `</div>`
+    )).join("");
   };
 
   const renderCohorts = (data) => {
@@ -188,8 +224,8 @@
     node.innerHTML = Object.entries(labels).map(([key, label]) => {
       const row = cohorts[key] || {};
       return metric(
-        `${row.cycles ?? 0} cycle · EV $${number(row.ev_per_settled_usdc)} · DD $${number(row.max_drawdown_usdc)}`,
-        `${label} gözlenen kohort`,
+        `${row.cycles ?? 0} · EV $${number(row.ev_per_settled_usdc)}`,
+        `${label} · DD $${number(row.max_drawdown_usdc)}`,
         pnlClass(row.ev_per_settled_usdc)
       );
     }).join("");
@@ -199,12 +235,13 @@
     const audit = (data.dual40 || {}).p26_paper || {};
     const metrics = byId("p26metrics");
     if (metrics) {
+      const [topReason, topReasonCount] = topCount(audit.reason_counts);
       metrics.innerHTML =
-        metric(audit.status || "—", "Readiness", audit.status === "NOT_READY" ? "warn" : "ok") +
-        metric(audit.candidates ?? 0, "Aday") +
+        metric(audit.status === "NOT_READY" ? "HAZIR DEĞİL" : audit.status || "—", "Model durumu", audit.status === "NOT_READY" ? "warn" : "ok") +
+        metric(audit.candidates ?? 0, "İncelenen aday") +
         metric(audit.would_open ?? 0, "Would open") +
-        metric(audit.opened ?? 0, "Opened") +
-        metric(JSON.stringify(audit.reason_counts || {}), "Red nedenleri");
+        metric(audit.opened ?? 0, "Açılan") +
+        metric(reasonLabel(topReason), `${topReasonCount} ret`, topReason === "—" ? "" : "warn");
     }
     const rows = byId("p26decisions");
     if (rows) {
@@ -226,16 +263,17 @@
     const transport = scan.transport || {};
     const metrics = byId("scanmetrics");
     if (metrics) {
+      const [topReason, topReasonCount] = topCount(scan.reason_counts);
+      const modes = scan.gate_modes || {};
       metrics.innerHTML =
-        metric(transport.ok ? "CANLI" : "YOK", "Book transport", transport.ok ? "ok" : "bad") +
-        metric(scan.active_markets ?? 0, "Aktif 5m market") +
-        metric(scan.eligible_markets ?? 0, "Uygun market") +
-        metric(scan.would_open_base ?? 0, "Base would-open") +
-        metric(scan.would_open_opening ?? 0, "Opening would-open") +
-        metric(scan.would_open_opening_forecast ?? 0, "Forecast would-open") +
-        metric(JSON.stringify(scan.gate_modes || {}), "Gate modları") +
-        metric(scan.scope || "—", "Tarama scope") +
-        metric(JSON.stringify(scan.reason_counts || {}), "Red nedenleri");
+        chip("Book", transport.ok ? "CANLI" : "YOK", transport.ok ? "ok" : "bad") +
+        chip("Aktif market", scan.active_markets ?? 0) +
+        chip("Uygun", scan.eligible_markets ?? 0, Number(scan.eligible_markets || 0) > 0 ? "ok" : "") +
+        chip("Base", scan.would_open_base ?? 0) +
+        chip("Opening", scan.would_open_opening ?? 0) +
+        chip("Forecast", scan.would_open_opening_forecast ?? 0) +
+        chip("Gate", `${modes.opening || "—"}/${modes.forecast || "—"}`) +
+        chip("En sık ret", `${reasonLabel(topReason)} (${topReasonCount})`, topReason === "—" ? "" : "warn");
     }
 
     const candidates = byId("candidates");
@@ -243,31 +281,25 @@
       candidates.innerHTML = (scan.candidates || []).map((candidate) => {
         const opening = candidate.opening_gate || {};
         const forecast = candidate.forecast_gate || {};
-        const modes = candidate.gate_modes || {};
+        const stable = `${number(candidate.stable_for_sec, 1)} sn`;
+        const openingText = opening.reason === "PASS"
+          ? `Geçti · r ${number(opening.mid_range)}`
+          : reasonLabel(opening.reason);
+        const forecastText = forecast.p_up_external == null
+          ? reasonLabel(forecast.reason)
+          : `${number(forecast.p_up_external, 3)} · ${reasonLabel(forecast.reason)}`;
         return (
         `<tr>` +
-        `<td>${escapeHtml(candidate.combo_key)}</td>` +
-        `<td class="${candidate.eligible ? "ok" : "bad"}">${candidate.eligible ? "EVET" : "HAYIR"}</td>` +
-        `<td>${escapeHtml(candidate.reason || "—")}</td>` +
-        `<td>${escapeHtml(candidate.target_shares ?? "—")}</td>` +
-        `<td>${number(candidate.score)}</td>` +
-        `<td>${number(candidate.stable_for_sec, 1)}s</td>` +
-        `<td>${number(candidate.tte_sec, 1)}s</td>` +
-        `<td>${number(candidate.up_mid)}</td>` +
-        `<td>${number(candidate.down_mid)}</td>` +
-        `<td>${number(candidate.mid_range)}</td>` +
-        `<td>${number(candidate.net_drift)}</td>` +
-        `<td>${escapeHtml(opening.reason || "—")}</td>` +
-        `<td>${number(opening.mid_range)}</td>` +
-        `<td>${number(opening.net_drift)}</td>` +
-        `<td>${number(opening.one_way_ratio)}</td>` +
-        `<td>${number(opening.queue_imbalance, 2)}</td>` +
-        `<td>${number(opening.depth_balance_ratio, 2)}</td>` +
-        `<td>${number(forecast.p_up_external, 3)} · ${escapeHtml(forecast.reason || "—")}</td>` +
-        `<td>${escapeHtml(`${modes.opening || "—"}/${modes.forecast || "—"}/${modes.global_risk || "—"}`)}</td>` +
-        `<td>${escapeHtml(candidate.lane_status || "—")}</td>` +
-        `<td>${escapeHtml(candidate.decision || "—")}</td>` +
-        `<td>${escapeHtml(candidate.active_cycle_id || "—")}</td>` +
+        `<td><span class="cell-main">${escapeHtml(candidate.combo_key)}</span></td>` +
+        `<td class="${candidate.eligible ? "ok" : "bad"}">${candidate.eligible ? "UYGUN" : "BEKLE"}</td>` +
+        `<td><span class="cell-main">${escapeHtml(reasonLabel(candidate.reason))}</span><span class="cell-code" title="${escapeHtml(candidate.reason || "")}">${escapeHtml(candidate.reason || "—")}</span></td>` +
+        `<td class="mobile-optional">${escapeHtml(candidate.target_shares ?? "—")}</td>` +
+        `<td class="mobile-optional">${number(candidate.tte_sec, 1)} sn</td>` +
+        `<td class="price-pair">${number(candidate.up_mid)} / ${number(candidate.down_mid)}</td>` +
+        `<td class="mobile-optional">${stable}</td>` +
+        `<td class="desktop-optional" title="${escapeHtml(opening.reason || "")}">${escapeHtml(openingText)}</td>` +
+        `<td class="desktop-optional" title="${escapeHtml(forecast.reason || "")}">${escapeHtml(forecastText)}</td>` +
+        `<td class="mobile-optional">${escapeHtml(candidate.lane_status || "—")}</td>` +
         `</tr>`
         );
       }).join("");
@@ -334,7 +366,7 @@
     renderScan(data);
     renderDecisions(data);
     renderCycles(data);
-    showState(`OK · ${new Date().toLocaleTimeString()}`, "mut ok");
+    showState(`Güncel · ${new Date().toLocaleTimeString()}`, "mut ok");
   };
 
   const tick = async () => {
