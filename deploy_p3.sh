@@ -118,7 +118,7 @@ if s.dual40_active:
     dual=connect_dual40(s.p3_db_path); dual.close()
     print("order=POST_ONLY_GTC price=40c each_side")
     print("ladder=5,10,30 hard_stop_after_30=true")
-    print("entry=BALANCED_STABLE_TWO_WAY one_global_market=true")
+    print("entry=BALANCED_STABLE_TWO_WAY paper_parallel_assets=4 live_parallel_assets=1")
     print("paper_fill=BEST_ASK_LE_40 near_touch_41=diagnostic_only")
     print("minimum_live_collateral_usdc=", s.dual40_min_collateral_to_arm_usdc)
 else:

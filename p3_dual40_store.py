@@ -15,6 +15,8 @@ from p3_dual40_core import DEFAULT_LADDER
 from p3_schema import connect_p3, ensure_p3_schema
 
 
+DUAL40_ASSETS = ("BTC", "ETH", "SOL", "XRP")
+
 ACTIVE_STATUSES = {
     "PAPER_RESTING",
     "LIVE_SUBMITTING",
@@ -27,17 +29,22 @@ ACTIVE_STATUSES = {
 
 DUAL40_DDL = """
 CREATE TABLE IF NOT EXISTS p3_dual40_state (
-    scope               TEXT PRIMARY KEY CHECK(scope IN ('PAPER','LIVE')),
+    scope               TEXT NOT NULL CHECK(scope IN ('PAPER','LIVE')),
+    asset               TEXT NOT NULL,
     level_index         INTEGER NOT NULL DEFAULT 0,
     loss_pool_usdc      REAL NOT NULL DEFAULT 0,
     hard_stopped        INTEGER NOT NULL DEFAULT 0,
     hard_stop_reason    TEXT,
-    updated_at_ms       INTEGER NOT NULL
+    updated_at_ms       INTEGER NOT NULL,
+    last_cycle_id       INTEGER,
+    migration_note      TEXT,
+    PRIMARY KEY(scope, asset)
 );
 
 CREATE TABLE IF NOT EXISTS p3_dual40_cycles (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     scope                   TEXT NOT NULL CHECK(scope IN ('PAPER','LIVE')),
+    asset                   TEXT NOT NULL,
     session_id              TEXT,
     condition_id            TEXT NOT NULL,
     combo_key               TEXT NOT NULL,
@@ -76,10 +83,31 @@ CREATE TABLE IF NOT EXISTS p3_dual40_cycles (
     updated_at_ms           INTEGER NOT NULL,
     UNIQUE(scope,condition_id)
 );
-CREATE INDEX IF NOT EXISTS idx_p3_dual40_cycles_active
-ON p3_dual40_cycles(scope,status,updated_at_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_p3_dual40_cycles_time
 ON p3_dual40_cycles(created_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS p3_dual40_market_decisions (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope                   TEXT NOT NULL CHECK(scope IN ('PAPER','LIVE')),
+    asset                   TEXT NOT NULL,
+    combo_key               TEXT NOT NULL,
+    condition_id            TEXT NOT NULL,
+    market_start_ts_ms      INTEGER,
+    market_end_ts_ms        INTEGER,
+    first_seen_ms           INTEGER NOT NULL,
+    last_seen_ms            INTEGER NOT NULL,
+    decision                TEXT NOT NULL,
+    reason                  TEXT,
+    score                   REAL,
+    eligible                INTEGER NOT NULL DEFAULT 0,
+    opened_cycle_id         INTEGER,
+    final_gate_json         TEXT NOT NULL DEFAULT '{}',
+    created_at_ms           INTEGER NOT NULL,
+    updated_at_ms           INTEGER NOT NULL,
+    UNIQUE(scope,condition_id)
+);
+CREATE INDEX IF NOT EXISTS idx_p3_dual40_decisions_recent
+ON p3_dual40_market_decisions(scope,updated_at_ms DESC);
 """
 
 
@@ -94,19 +122,139 @@ def _decode(value: object) -> Any:
         return {}
 
 
+def normalize_asset(asset: str) -> str:
+    value = str(asset or "").strip().upper()
+    if value not in DUAL40_ASSETS:
+        raise ValueError(f"unsupported DUAL40 asset: {asset!r}")
+    return value
+
+
+def asset_from_combo_key(combo_key: str) -> str:
+    raw = str(combo_key or "").strip()
+    asset, sep, horizon = raw.partition(":")
+    if sep != ":" or horizon.strip().lower() != "5m":
+        raise ValueError(f"cannot infer DUAL40 asset from combo_key: {combo_key!r}")
+    return normalize_asset(asset)
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _write_meta(conn: sqlite3.Connection, key: str, payload: dict[str, Any]) -> None:
+    now = int(time.time() * 1000)
+    conn.execute(
+        """
+        INSERT INTO p3_meta(key,value,updated_at_ms)
+        VALUES(?,?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at_ms=excluded.updated_at_ms
+        """,
+        (key, _json(payload), now),
+    )
+
+
+def _migrate_legacy_state(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "p3_dual40_state"):
+        return
+    cols = _columns(conn, "p3_dual40_state")
+    if "asset" in cols:
+        return
+    rows = [dict(row) for row in conn.execute("SELECT * FROM p3_dual40_state").fetchall()]
+    review_required = any(
+        int(row.get("level_index") or 0) != 0
+        or abs(float(row.get("loss_pool_usdc") or 0.0)) > 1e-9
+        or bool(row.get("hard_stopped"))
+        for row in rows
+    )
+    conn.execute("ALTER TABLE p3_dual40_state RENAME TO p3_dual40_state_legacy_global")
+    conn.execute(
+        """
+        CREATE TABLE p3_dual40_state (
+            scope               TEXT NOT NULL CHECK(scope IN ('PAPER','LIVE')),
+            asset               TEXT NOT NULL,
+            level_index         INTEGER NOT NULL DEFAULT 0,
+            loss_pool_usdc      REAL NOT NULL DEFAULT 0,
+            hard_stopped        INTEGER NOT NULL DEFAULT 0,
+            hard_stop_reason    TEXT,
+            updated_at_ms       INTEGER NOT NULL,
+            last_cycle_id       INTEGER,
+            migration_note      TEXT,
+            PRIMARY KEY(scope, asset)
+        )
+        """
+    )
+    if review_required:
+        _write_meta(
+            conn,
+            "dual40_legacy_global_state_review_required",
+            {
+                "status": "LEGACY_GLOBAL_STATE_REVIEW_REQUIRED",
+                "reason": "legacy scope-level ladder/loss pool was not assigned to any asset",
+                "legacy_rows": rows,
+            },
+        )
+
+
+def _migrate_cycles_asset(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "p3_dual40_cycles"):
+        return
+    cols = _columns(conn, "p3_dual40_cycles")
+    if "asset" not in cols:
+        conn.execute("ALTER TABLE p3_dual40_cycles ADD COLUMN asset TEXT")
+    rows = conn.execute(
+        """
+        SELECT id,combo_key FROM p3_dual40_cycles
+        WHERE asset IS NULL OR trim(asset)=''
+        """
+    ).fetchall()
+    for row in rows:
+        asset = asset_from_combo_key(str(row["combo_key"]))
+        conn.execute(
+            "UPDATE p3_dual40_cycles SET asset=? WHERE id=?",
+            (asset, int(row["id"])),
+        )
+
+
 def ensure_dual40_schema(conn: sqlite3.Connection) -> None:
     ensure_p3_schema(conn)
+    _migrate_legacy_state(conn)
     conn.executescript(DUAL40_DDL)
+    _migrate_cycles_asset(conn)
     now = int(time.time() * 1000)
     for scope in ("PAPER", "LIVE"):
-        conn.execute(
-            """
-            INSERT INTO p3_dual40_state(scope,level_index,loss_pool_usdc,hard_stopped,updated_at_ms)
-            VALUES(?,0,0,0,?)
-            ON CONFLICT(scope) DO NOTHING
-            """,
-            (scope, now),
-        )
+        for asset in DUAL40_ASSETS:
+            conn.execute(
+                """
+                INSERT INTO p3_dual40_state(
+                    scope,asset,level_index,loss_pool_usdc,hard_stopped,updated_at_ms
+                )
+                VALUES(?,?,0,0,0,?)
+                ON CONFLICT(scope,asset) DO NOTHING
+                """,
+                (scope, asset, now),
+            )
+    conn.execute("DROP INDEX IF EXISTS idx_p3_dual40_cycles_active")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_p3_dual40_cycles_active_lookup
+        ON p3_dual40_cycles(scope,asset,status,updated_at_ms DESC)
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_p3_dual40_active_scope_asset
+        ON p3_dual40_cycles(scope,asset)
+        WHERE status IN ({",".join(repr(status) for status in sorted(ACTIVE_STATUSES))})
+        """
+    )
     conn.commit()
 
 
@@ -116,13 +264,14 @@ def connect_dual40(path: str) -> sqlite3.Connection:
     return conn
 
 
-def ladder_state(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
+def ladder_state(conn: sqlite3.Connection, scope: str, asset: str) -> dict[str, Any]:
+    asset_value = normalize_asset(asset)
     row = conn.execute(
-        "SELECT * FROM p3_dual40_state WHERE scope=?",
-        (scope.upper(),),
+        "SELECT * FROM p3_dual40_state WHERE scope=? AND asset=?",
+        (scope.upper(), asset_value),
     ).fetchone()
     if row is None:
-        raise RuntimeError(f"DUAL40 state missing for {scope}")
+        raise RuntimeError(f"DUAL40 state missing for {scope}:{asset_value}")
     return dict(row)
 
 
@@ -130,16 +279,21 @@ def set_ladder_state(
     conn: sqlite3.Connection,
     *,
     scope: str,
+    asset: str,
     level_index: int,
     loss_pool_usdc: float,
     hard_stopped: bool,
     hard_stop_reason: str | None,
+    last_cycle_id: int | None = None,
+    commit: bool = True,
 ) -> None:
+    asset_value = normalize_asset(asset)
     conn.execute(
         """
         UPDATE p3_dual40_state
-        SET level_index=?,loss_pool_usdc=?,hard_stopped=?,hard_stop_reason=?,updated_at_ms=?
-        WHERE scope=?
+        SET level_index=?,loss_pool_usdc=?,hard_stopped=?,hard_stop_reason=?,
+            updated_at_ms=?,last_cycle_id=COALESCE(?,last_cycle_id)
+        WHERE scope=? AND asset=?
         """,
         (
             int(level_index),
@@ -147,34 +301,67 @@ def set_ladder_state(
             int(bool(hard_stopped)),
             hard_stop_reason,
             int(time.time() * 1000),
+            last_cycle_id,
             scope.upper(),
+            asset_value,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def active_cycle(conn: sqlite3.Connection) -> dict[str, Any] | None:
+def active_cycle(
+    conn: sqlite3.Connection,
+    scope: str | None = None,
+    asset: str | None = None,
+) -> dict[str, Any] | None:
+    cycles = active_cycles(conn, scope=scope, asset=asset, limit=1)
+    return cycles[0] if cycles else None
+
+
+def active_cycles(
+    conn: sqlite3.Connection,
+    scope: str | None = None,
+    asset: str | None = None,
+    *,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
     placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
-    row = conn.execute(
-        f"""
+    where = [f"status IN ({placeholders})"]
+    params: list[Any] = list(sorted(ACTIVE_STATUSES))
+    if scope is not None:
+        where.append("scope=?")
+        params.append(scope.upper())
+    if asset is not None:
+        where.append("asset=?")
+        params.append(normalize_asset(asset))
+    sql = f"""
         SELECT * FROM p3_dual40_cycles
-        WHERE status IN ({placeholders})
-        ORDER BY id DESC LIMIT 1
-        """,
-        tuple(sorted(ACTIVE_STATUSES)),
-    ).fetchone()
-    return _cycle_dict(row) if row is not None else None
+        WHERE {" AND ".join(where)}
+        ORDER BY id DESC
+    """
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(max(1, int(limit)))
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    return [_cycle_dict(row) for row in rows]
 
 
 def cycle_for_condition(
     conn: sqlite3.Connection,
     *,
     scope: str,
+    asset: str | None = None,
     condition_id: str,
 ) -> dict[str, Any] | None:
+    params: list[Any] = [scope.upper(), str(condition_id)]
+    extra = ""
+    if asset is not None:
+        extra = " AND asset=?"
+        params.append(normalize_asset(asset))
     row = conn.execute(
-        "SELECT * FROM p3_dual40_cycles WHERE scope=? AND condition_id=?",
-        (scope.upper(), str(condition_id)),
+        f"SELECT * FROM p3_dual40_cycles WHERE scope=? AND condition_id=?{extra}",
+        tuple(params),
     ).fetchone()
     return _cycle_dict(row) if row is not None else None
 
@@ -183,6 +370,7 @@ def create_cycle(
     conn: sqlite3.Connection,
     *,
     scope: str,
+    asset: str,
     session_id: str | None,
     condition_id: str,
     combo_key: str,
@@ -200,38 +388,155 @@ def create_cycle(
     details: dict[str, Any] | None = None,
 ) -> int:
     now = int(time.time() * 1000)
-    cur = conn.execute(
+    asset_value = normalize_asset(asset)
+    if asset_from_combo_key(combo_key) != asset_value:
+        raise ValueError("DUAL40 asset does not match combo_key")
+
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        if cycle_for_condition(
+            conn,
+            scope=scope,
+            asset=asset_value,
+            condition_id=condition_id,
+        ):
+            raise sqlite3.IntegrityError("duplicate DUAL40 condition for scope/asset")
+        if active_cycle(conn, scope=scope, asset=asset_value) is not None:
+            raise sqlite3.IntegrityError("active DUAL40 cycle already exists for scope/asset")
+        cur = conn.execute(
+            """
+            INSERT INTO p3_dual40_cycles(
+                scope,asset,session_id,condition_id,combo_key,market_end_ts_ms,
+                level_index,target_shares,maker_price,status,gate_json,
+                up_token_id,down_token_id,before_up_shares,before_down_shares,
+                loss_pool_before_usdc,details_json,created_at_ms,updated_at_ms
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                scope.upper(),
+                asset_value,
+                session_id,
+                str(condition_id),
+                str(combo_key),
+                int(market_end_ts_ms),
+                int(level_index),
+                float(target_shares),
+                float(maker_price),
+                str(status),
+                _json(gate),
+                str(up_token_id),
+                str(down_token_id),
+                float(before_up_shares),
+                float(before_down_shares),
+                max(0.0, float(loss_pool_before_usdc)),
+                _json(details or {}),
+                now,
+                now,
+            ),
+        )
+        if owns_transaction:
+            conn.commit()
+        return int(cur.lastrowid)
+    except Exception:
+        if owns_transaction:
+            conn.rollback()
+        raise
+
+
+def upsert_market_decision(
+    conn: sqlite3.Connection,
+    *,
+    scope: str,
+    asset: str,
+    combo_key: str,
+    condition_id: str,
+    market_start_ts_ms: int | None,
+    market_end_ts_ms: int | None,
+    decision: str,
+    reason: str | None = None,
+    score: float | None = None,
+    eligible: bool = False,
+    opened_cycle_id: int | None = None,
+    final_gate: dict[str, Any] | None = None,
+    now_ms: int | None = None,
+    commit: bool = True,
+) -> None:
+    now = int(now_ms if now_ms is not None else time.time() * 1000)
+    conn.execute(
         """
-        INSERT INTO p3_dual40_cycles(
-            scope,session_id,condition_id,combo_key,market_end_ts_ms,
-            level_index,target_shares,maker_price,status,gate_json,
-            up_token_id,down_token_id,before_up_shares,before_down_shares,
-            loss_pool_before_usdc,details_json,created_at_ms,updated_at_ms
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO p3_dual40_market_decisions(
+            scope,asset,combo_key,condition_id,market_start_ts_ms,market_end_ts_ms,
+            first_seen_ms,last_seen_ms,decision,reason,score,eligible,opened_cycle_id,
+            final_gate_json,created_at_ms,updated_at_ms
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(scope,condition_id) DO UPDATE SET
+            asset=excluded.asset,
+            combo_key=excluded.combo_key,
+            market_start_ts_ms=excluded.market_start_ts_ms,
+            market_end_ts_ms=excluded.market_end_ts_ms,
+            last_seen_ms=excluded.last_seen_ms,
+            decision=excluded.decision,
+            reason=excluded.reason,
+            score=excluded.score,
+            eligible=excluded.eligible,
+            opened_cycle_id=COALESCE(excluded.opened_cycle_id,opened_cycle_id),
+            final_gate_json=excluded.final_gate_json,
+            updated_at_ms=excluded.updated_at_ms
         """,
         (
             scope.upper(),
-            session_id,
-            str(condition_id),
+            normalize_asset(asset),
             str(combo_key),
-            int(market_end_ts_ms),
-            int(level_index),
-            float(target_shares),
-            float(maker_price),
-            str(status),
-            _json(gate),
-            str(up_token_id),
-            str(down_token_id),
-            float(before_up_shares),
-            float(before_down_shares),
-            max(0.0, float(loss_pool_before_usdc)),
-            _json(details or {}),
+            str(condition_id),
+            market_start_ts_ms,
+            market_end_ts_ms,
+            now,
+            now,
+            str(decision),
+            reason,
+            score,
+            int(bool(eligible)),
+            opened_cycle_id,
+            _json(final_gate or {}),
             now,
             now,
         ),
     )
-    conn.commit()
-    return int(cur.lastrowid)
+    if commit:
+        conn.commit()
+
+
+def market_decisions(
+    conn: sqlite3.Connection,
+    *,
+    scope: str | None = None,
+    asset: str | None = None,
+    limit: int | None = 100,
+) -> list[dict[str, Any]]:
+    where: list[str] = []
+    params: list[Any] = []
+    if scope is not None:
+        where.append("scope=?")
+        params.append(scope.upper())
+    if asset is not None:
+        where.append("asset=?")
+        params.append(normalize_asset(asset))
+    sql = "SELECT * FROM p3_dual40_market_decisions"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at_ms DESC,id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(max(1, min(500, int(limit))))
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["final_gate"] = _decode(item.pop("final_gate_json", "{}"))
+        out.append(item)
+    return out
 
 
 def update_cycle(
@@ -240,9 +545,11 @@ def update_cycle(
     *,
     status: str | None = None,
     details_merge: dict[str, Any] | None = None,
+    commit: bool = True,
     **fields: Any,
 ) -> None:
     allowed = {
+        "gate_json",
         "up_order_id",
         "down_order_id",
         "before_up_shares",
@@ -293,7 +600,8 @@ def update_cycle(
         f"UPDATE p3_dual40_cycles SET {','.join(pairs)} WHERE id=?",
         values,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def write_scan_status(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
@@ -321,23 +629,30 @@ def reset_scope(
     conn: sqlite3.Connection,
     *,
     scope: str,
+    asset: str | None = None,
     clear_cycles: bool = False,
 ) -> None:
-    if active_cycle(conn) is not None:
+    if active_cycle(conn, scope=scope, asset=asset) is not None:
         raise RuntimeError("cannot reset DUAL40 while a cycle is active")
-    set_ladder_state(
-        conn,
-        scope=scope,
-        level_index=0,
-        loss_pool_usdc=0.0,
-        hard_stopped=False,
-        hard_stop_reason=None,
-    )
-    if clear_cycles:
-        conn.execute(
-            "DELETE FROM p3_dual40_cycles WHERE scope=?",
-            (scope.upper(),),
+    assets = (normalize_asset(asset),) if asset is not None else DUAL40_ASSETS
+    for asset_value in assets:
+        set_ladder_state(
+            conn,
+            scope=scope,
+            asset=asset_value,
+            level_index=0,
+            loss_pool_usdc=0.0,
+            hard_stopped=False,
+            hard_stop_reason=None,
         )
+    if clear_cycles:
+        if asset is None:
+            conn.execute("DELETE FROM p3_dual40_cycles WHERE scope=?", (scope.upper(),))
+        else:
+            conn.execute(
+                "DELETE FROM p3_dual40_cycles WHERE scope=? AND asset=?",
+                (scope.upper(), normalize_asset(asset)),
+            )
         conn.commit()
 
 
@@ -354,7 +669,7 @@ def summary(path: str, *, limit: int = 50) -> dict[str, Any]:
     conn = connect_dual40(path)
     try:
         states = {
-            scope: ladder_state(conn, scope)
+            scope: {asset: ladder_state(conn, scope, asset) for asset in DUAL40_ASSETS}
             for scope in ("PAPER", "LIVE")
         }
         rows = conn.execute(
@@ -373,7 +688,9 @@ def summary(path: str, *, limit: int = 50) -> dict[str, Any]:
             "ladder": list(DEFAULT_LADDER),
             "state": states,
             "active_cycle": active_cycle(conn),
+            "active_cycles": active_cycles(conn),
             "scan": read_scan_status(conn),
+            "market_decisions": market_decisions(conn, limit=limit),
             "cycles": cycles,
             "settled_cycles_in_view": len(settled),
             "realized_pnl_in_view_usdc": round(pnl, 6),

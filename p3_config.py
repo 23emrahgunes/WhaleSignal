@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -85,9 +86,15 @@ class P3Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
-    # DUAL40 maker-recovery cohort. One global market at a time.
+    # DUAL40 maker-recovery cohort. PAPER has one independent lane per asset.
     # -------------------------------------------------------------------------
     dual40_paper_enabled: bool = Field(default=True, alias="P3_DUAL40_PAPER_ENABLED")
+    dual40_paper_max_concurrent_assets: int = Field(
+        default=4, alias="P3_DUAL40_PAPER_MAX_CONCURRENT_ASSETS"
+    )
+    dual40_live_max_concurrent_assets: int = Field(
+        default=1, alias="P3_DUAL40_LIVE_MAX_CONCURRENT_ASSETS"
+    )
     dual40_assets_csv: str = Field(default="BTC,ETH,SOL,XRP", alias="P3_DUAL40_ASSETS")
     dual40_horizon: str = Field(default="5m", alias="P3_DUAL40_HORIZON")
     dual40_price: float = Field(default=0.40, alias="P3_DUAL40_PRICE")
@@ -126,6 +133,64 @@ class P3Settings(BaseSettings):
         default=35.0, alias="P3_DUAL40_MIN_COLLATERAL_TO_ARM_USDC"
     )
     dual40_fill_epsilon: float = Field(default=0.00001, alias="P3_DUAL40_FILL_EPSILON")
+    dual40_opening_gate_mode: str = Field(
+        default="SHADOW", alias="P3_DUAL40_OPENING_GATE_MODE"
+    )
+    dual40_opening_observation_sec_csv: str = Field(
+        default="35,45,60", alias="P3_DUAL40_OPENING_OBSERVATION_SEC"
+    )
+    dual40_opening_max_mid_range_csv: str = Field(
+        default="0.06,0.05,0.04", alias="P3_DUAL40_OPENING_MAX_MID_RANGE"
+    )
+    dual40_opening_max_net_drift_csv: str = Field(
+        default="0.025,0.020,0.015", alias="P3_DUAL40_OPENING_MAX_NET_DRIFT"
+    )
+    dual40_opening_max_one_way_csv: str = Field(
+        default="0.65,0.60,0.58", alias="P3_DUAL40_OPENING_MAX_ONE_WAY_RATIO"
+    )
+    dual40_opening_max_spread_csv: str = Field(
+        default="0.08,0.06,0.05", alias="P3_DUAL40_OPENING_MAX_SPREAD_EACH"
+    )
+    dual40_opening_max_queue_imbalance_csv: str = Field(
+        default="3.0,2.0,1.5", alias="P3_DUAL40_OPENING_MAX_QUEUE_IMBALANCE"
+    )
+    dual40_opening_min_depth_balance_csv: str = Field(
+        default="0.75,0.85,0.90", alias="P3_DUAL40_OPENING_MIN_DEPTH_BALANCE_RATIO"
+    )
+    dual40_forecast_gate_mode: str = Field(
+        default="SHADOW", alias="P3_DUAL40_FORECAST_GATE_MODE"
+    )
+    dual40_forecast_state_url: str = Field(
+        default="http://127.0.0.1:8091/api/state",
+        alias="P3_DUAL40_FORECAST_STATE_URL",
+    )
+    dual40_forecast_timeout_ms: int = Field(
+        default=250, alias="P3_DUAL40_FORECAST_TIMEOUT_MS"
+    )
+    dual40_forecast_max_age_ms: int = Field(
+        default=2000, alias="P3_DUAL40_FORECAST_MAX_AGE_MS"
+    )
+    dual40_forecast_cache_ms: int = Field(
+        default=2000, alias="P3_DUAL40_FORECAST_CACHE_MS"
+    )
+    dual40_forecast_tte_tolerance_sec: float = Field(
+        default=3.0, alias="P3_DUAL40_FORECAST_TTE_TOLERANCE_SEC"
+    )
+    dual40_forecast_min_p_up_csv: str = Field(
+        default="0.45,0.48,0.49", alias="P3_DUAL40_FORECAST_MIN_P_UP"
+    )
+    dual40_forecast_max_p_up_csv: str = Field(
+        default="0.55,0.52,0.51", alias="P3_DUAL40_FORECAST_MAX_P_UP"
+    )
+    dual40_global_risk_mode: str = Field(
+        default="SHADOW", alias="P3_DUAL40_GLOBAL_RISK_MODE"
+    )
+    dual40_daily_loss_limit_usdc: float = Field(
+        default=10.0, alias="P3_DUAL40_DAILY_LOSS_LIMIT_USDC"
+    )
+    dual40_max_recovery_exposure_usdc: float = Field(
+        default=60.0, alias="P3_DUAL40_MAX_RECOVERY_EXPOSURE_USDC"
+    )
 
     # -------------------------------------------------------------------------
     # Guarded LIVE. Disabled by default and always starts unarmed.
@@ -228,6 +293,82 @@ class P3Settings(BaseSettings):
         if not values:
             raise ValueError("P3_DUAL40_LADDER cannot be empty")
         return values
+
+    @staticmethod
+    def _dual40_mode(value: str, *, name: str) -> str:
+        mode = str(value or "").strip().upper()
+        if mode not in {"OFF", "SHADOW", "ENFORCE"}:
+            raise ValueError(f"{name} must be OFF, SHADOW or ENFORCE")
+        return mode
+
+    @staticmethod
+    def _dual40_profile_values(raw: str, *, name: str) -> tuple[float, float, float]:
+        try:
+            values = tuple(float(part.strip()) for part in str(raw).split(",") if part.strip())
+        except ValueError as exc:
+            raise ValueError(f"{name} must contain three numeric values") from exc
+        if len(values) != 3:
+            raise ValueError(f"{name} must contain exactly three values")
+        return values
+
+    def dual40_opening_mode(self) -> str:
+        return self._dual40_mode(
+            self.dual40_opening_gate_mode,
+            name="P3_DUAL40_OPENING_GATE_MODE",
+        )
+
+    def dual40_forecast_mode(self) -> str:
+        return self._dual40_mode(
+            self.dual40_forecast_gate_mode,
+            name="P3_DUAL40_FORECAST_GATE_MODE",
+        )
+
+    def dual40_risk_mode(self) -> str:
+        return self._dual40_mode(
+            self.dual40_global_risk_mode,
+            name="P3_DUAL40_GLOBAL_RISK_MODE",
+        )
+
+    def dual40_gate_profile(self, level_index: int) -> dict[str, float]:
+        level = max(0, min(2, int(level_index)))
+        return {
+            "observation_sec": self._dual40_profile_values(
+                self.dual40_opening_observation_sec_csv,
+                name="P3_DUAL40_OPENING_OBSERVATION_SEC",
+            )[level],
+            "max_mid_range": self._dual40_profile_values(
+                self.dual40_opening_max_mid_range_csv,
+                name="P3_DUAL40_OPENING_MAX_MID_RANGE",
+            )[level],
+            "max_net_drift": self._dual40_profile_values(
+                self.dual40_opening_max_net_drift_csv,
+                name="P3_DUAL40_OPENING_MAX_NET_DRIFT",
+            )[level],
+            "max_one_way_ratio": self._dual40_profile_values(
+                self.dual40_opening_max_one_way_csv,
+                name="P3_DUAL40_OPENING_MAX_ONE_WAY_RATIO",
+            )[level],
+            "max_spread_each": self._dual40_profile_values(
+                self.dual40_opening_max_spread_csv,
+                name="P3_DUAL40_OPENING_MAX_SPREAD_EACH",
+            )[level],
+            "max_queue_imbalance": self._dual40_profile_values(
+                self.dual40_opening_max_queue_imbalance_csv,
+                name="P3_DUAL40_OPENING_MAX_QUEUE_IMBALANCE",
+            )[level],
+            "min_depth_balance_ratio": self._dual40_profile_values(
+                self.dual40_opening_min_depth_balance_csv,
+                name="P3_DUAL40_OPENING_MIN_DEPTH_BALANCE_RATIO",
+            )[level],
+            "forecast_min_p_up": self._dual40_profile_values(
+                self.dual40_forecast_min_p_up_csv,
+                name="P3_DUAL40_FORECAST_MIN_P_UP",
+            )[level],
+            "forecast_max_p_up": self._dual40_profile_values(
+                self.dual40_forecast_max_p_up_csv,
+                name="P3_DUAL40_FORECAST_MAX_P_UP",
+            )[level],
+        }
 
     @staticmethod
     def _parse_nonnegative_ms(raw: str, *, name: str) -> tuple[int, ...]:
@@ -356,6 +497,10 @@ class P3Settings(BaseSettings):
                 raise ValueError("DUAL40 assets must be BTC/ETH/SOL/XRP")
             if len(set(assets)) != len(assets):
                 raise ValueError("DUAL40 assets cannot contain duplicates")
+            if not 1 <= int(self.dual40_paper_max_concurrent_assets) <= 4:
+                raise ValueError("P3_DUAL40_PAPER_MAX_CONCURRENT_ASSETS must be 1-4")
+            if int(self.dual40_live_max_concurrent_assets) != 1:
+                raise ValueError("P3_DUAL40_LIVE_MAX_CONCURRENT_ASSETS must remain 1")
             if self.dual40_horizon.strip().lower() != "5m":
                 raise ValueError("DUAL40 currently supports 5m only")
             ladder = self.dual40_ladder()
@@ -383,6 +528,44 @@ class P3Settings(BaseSettings):
                 raise ValueError("DUAL40 LIVE arm collateral cannot be below $30")
             if self.dual40_fill_epsilon <= 0:
                 raise ValueError("DUAL40 fill epsilon must be positive")
+            self.dual40_opening_mode()
+            self.dual40_forecast_mode()
+            self.dual40_risk_mode()
+            for level in range(3):
+                profile = self.dual40_gate_profile(level)
+                if profile["observation_sec"] < self.dual40_market_age_sec:
+                    raise ValueError("DUAL40 opening observation cannot be below market age")
+                if min(
+                    profile["max_mid_range"],
+                    profile["max_net_drift"],
+                    profile["max_spread_each"],
+                ) <= 0:
+                    raise ValueError("DUAL40 opening limits must be positive")
+                if not 0.0 <= profile["max_one_way_ratio"] <= 1.0:
+                    raise ValueError("DUAL40 opening one-way ratio must be in [0,1]")
+                if profile["max_queue_imbalance"] < 1.0:
+                    raise ValueError("DUAL40 queue imbalance must be >= 1")
+                if not 0.0 <= profile["min_depth_balance_ratio"] <= 1.0:
+                    raise ValueError("DUAL40 depth balance ratio must be in [0,1]")
+                if not 0.0 <= profile["forecast_min_p_up"] < profile["forecast_max_p_up"] <= 1.0:
+                    raise ValueError("DUAL40 forecast probability band is invalid")
+            forecast_url = urlparse(self.dual40_forecast_state_url)
+            if forecast_url.scheme not in {"http", "https"} or forecast_url.hostname not in {
+                "127.0.0.1",
+                "localhost",
+                "::1",
+            }:
+                raise ValueError("DUAL40 forecast state URL must be local HTTP(S)")
+            if not 1 <= self.dual40_forecast_timeout_ms <= 2000:
+                raise ValueError("DUAL40 forecast timeout must be 1-2000ms")
+            if self.dual40_forecast_max_age_ms <= 0 or self.dual40_forecast_cache_ms <= 0:
+                raise ValueError("DUAL40 forecast age/cache must be positive")
+            if self.dual40_forecast_tte_tolerance_sec <= 0:
+                raise ValueError("DUAL40 forecast TTE tolerance must be positive")
+            if self.dual40_daily_loss_limit_usdc <= 0:
+                raise ValueError("DUAL40 daily loss limit must be positive")
+            if self.dual40_max_recovery_exposure_usdc <= 0:
+                raise ValueError("DUAL40 recovery exposure limit must be positive")
 
     def ensure_directories(self) -> None:
         Path(self.p3_db_path).parent.mkdir(parents=True, exist_ok=True)

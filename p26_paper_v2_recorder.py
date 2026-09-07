@@ -54,6 +54,31 @@ def ensure_paper_v2_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_p26_paper_status
         ON p26_paper_trades(status,forecast_ts_ms);
 
+        CREATE TABLE IF NOT EXISTS p26_paper_decisions (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            condition_id            TEXT NOT NULL,
+            combo_key               TEXT NOT NULL,
+            horizon                 TEXT NOT NULL,
+            strategy_version        TEXT NOT NULL,
+            decision_ts_ms          INTEGER NOT NULL,
+            observed_at_ms          INTEGER NOT NULL,
+            stage                   TEXT NOT NULL,
+            decision                TEXT NOT NULL,
+            reason                  TEXT NOT NULL,
+            eligible                INTEGER NOT NULL DEFAULT 0,
+            would_open              INTEGER NOT NULL DEFAULT 0,
+            model_artifact_id       TEXT,
+            alpha_artifact_id       TEXT,
+            diagnostics_json        TEXT NOT NULL DEFAULT '{}',
+            created_at_ms           INTEGER NOT NULL,
+            updated_at_ms           INTEGER NOT NULL,
+            UNIQUE(condition_id,strategy_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_p26_paper_decisions_recent
+        ON p26_paper_decisions(updated_at_ms DESC);
+        CREATE INDEX IF NOT EXISTS idx_p26_paper_decisions_reason
+        ON p26_paper_decisions(reason,combo_key);
+
         CREATE TABLE IF NOT EXISTS p26_alpha_replays (
             id                      INTEGER PRIMARY KEY AUTOINCREMENT,
             condition_id            TEXT NOT NULL,
@@ -144,6 +169,116 @@ class PaperV2Recorder:
         )
         self.conn.commit()
         return self.conn.total_changes > before
+
+    def record_decision(
+        self,
+        *,
+        condition_id: str,
+        combo_key: str,
+        horizon: str,
+        strategy_version: str,
+        decision_ts_ms: int,
+        stage: str,
+        decision: str,
+        reason: str,
+        eligible: bool,
+        would_open: bool,
+        model_artifact_id: Optional[str] = None,
+        alpha_artifact_id: Optional[str] = None,
+        diagnostics: Optional[dict] = None,
+        observed_at_ms: Optional[int] = None,
+    ) -> None:
+        now = int(observed_at_ms if observed_at_ms is not None else time.time() * 1000)
+        self.conn.execute(
+            """
+            INSERT INTO p26_paper_decisions(
+                condition_id,combo_key,horizon,strategy_version,decision_ts_ms,
+                observed_at_ms,stage,decision,reason,eligible,would_open,
+                model_artifact_id,alpha_artifact_id,diagnostics_json,
+                created_at_ms,updated_at_ms
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(condition_id,strategy_version) DO UPDATE SET
+                combo_key=excluded.combo_key,
+                horizon=excluded.horizon,
+                decision_ts_ms=excluded.decision_ts_ms,
+                observed_at_ms=excluded.observed_at_ms,
+                stage=excluded.stage,
+                decision=excluded.decision,
+                reason=excluded.reason,
+                eligible=excluded.eligible,
+                would_open=excluded.would_open,
+                model_artifact_id=excluded.model_artifact_id,
+                alpha_artifact_id=excluded.alpha_artifact_id,
+                diagnostics_json=excluded.diagnostics_json,
+                updated_at_ms=excluded.updated_at_ms
+            """,
+            (
+                str(condition_id),
+                str(combo_key),
+                str(horizon),
+                str(strategy_version),
+                int(decision_ts_ms),
+                now,
+                str(stage),
+                str(decision),
+                str(reason),
+                int(bool(eligible)),
+                int(bool(would_open)),
+                model_artifact_id,
+                alpha_artifact_id,
+                json.dumps(diagnostics or {}, sort_keys=True, separators=(",", ":"), default=str),
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+
+    def decision_summary(
+        self,
+        *,
+        strategy_version: str = "RESEARCH_PAPER_V2",
+        limit: int = 50,
+    ) -> dict:
+        totals = self.conn.execute(
+            """
+            SELECT COUNT(*) AS candidates,
+                   COALESCE(SUM(would_open),0) AS would_open,
+                   COALESCE(SUM(CASE WHEN decision='OPENED' THEN 1 ELSE 0 END),0) AS opened
+            FROM p26_paper_decisions
+            WHERE strategy_version=?
+            """,
+            (str(strategy_version),),
+        ).fetchone()
+        reason_rows = self.conn.execute(
+            """
+            SELECT reason,COUNT(*) AS n FROM p26_paper_decisions
+            WHERE strategy_version=? GROUP BY reason ORDER BY n DESC,reason
+            """,
+            (str(strategy_version),),
+        ).fetchall()
+        recent = self.conn.execute(
+            """
+            SELECT condition_id,combo_key,horizon,decision_ts_ms,observed_at_ms,
+                   stage,decision,reason,eligible,would_open,model_artifact_id,
+                   alpha_artifact_id,diagnostics_json
+            FROM p26_paper_decisions
+            WHERE strategy_version=? ORDER BY updated_at_ms DESC,id DESC LIMIT ?
+            """,
+            (str(strategy_version), max(1, min(500, int(limit)))),
+        ).fetchall()
+        return {
+            "candidates": int(totals["candidates"] if totals else 0),
+            "would_open": int(totals["would_open"] if totals else 0),
+            "opened": int(totals["opened"] if totals else 0),
+            "reason_counts": {str(row["reason"]): int(row["n"]) for row in reason_rows},
+            "recent": [
+                {
+                    **{key: row[key] for key in row.keys() if key != "diagnostics_json"},
+                    "diagnostics": json.loads(str(row["diagnostics_json"] or "{}")),
+                }
+                for row in recent
+            ],
+        }
 
     def attempt_exists(self, condition_id: str, strategy_version: str = "RESEARCH_PAPER_V2") -> bool:
         return self.conn.execute(

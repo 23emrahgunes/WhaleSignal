@@ -189,6 +189,9 @@ def _settings(tmp_path) -> P3Settings:
         live_feature_enabled=True,
         live_auto_execute_enabled=True,
         dual40_min_collateral_to_arm_usdc=35.0,
+        dual40_opening_gate_mode="OFF",
+        dual40_forecast_gate_mode="OFF",
+        dual40_global_risk_mode="OFF",
     )
 
 
@@ -216,7 +219,7 @@ def test_uncertain_live_submit_is_cancelled_reconciled_and_persisted(monkeypatch
                 "up_token_id": "up-token",
                 "down_token_id": "down-token",
             },
-            ladder_state(conn, "LIVE"),
+            ladder_state(conn, "LIVE", "BTC"),
         )
         row = conn.execute(
             "SELECT * FROM p3_dual40_cycles WHERE condition_id='cond-1'"

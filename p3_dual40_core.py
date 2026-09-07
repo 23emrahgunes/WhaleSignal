@@ -2,8 +2,9 @@
 
 The strategy rests equal-share, post-only BUY orders at 40 cents on UP and DOWN,
 but only after the live CLOB path has remained balanced and non-directional.  It uses
-one global recovery ladder (5 -> 10 -> 30 shares) and permanently hard-stops when the
-realized loss pool can no longer be recovered by a fully matched 30-share pair.
+asset-scoped recovery ladders (5 -> 10 -> 30 shares) and permanently hard-stops only
+the affected asset when its realized loss pool can no longer be recovered by a fully
+matched 30-share pair.
 
 This module performs no I/O, signing or order submission.  It is intentionally pure
 so regime gates, partial-fill PnL and ladder transitions are deterministic and easy
@@ -113,6 +114,70 @@ class RegimeDecision:
 
 
 @dataclass(frozen=True)
+class OpeningGateProfile:
+    observation_sec: float
+    max_mid_range: float
+    max_net_drift: float
+    max_one_way_ratio: float
+    max_spread_each: float
+    forecast_min_p_up: float
+    forecast_max_p_up: float
+    max_abs_slope_per_sec: float = 0.0030
+    max_single_jump: float = 0.06
+    max_complement_residual: float = 0.04
+    max_queue_imbalance: float = 3.0
+    min_depth_balance_ratio: float = 0.75
+
+    def validate(self) -> None:
+        if self.observation_sec <= 0:
+            raise ValueError("opening observation must be positive")
+        if min(self.max_mid_range, self.max_net_drift, self.max_spread_each) <= 0:
+            raise ValueError("opening range/drift/spread limits must be positive")
+        if not 0.0 <= self.max_one_way_ratio <= 1.0:
+            raise ValueError("opening one-way ratio must be in [0,1]")
+        if not 0.0 <= self.forecast_min_p_up < self.forecast_max_p_up <= 1.0:
+            raise ValueError("opening forecast band is invalid")
+        if self.max_queue_imbalance < 1.0:
+            raise ValueError("opening queue imbalance must be >= 1")
+        if not 0.0 <= self.min_depth_balance_ratio <= 1.0:
+            raise ValueError("opening depth balance ratio must be in [0,1]")
+
+
+@dataclass(frozen=True)
+class OpeningStabilityDecision:
+    eligible: bool
+    reason: str
+    observation_sec: float
+    history_span_sec: float
+    mid_range: float | None = None
+    net_drift: float | None = None
+    slope_per_sec: float | None = None
+    one_way_ratio: float | None = None
+    max_jump: float | None = None
+    complement_residual: float | None = None
+    max_spread: float | None = None
+    queue_imbalance: float | None = None
+    depth_balance_ratio: float | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "eligible": self.eligible,
+            "reason": self.reason,
+            "observation_sec": self.observation_sec,
+            "history_span_sec": round(float(self.history_span_sec), 3),
+            "mid_range": self.mid_range,
+            "net_drift": self.net_drift,
+            "slope_per_sec": self.slope_per_sec,
+            "one_way_ratio": self.one_way_ratio,
+            "max_jump": self.max_jump,
+            "complement_residual": self.complement_residual,
+            "max_spread": self.max_spread,
+            "queue_imbalance": self.queue_imbalance,
+            "depth_balance_ratio": self.depth_balance_ratio,
+        }
+
+
+@dataclass(frozen=True)
 class LadderDecision:
     level_index: int
     target_shares: float
@@ -173,6 +238,128 @@ def _one_way_ratio(values: Sequence[float]) -> float:
     sign = 1.0 if net > 0 else -1.0
     aligned = sum(1 for change in changes if change * sign > 0)
     return aligned / len(changes)
+
+
+def _paired_complement_residual(
+    up_points: Sequence[MidPoint],
+    down_points: Sequence[MidPoint],
+    *,
+    max_skew_ms: int = 1000,
+) -> float | None:
+    if not up_points or not down_points:
+        return None
+    residuals: list[float] = []
+    down_index = 0
+    for up in up_points:
+        while (
+            down_index + 1 < len(down_points)
+            and abs(down_points[down_index + 1].ts_ms - up.ts_ms)
+            <= abs(down_points[down_index].ts_ms - up.ts_ms)
+        ):
+            down_index += 1
+        down = down_points[down_index]
+        if abs(down.ts_ms - up.ts_ms) <= max_skew_ms:
+            residuals.append(abs(up.mid + down.mid - 1.0))
+    return max(residuals) if residuals else None
+
+
+def evaluate_opening_stability(
+    *,
+    profile: OpeningGateProfile,
+    up_points: Iterable[MidPoint],
+    down_points: Iterable[MidPoint],
+    market_age_sec: float,
+    current_up_spread: float | None,
+    current_down_spread: float | None,
+    queue_up_at_40: float,
+    queue_down_at_40: float,
+    near_depth_up: float,
+    near_depth_down: float,
+) -> OpeningStabilityDecision:
+    """Evaluate a fixed market-opening window without using future observations."""
+    profile.validate()
+    up = _clean_points(up_points)
+    down = _clean_points(down_points)
+    up_span = (up[-1].ts_ms - up[0].ts_ms) / 1000.0 if len(up) >= 2 else 0.0
+    down_span = (down[-1].ts_ms - down[0].ts_ms) / 1000.0 if len(down) >= 2 else 0.0
+    history_span = min(up_span, down_span)
+
+    def result(eligible: bool, reason: str, **metrics: float | None) -> OpeningStabilityDecision:
+        return OpeningStabilityDecision(
+            eligible=eligible,
+            reason=reason,
+            observation_sec=float(profile.observation_sec),
+            history_span_sec=max(0.0, history_span),
+            mid_range=metrics.get("mid_range"),
+            net_drift=metrics.get("net_drift"),
+            slope_per_sec=metrics.get("slope"),
+            one_way_ratio=metrics.get("one_way"),
+            max_jump=metrics.get("max_jump"),
+            complement_residual=metrics.get("residual"),
+            max_spread=metrics.get("spread"),
+            queue_imbalance=metrics.get("queue"),
+            depth_balance_ratio=metrics.get("depth"),
+        )
+
+    if market_age_sec + 1e-9 < profile.observation_sec:
+        return result(False, "WAITING_OPENING_WINDOW")
+    if len(up) < 2 or len(down) < 2 or history_span + 1.0 < profile.observation_sec:
+        return result(False, "OPENING_HISTORY_INSUFFICIENT")
+
+    up_values = [point.mid for point in up]
+    down_values = [point.mid for point in down]
+    mid_range = max(max(up_values) - min(up_values), max(down_values) - min(down_values))
+    net_drift = max(abs(up_values[-1] - up_values[0]), abs(down_values[-1] - down_values[0]))
+    slope = max(abs(_linear_slope(up)), abs(_linear_slope(down)))
+    one_way = max(_one_way_ratio(up_values), _one_way_ratio(down_values))
+    max_jump = max(
+        max((abs(b - a) for a, b in zip(up_values, up_values[1:])), default=0.0),
+        max((abs(b - a) for a, b in zip(down_values, down_values[1:])), default=0.0),
+    )
+    residual = _paired_complement_residual(up, down)
+    spread_values = [
+        float(value)
+        for value in (current_up_spread, current_down_spread)
+        if value is not None
+    ]
+    spread = max(spread_values) if len(spread_values) == 2 else None
+    queue_min = min(max(0.0, queue_up_at_40), max(0.0, queue_down_at_40))
+    queue_max = max(max(0.0, queue_up_at_40), max(0.0, queue_down_at_40))
+    queue = 1.0 if queue_max <= 1e-12 else queue_max / max(queue_min, 1e-9)
+    depth_min = min(max(0.0, near_depth_up), max(0.0, near_depth_down))
+    depth_max = max(max(0.0, near_depth_up), max(0.0, near_depth_down))
+    depth = 1.0 if depth_max <= 1e-12 else depth_min / depth_max
+    metrics = {
+        "mid_range": mid_range,
+        "net_drift": net_drift,
+        "slope": slope,
+        "one_way": one_way,
+        "max_jump": max_jump,
+        "residual": residual,
+        "spread": spread,
+        "queue": queue,
+        "depth": depth,
+    }
+
+    if mid_range > profile.max_mid_range + 1e-12:
+        return result(False, "REJECTED_OPENING_RANGE", **metrics)
+    if net_drift > profile.max_net_drift + 1e-12:
+        return result(False, "REJECTED_OPENING_DRIFT", **metrics)
+    if slope > profile.max_abs_slope_per_sec + 1e-12:
+        return result(False, "REJECTED_OPENING_SLOPE", **metrics)
+    if one_way > profile.max_one_way_ratio + 1e-12:
+        return result(False, "REJECTED_OPENING_ONE_WAY_SEQUENCE", **metrics)
+    if max_jump > profile.max_single_jump + 1e-12:
+        return result(False, "REJECTED_OPENING_JUMP", **metrics)
+    if residual is None or residual > profile.max_complement_residual + 1e-12:
+        return result(False, "REJECTED_OPENING_COMPLEMENT_RESIDUAL", **metrics)
+    if spread is None or spread <= 0 or spread > profile.max_spread_each + 1e-12:
+        return result(False, "REJECTED_OPENING_SPREAD_EXPANSION", **metrics)
+    if queue > profile.max_queue_imbalance + 1e-12:
+        return result(False, "REJECTED_ASYMMETRIC_40C_QUEUE", **metrics)
+    if depth + 1e-12 < profile.min_depth_balance_ratio:
+        return result(False, "REJECTED_THIN_COUNTER_LEG", **metrics)
+    return result(True, "OPENING_STABLE_TWO_WAY", **metrics)
 
 
 def evaluate_balanced_regime(

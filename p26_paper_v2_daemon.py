@@ -88,6 +88,7 @@ class PaperV2Runtime:
         self.recorder = PaperV2Recorder(settings.p26_db_path)
         self.risk_policy = policy_from_settings(settings)
         self.cursor_key = f"paper_v2_canonical_cursor:{settings.paper_v2_strategy_version}"
+        self.audit_cursor_key = f"paper_v2_audit_cursor:{settings.paper_v2_strategy_version}"
         self.model: Optional[LoadedArtifact] = None
         self.alpha_profile = None
 
@@ -108,6 +109,20 @@ class PaperV2Runtime:
         )
         self.conn.commit()
 
+    def _set_meta_json(self, key: str, value: dict) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO p26_meta(key,value,updated_at_ms) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at_ms=excluded.updated_at_ms
+            """,
+            (
+                str(key),
+                json.dumps(value, sort_keys=True, separators=(",", ":"), default=str),
+                int(time.time() * 1000),
+            ),
+        )
+        self.conn.commit()
+
     def load_artifacts(self) -> tuple[bool, str]:
         model_path = Path(self.settings.paper_v2_model_manifest)
         alpha_path = Path(self.settings.paper_v2_alpha_artifact)
@@ -123,8 +138,14 @@ class PaperV2Runtime:
             return False, f"ARTIFACT_LOAD_FAILED:{type(exc).__name__}"
         return True, "READY"
 
-    def candidates(self, now_ms: int, limit: int = 250):
-        cursor = self._meta_int(self.cursor_key, 0)
+    def candidates(
+        self,
+        now_ms: int,
+        limit: int = 250,
+        *,
+        cursor_key: Optional[str] = None,
+    ):
+        cursor = self._meta_int(cursor_key or self.cursor_key, 0)
         return self.conn.execute(
             """
             SELECT * FROM p26_canonical_rows
@@ -134,6 +155,136 @@ class PaperV2Runtime:
             """,
             (cursor, self.settings.paper_v2_fill_delay_ms, int(now_ms), int(limit)),
         ).fetchall()
+
+    @staticmethod
+    def _audit_stage(reason: str, *, artifacts_ready: bool, eligible: bool) -> str:
+        if not artifacts_ready:
+            return "READINESS"
+        if eligible:
+            return "RISK_GATE"
+        value = str(reason or "UNKNOWN")
+        if "CALIBRATION" in value or "UNCERTAINTY" in value:
+            return "CALIBRATION_GATE"
+        if value.startswith("ALPHA_") or "EDGE" in value:
+            return "ALPHA_GATE"
+        if value.startswith("BOOK_") or "LIQUID" in value or "FILL" in value:
+            return "BOOK_LIQUIDITY_GATE"
+        if value.startswith("FEE_") or value.startswith("TOKEN_"):
+            return "FEE_TOKEN_GATE"
+        if value.startswith("PORTFOLIO_") or "EXPOSURE" in value or "LOSS_LIMIT" in value:
+            return "RISK_GATE"
+        return "LIFECYCLE_GATE"
+
+    def _evaluate_candidate(
+        self,
+        row,
+        *,
+        now_ms: int,
+        artifacts_ready: bool,
+        readiness_reason: str,
+    ) -> tuple[PaperV2Decision, int]:  # noqa: ANN001
+        fill_ts = int(row["decision_ts_ms"]) + self.settings.paper_v2_fill_delay_ms
+        if not artifacts_ready:
+            return (
+                _synthetic_skip(
+                    side="UP",
+                    reason=readiness_reason,
+                    probability=None,
+                ),
+                fill_ts,
+            )
+        label = self.conn.execute(
+            "SELECT official_label FROM p26_labels WHERE condition_id=?",
+            (row["condition_id"],),
+        ).fetchone()
+        if int(row["market_end_ts_ms"]) <= fill_ts:
+            return (
+                _synthetic_skip(
+                    side="UP", reason="MARKET_LIFECYCLE_INVALID", probability=None
+                ),
+                fill_ts,
+            )
+        if int(now_ms) - fill_ts > self.settings.max_forecast_age_ms:
+            return (
+                _synthetic_skip(
+                    side="UP",
+                    reason="RUNTIME_MISSED_ENTRY_WINDOW",
+                    probability=None,
+                    details=(f"runtime_lag_ms={int(now_ms)-fill_ts}",),
+                ),
+                fill_ts,
+            )
+        if label is not None and label["official_label"] is not None:
+            return (
+                _synthetic_skip(
+                    side="UP", reason="MARKET_ALREADY_RESOLVED", probability=None
+                ),
+                fill_ts,
+            )
+        try:
+            decision, _, evaluated_fill_ts = self.evaluate_row(row)
+            return decision, evaluated_fill_ts
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Paper V2 row evaluation failed condition=%s", row["condition_id"])
+            return (
+                _synthetic_skip(
+                    side="UP",
+                    reason="RUNTIME_EVALUATION_ERROR",
+                    probability=None,
+                    details=(repr(exc),),
+                ),
+                fill_ts,
+            )
+
+    def audit(self, now_ms: Optional[int] = None) -> dict:
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        ready, readiness_reason = self.load_artifacts()
+        rows = self.candidates(now, cursor_key=self.audit_cursor_key)
+        processed = would_open = rejected = 0
+        for row in rows:
+            decision, _ = self._evaluate_candidate(
+                row,
+                now_ms=now,
+                artifacts_ready=ready,
+                readiness_reason=readiness_reason,
+            )
+            stage = self._audit_stage(
+                decision.reason,
+                artifacts_ready=ready,
+                eligible=bool(decision.eligible),
+            )
+            self.recorder.record_decision(
+                condition_id=str(row["condition_id"]),
+                combo_key=str(row["combo_key"]),
+                horizon=str(row["horizon"]),
+                strategy_version=self.settings.paper_v2_strategy_version,
+                decision_ts_ms=int(row["decision_ts_ms"]),
+                stage=stage,
+                decision="WOULD_OPEN" if decision.eligible else ("NOT_READY" if not ready else "REJECTED"),
+                reason=decision.reason,
+                eligible=bool(decision.eligible),
+                would_open=bool(decision.eligible),
+                model_artifact_id=(self.model.manifest.artifact_id if self.model else None),
+                alpha_artifact_id=getattr(self.alpha_profile, "artifact_id", None),
+                diagnostics=decision.to_dict(),
+                observed_at_ms=now,
+            )
+            processed += 1
+            would_open += int(decision.eligible)
+            rejected += int(not decision.eligible)
+        if rows:
+            self._set_meta_int(self.audit_cursor_key, max(int(row["id"]) for row in rows))
+        result = {
+            "status": "AUDIT_OK" if ready else "NOT_READY",
+            "reason": readiness_reason,
+            "processed": processed,
+            "would_open": would_open,
+            "rejected": rejected,
+            "paper_enabled": bool(self.settings.paper_v2_enabled),
+            "observed_at_ms": now,
+        }
+        self._set_meta_json("paper_v2_audit_status_json", result)
+        return result
 
     def _risk_state(self, row, now_ms: int):  # noqa: ANN001
         asset = str(row["asset"])
@@ -224,35 +375,12 @@ class PaperV2Runtime:
         for row in rows:
             if self.recorder.attempt_exists(str(row["condition_id"]), self.settings.paper_v2_strategy_version):
                 continue
-            fill_ts = int(row["decision_ts_ms"]) + self.settings.paper_v2_fill_delay_ms
-            label = self.conn.execute(
-                "SELECT official_label FROM p26_labels WHERE condition_id=?",
-                (row["condition_id"],),
-            ).fetchone()
-            if int(row["market_end_ts_ms"]) <= fill_ts:
-                decision = _synthetic_skip(
-                    side="UP", reason="MARKET_LIFECYCLE_INVALID", probability=None
-                )
-            elif now - fill_ts > self.settings.max_forecast_age_ms:
-                decision = _synthetic_skip(
-                    side="UP", reason="RUNTIME_MISSED_ENTRY_WINDOW", probability=None,
-                    details=(f"runtime_lag_ms={now-fill_ts}",),
-                )
-            elif label is not None and label["official_label"] is not None:
-                decision = _synthetic_skip(
-                    side="UP", reason="MARKET_ALREADY_RESOLVED", probability=None
-                )
-            else:
-                try:
-                    decision, _, fill_ts = self.evaluate_row(row)
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("Paper V2 row evaluation failed condition=%s", row["condition_id"])
-                    decision = _synthetic_skip(
-                        side="UP",
-                        reason="RUNTIME_EVALUATION_ERROR",
-                        probability=None,
-                        details=(repr(exc),),
-                    )
+            decision, fill_ts = self._evaluate_candidate(
+                row,
+                now_ms=now,
+                artifacts_ready=True,
+                readiness_reason="READY",
+            )
             evaluated.append((row, decision, fill_ts))
 
         eligible = [
@@ -292,7 +420,7 @@ class PaperV2Runtime:
                         portfolio=risk,
                         details=risk.details,
                     )
-            if self.recorder.record(
+            recorded = self.recorder.record(
                 condition_id=str(row["condition_id"]),
                 combo_key=str(row["combo_key"]),
                 horizon=str(row["horizon"]),
@@ -302,7 +430,29 @@ class PaperV2Runtime:
                 stake_usdc=self.settings.paper_v2_stake_usdc,
                 model_artifact_id=self.model.manifest.artifact_id,
                 selection_reason=("RANKED" if decision.eligible else decision.reason),
-            ):
+            )
+            if self.settings.paper_v2_audit_enabled:
+                self.recorder.record_decision(
+                    condition_id=str(row["condition_id"]),
+                    combo_key=str(row["combo_key"]),
+                    horizon=str(row["horizon"]),
+                    strategy_version=self.settings.paper_v2_strategy_version,
+                    decision_ts_ms=int(row["decision_ts_ms"]),
+                    stage=self._audit_stage(
+                        decision.reason,
+                        artifacts_ready=True,
+                        eligible=bool(decision.eligible),
+                    ),
+                    decision="OPENED" if decision.eligible else "REJECTED",
+                    reason=decision.reason,
+                    eligible=bool(decision.eligible),
+                    would_open=bool(decision.eligible),
+                    model_artifact_id=self.model.manifest.artifact_id,
+                    alpha_artifact_id=getattr(self.alpha_profile, "artifact_id", None),
+                    diagnostics=decision.to_dict(),
+                    observed_at_ms=now,
+                )
+            if recorded:
                 processed += 1
                 opened += int(decision.eligible)
                 skipped += int(not decision.eligible)
@@ -375,11 +525,15 @@ async def run(interval_sec: float = 5.0) -> None:
             pass
     try:
         while not stop.is_set():
-            if not settings.paper_v2_enabled:
-                log.info("Paper V2 disabled fail-closed; data collection continues")
-            else:
+            audit = runtime.audit() if settings.paper_v2_audit_enabled else None
+            if settings.paper_v2_enabled:
                 result = runtime.process()
-                log.info("Paper V2 cycle %s", json.dumps(result, sort_keys=True))
+            else:
+                result = {
+                    "status": "IDLE_PAPER_DISABLED",
+                    "audit": audit,
+                }
+            log.info("Paper V2 cycle %s", json.dumps(result, sort_keys=True))
             try:
                 await asyncio.wait_for(stop.wait(), timeout=max(1.0, interval_sec))
             except asyncio.TimeoutError:

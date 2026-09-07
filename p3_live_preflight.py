@@ -66,8 +66,10 @@ def _dual40_runtime_check(settings: P3Settings) -> dict[str, Any]:
     conn = connect_dual40(settings.p3_db_path)
     p26 = open_p26_read_only(settings.p26_db_path)
     try:
-        live_ladder = ladder_state(conn, "LIVE")
-        current = active_cycle(conn)
+        assets = settings.dual40_assets()
+        live_states = {asset: ladder_state(conn, "LIVE", asset) for asset in assets}
+        live_ladder = live_states[assets[0]]
+        current = active_cycle(conn, scope="LIVE")
         health_row = p26.execute(
             "SELECT value FROM p26_meta WHERE key='book_collector_health_json'"
         ).fetchone()
@@ -86,7 +88,6 @@ def _dual40_runtime_check(settings: P3Settings) -> dict[str, Any]:
             <= max(5000, int(settings.dual40_book_fresh_ms) * 3)
         )
 
-        assets = settings.dual40_assets()
         placeholders = ",".join("?" for _ in assets)
         rows = p26.execute(
             f"""
@@ -114,12 +115,13 @@ def _dual40_runtime_check(settings: P3Settings) -> dict[str, Any]:
         )
         return {
             "ok": bool(
-                not live_ladder["hard_stopped"]
+                not any(bool(row["hard_stopped"]) for row in live_states.values())
                 and current is None
                 and transport_ok
                 and maker_ready >= 1
             ),
             "ladder_state": live_ladder,
+            "ladder_states": live_states,
             "active_cycle": current,
             "transport": {
                 "connected": bool((health or {}).get("connected")),
@@ -315,7 +317,8 @@ def run_live_preflight(
             "ladder": list(settings.dual40_ladder()),
             "current_level_index": dual40_level_index,
             "hard_stop_after_30": True,
-            "one_global_market_only": True,
+            "one_global_market_only": False,
+            "live_max_concurrent_assets": int(settings.dual40_live_max_concurrent_assets),
             "full_ladder_capital_usdc": policy.full_ladder_capital,
             "initial_arm_floor_usdc": (
                 settings.dual40_min_collateral_to_arm_usdc

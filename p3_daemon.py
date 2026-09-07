@@ -5,7 +5,7 @@ Every process starts DRY. ``P3_STRATEGY_MODE`` selects exactly one engine family
 * ``STRUCTURAL_BUY_MERGE_V3`` keeps the existing immediate FOK BUY+MERGE research
   scanner and one-network-cycle-per-arm LIVE pilot.
 * ``DUAL40_MAKER_RECOVERY_V1`` runs the isolated, stateful post-only 40-cent maker
-  engine with one global 5 -> 10 -> 30 recovery ladder and persistent hard stop.
+  engine with asset-scoped 5 -> 10 -> 30 recovery lanes and persistent hard stops.
 
 Authenticated operator actions and analytics share port 8093. There is no secondary
 LIVE listener and no strategy is allowed to auto-arm after restart.
@@ -222,7 +222,7 @@ async def run() -> None:
         log.info(
             "DUAL40 profile price=%.2f ladder=%s balanced=[%.2f,%.2f] "
             "lookback=%.1fs confirm=%.1fs min_tte=%.1fs cancel_tte=%.1fs "
-            "one_global_market=true hard_stop_after_30=true",
+            "paper_parallel_assets=%d live_parallel_assets=%d hard_stop_after_30=true",
             settings.dual40_price,
             settings.dual40_ladder(),
             settings.dual40_balanced_mid_low,
@@ -231,6 +231,8 @@ async def run() -> None:
             settings.dual40_confirm_sec,
             settings.dual40_min_tte_sec,
             settings.dual40_cancel_tte_sec,
+            settings.dual40_paper_max_concurrent_assets,
+            settings.dual40_live_max_concurrent_assets,
         )
 
     if settings.web_enabled:

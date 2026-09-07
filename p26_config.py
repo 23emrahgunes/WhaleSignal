@@ -209,6 +209,9 @@ class P26Settings(BaseSettings):
     paper_v2_enabled: bool = Field(
         default=False, alias="P26_PAPER_V2_ENABLED"
     )
+    paper_v2_audit_enabled: bool = Field(
+        default=True, alias="P26_PAPER_V2_AUDIT_ENABLED"
+    )
     paper_v2_model_manifest: str = Field(
         default="models/p26/fair_value_v1.manifest.json",
         alias="P26_PAPER_V2_MODEL_MANIFEST",

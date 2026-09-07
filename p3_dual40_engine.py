@@ -1,14 +1,9 @@
-"""Stateful DUAL40 post-only maker strategy for P3.
+"""Stateful per-asset DUAL40 post-only maker recovery for P3.
 
-The engine selects at most one BTC/ETH/SOL/XRP 5m market whose CLOB has remained
-balanced and non-directional. It then rests equal 40-cent UP/DOWN bids. PAPER fills
-are conservative (best ask must actually reach 40 cents); LIVE fills are determined
-only from verified conditional-token balance deltas.
-
-Recovery sizing is global and realized-PnL based: 5 -> 10 -> 30 shares, then a
-persistent hard stop. No 90/270 continuation exists. A no-fill cycle does not advance
-the ladder. A restart always begins DRY; any surviving LIVE resting cycle is cancelled
-and reconciled before another market can be considered.
+PAPER lanes are independent for BTC/ETH/SOL/XRP. Entry always retains the proven
+balanced-regime gate; fixed opening-window and read-only forecast gates can be
+observed in SHADOW before they are explicitly enforced. LIVE order semantics remain
+unchanged and default to one concurrent asset.
 """
 from __future__ import annotations
 
@@ -23,11 +18,14 @@ from typing import Any, Callable
 
 from p25_discovery import authoritative_official_result
 from p3_config import P3Settings
+from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_core import (
     DUAL40_STRATEGY,
     Dual40Policy,
     MidPoint,
+    OpeningGateProfile,
     evaluate_balanced_regime,
+    evaluate_opening_stability,
     matched_pair_pnl,
     next_ladder_state,
     realized_cycle_pnl,
@@ -35,15 +33,19 @@ from p3_dual40_core import (
 from p3_dual40_gateway import Dual40Gateway
 from p3_dual40_store import (
     active_cycle,
+    active_cycles,
+    asset_from_combo_key,
     connect_dual40,
     create_cycle,
     cycle_for_condition,
+    DUAL40_ASSETS,
     ladder_state,
     set_ladder_state,
-    summary as store_summary,
     update_cycle,
+    upsert_market_decision,
     write_scan_status,
 )
+from p3_dual40_forecast import ForecastGateDecision, provider_from_settings
 from p3_live_preflight import run_live_preflight
 from p3_live_state import LiveState
 from p3_schema import open_p26_read_only
@@ -102,6 +104,8 @@ def _book_view(row: Any) -> dict[str, Any] | None:
     best_ask = min(price for price, _ in asks)
     if best_bid >= best_ask:
         return None
+    near_ask_limit = min(1.0, best_ask + 0.03)
+    near_bid_limit = max(0.0, best_bid - 0.03)
     return {
         "id": int(row["id"]),
         "token_id": str(row["token_id"]),
@@ -115,6 +119,8 @@ def _book_view(row: Any) -> dict[str, Any] | None:
         "spread": best_ask - best_bid,
         "bid_at_40": sum(size for price, size in bids if abs(price - 0.40) <= 1e-9),
         "ask_at_40": sum(size for price, size in asks if abs(price - 0.40) <= 1e-9),
+        "near_ask_depth": sum(size for price, size in asks if price <= near_ask_limit + 1e-12),
+        "near_bid_depth": sum(size for price, size in bids if price + 1e-12 >= near_bid_limit),
     }
 
 
@@ -147,6 +153,7 @@ class Dual40MakerEngine:
         *,
         gateway_factory: Callable[[P3Settings], Any] = Dual40Gateway,
         preflight_fn: Callable[..., dict[str, Any]] = run_live_preflight,
+        forecast_provider: Any | None = None,
     ) -> None:
         self.settings = settings
         self.state = state
@@ -154,6 +161,7 @@ class Dual40MakerEngine:
         self.policy.validate()
         self.gateway_factory = gateway_factory
         self.preflight_fn = preflight_fn
+        self.forecast_provider = forecast_provider or provider_from_settings(settings)
         self._gateway: Any | None = None
         self._gate_since: dict[str, float] = {}
         self._last_scan_write_ms = 0
@@ -206,7 +214,9 @@ class Dual40MakerEngine:
                 continue
             if not row["up_token_id"] or not row["down_token_id"]:
                 continue
-            out.append(dict(row))
+            item = dict(row)
+            item["asset"] = asset
+            out.append(item)
         return out
 
     @staticmethod
@@ -267,6 +277,138 @@ class Dual40MakerEngine:
             dedup[int(point.ts_ms)] = float(point.mid)
         return [MidPoint(ts, dedup[ts]) for ts in sorted(dedup)]
 
+    def _opening_profile(self, level_index: int) -> OpeningGateProfile:
+        values = self.settings.dual40_gate_profile(level_index)
+        return OpeningGateProfile(
+            **values,
+            max_abs_slope_per_sec=float(self.settings.dual40_max_abs_slope_per_sec),
+            max_single_jump=float(self.settings.dual40_max_single_jump),
+            max_complement_residual=float(self.settings.dual40_max_complement_residual),
+        )
+
+    def _opening_history(
+        self,
+        p26,
+        *,
+        condition_id: str,
+        side: str,
+        market_start_ts_ms: int,
+        observation_sec: float,
+        now_ms: int,
+    ) -> list[MidPoint]:  # noqa: ANN001
+        window_start = int(market_start_ts_ms)
+        window_end = min(
+            int(now_ms),
+            window_start + int(float(observation_sec) * 1000.0),
+        )
+        rows = p26.execute(
+            """
+            SELECT id,condition_id,token_id,side,source_ts_ms,recv_ts_ms,
+                   inserted_at_ms,bids_json,asks_json
+            FROM p26_clob_books
+            WHERE condition_id=? AND side=?
+            ORDER BY id DESC LIMIT 4096
+            """,
+            (str(condition_id), str(side)),
+        ).fetchall()
+        views = [view for view in (_book_view(row) for row in reversed(rows)) if view]
+        if not views or window_end <= window_start:
+            return []
+
+        timed = [
+            (max(int(view["source_ts_ms"]), int(view["inserted_at_ms"])), view)
+            for view in views
+        ]
+        before_start = [item for item in timed if item[0] <= window_start]
+        within = [item for item in timed if window_start < item[0] < window_end]
+        after_end = any(item[0] >= window_end for item in timed)
+        points: list[MidPoint] = []
+        if before_start:
+            points.append(MidPoint(window_start, float(before_start[-1][1]["mid"])))
+        points.extend(MidPoint(ts, float(view["mid"])) for ts, view in within)
+        before_end = [item for item in timed if item[0] <= window_end]
+        if before_end and (after_end or int(now_ms) <= window_end + 1000):
+            points.append(MidPoint(window_end, float(before_end[-1][1]["mid"])))
+        dedup = {int(point.ts_ms): float(point.mid) for point in points}
+        return [MidPoint(ts, dedup[ts]) for ts in sorted(dedup)]
+
+    def _forecast_decision(
+        self,
+        *,
+        now_ms: int,
+        combo_key: str,
+        condition_id: str,
+        tte_sec: float,
+        profile: OpeningGateProfile,
+    ) -> ForecastGateDecision:
+        if self.settings.dual40_forecast_mode() == "OFF":
+            return ForecastGateDecision(True, "FORECAST_GATE_OFF", False)
+        try:
+            return self.forecast_provider.evaluate(
+                now_ms=int(now_ms),
+                combo_key=str(combo_key),
+                condition_id=str(condition_id),
+                tte_sec=float(tte_sec),
+                minimum_p_up=float(profile.forecast_min_p_up),
+                maximum_p_up=float(profile.forecast_max_p_up),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("DUAL40 forecast adapter failed combo=%s", combo_key)
+            return ForecastGateDecision(
+                False,
+                f"FORECAST_PROVIDER_ERROR:{type(exc).__name__}",
+                False,
+            )
+
+    def _global_risk_decision(
+        self,
+        conn,
+        *,
+        scope: str,
+        level_index: int,
+        now_ms: int,
+    ) -> dict[str, Any]:  # noqa: ANN001
+        cutoff = int(now_ms) - 86_400_000
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(CASE WHEN realized_pnl_usdc<0
+                                    THEN -realized_pnl_usdc ELSE 0 END),0) AS gross_loss
+            FROM p3_dual40_cycles
+            WHERE scope=? AND resolved_at_ms>=?
+            """,
+            (scope.upper(), cutoff),
+        ).fetchone()
+        gross_loss = float(row["gross_loss"] if row is not None else 0.0)
+        active_recovery_exposure = sum(
+            2.0 * self.policy.price * float(cycle["target_shares"])
+            for cycle in active_cycles(conn, scope=scope)
+            if int(cycle.get("level_index") or 0) > 0
+        )
+        candidate_exposure = (
+            2.0 * self.policy.price * float(self.policy.ladder[level_index])
+            if int(level_index) > 0
+            else 0.0
+        )
+        projected = active_recovery_exposure + candidate_exposure
+        daily_ok = gross_loss + 1e-12 < float(self.settings.dual40_daily_loss_limit_usdc)
+        exposure_ok = projected <= float(self.settings.dual40_max_recovery_exposure_usdc) + 1e-12
+        reason = "GLOBAL_RISK_OK"
+        if not daily_ok:
+            reason = "GLOBAL_DAILY_LOSS_LIMIT"
+        elif not exposure_ok:
+            reason = "GLOBAL_RECOVERY_EXPOSURE_LIMIT"
+        return {
+            "eligible": bool(daily_ok and exposure_ok),
+            "reason": reason,
+            "mode": self.settings.dual40_risk_mode(),
+            "rolling_24h_gross_loss_usdc": round(gross_loss, 6),
+            "active_recovery_exposure_usdc": round(active_recovery_exposure, 6),
+            "candidate_recovery_exposure_usdc": round(candidate_exposure, 6),
+            "projected_recovery_exposure_usdc": round(projected, 6),
+            "daily_loss_limit_usdc": float(self.settings.dual40_daily_loss_limit_usdc),
+            "max_recovery_exposure_usdc": float(self.settings.dual40_max_recovery_exposure_usdc),
+        }
+
     @staticmethod
     def _maker_fee_ready(p26, condition_id: str, tokens: tuple[str, str]) -> tuple[bool, str]:  # noqa: ANN001
         rows = p26.execute(
@@ -283,17 +425,143 @@ class Dual40MakerEngine:
             return False, "MAKER_ZERO_FEE_NOT_CONFIRMED"
         return True, "MAKER_ZERO_FEE_CONFIRMED"
 
-    def _candidate(self, p26, market: dict[str, Any], now_ms: int) -> dict[str, Any]:  # noqa: ANN001
+    def _compose_candidate_gates(
+        self,
+        *,
+        base: dict[str, Any],
+        base_gate: dict[str, Any],
+        opening_gate: dict[str, Any],
+        forecast_gate: dict[str, Any],
+        risk_gate: dict[str, Any],
+        profile: OpeningGateProfile,
+    ) -> dict[str, Any]:
+        eligible = bool(base_gate.get("eligible"))
+        reason = str(base_gate.get("reason") or "UNKNOWN")
+        opening_mode = self.settings.dual40_opening_mode()
+        forecast_mode = self.settings.dual40_forecast_mode()
+        risk_mode = self.settings.dual40_risk_mode()
+        if eligible and opening_mode == "ENFORCE" and not opening_gate.get("eligible"):
+            eligible = False
+            reason = str(opening_gate.get("reason") or "OPENING_GATE_REJECTED")
+        if eligible and forecast_mode == "ENFORCE" and not forecast_gate.get("eligible"):
+            eligible = False
+            reason = str(forecast_gate.get("reason") or "FORECAST_GATE_REJECTED")
+        if eligible and risk_mode == "ENFORCE" and not risk_gate.get("eligible"):
+            eligible = False
+            reason = str(risk_gate.get("reason") or "GLOBAL_RISK_REJECTED")
+
+        base_allowed = bool(base_gate.get("eligible"))
+        opening_allowed = bool(opening_gate.get("eligible"))
+        forecast_allowed = bool(forecast_gate.get("eligible"))
+        risk_allowed = bool(risk_gate.get("eligible"))
+        base_reason = str(base_gate.get("reason") or "UNKNOWN")
+        opening_reason = str(opening_gate.get("reason") or "NOT_EVALUATED")
+        history_wait_reasons = {
+            "MARKET_WARMUP",
+            "REGIME_HISTORY_INSUFFICIENT",
+            "WAITING_OPENING_WINDOW",
+            "OPENING_HISTORY_INSUFFICIENT",
+        }
+        if base_reason in history_wait_reasons:
+            history_ready = False
+            history_reason = base_reason
+        elif opening_reason in history_wait_reasons:
+            history_ready = False
+            history_reason = opening_reason
+        elif opening_reason == "NOT_EVALUATED":
+            history_ready = False
+            history_reason = "NOT_EVALUATED"
+        else:
+            history_ready = True
+            history_reason = "HISTORY_READY"
+        stages = [
+            {"stage": "SEEN", "eligible": True, "reason": "MARKET_DISCOVERED"},
+            {
+                "stage": "WAITING_HISTORY",
+                "eligible": history_ready,
+                "reason": history_reason,
+            },
+            {
+                "stage": "OPENING_GATE",
+                "eligible": opening_allowed,
+                "reason": opening_reason,
+                "mode": opening_mode,
+            },
+            {
+                "stage": "BOOK_FEE_GATE",
+                "eligible": base_allowed,
+                "reason": base_reason,
+            },
+            {
+                "stage": "FORECAST_GATE",
+                "eligible": forecast_allowed,
+                "reason": str(forecast_gate.get("reason") or "NOT_EVALUATED"),
+                "mode": forecast_mode,
+            },
+            {
+                "stage": "RISK_GATE",
+                "eligible": risk_allowed,
+                "reason": str(risk_gate.get("reason") or "NOT_EVALUATED"),
+                "mode": risk_mode,
+            },
+        ]
+        return {
+            **base,
+            **base_gate,
+            "eligible": eligible,
+            "reason": reason,
+            "base_gate": base_gate,
+            "opening_gate": opening_gate,
+            "forecast_gate": forecast_gate,
+            "risk_gate": risk_gate,
+            "gate_profile": {
+                "observation_sec": profile.observation_sec,
+                "max_mid_range": profile.max_mid_range,
+                "max_net_drift": profile.max_net_drift,
+                "max_one_way_ratio": profile.max_one_way_ratio,
+                "max_spread_each": profile.max_spread_each,
+                "max_queue_imbalance": profile.max_queue_imbalance,
+                "min_depth_balance_ratio": profile.min_depth_balance_ratio,
+                "forecast_min_p_up": profile.forecast_min_p_up,
+                "forecast_max_p_up": profile.forecast_max_p_up,
+            },
+            "gate_modes": {
+                "opening": opening_mode,
+                "forecast": forecast_mode,
+                "global_risk": risk_mode,
+            },
+            "stages": stages,
+            "would_open_base": base_allowed,
+            "would_open_opening": base_allowed and opening_allowed,
+            "would_open_opening_forecast": base_allowed and opening_allowed and forecast_allowed,
+            "would_open_strict_recovery": (
+                base_allowed and opening_allowed and forecast_allowed and risk_allowed
+            ),
+        }
+
+    def _candidate(
+        self,
+        p26,
+        conn,
+        market: dict[str, Any],
+        now_ms: int,
+        *,
+        scope: str,
+        state_row: dict[str, Any],
+    ) -> dict[str, Any]:  # noqa: ANN001
         condition = str(market["condition_id"])
         combo = str(market["combo_key"])
         end_ms = int(market["market_end_ts_ms"])
         start_ms = end_ms - 300_000
         market_age = max(0.0, (int(now_ms) - start_ms) / 1000.0)
         tte = max(0.0, (end_ms - int(now_ms)) / 1000.0)
+        level_index = int(state_row["level_index"])
+        profile = self._opening_profile(level_index)
         up = self._latest_book(p26, condition, "UP")
         down = self._latest_book(p26, condition, "DOWN")
 
         base = {
+            "asset": asset_from_combo_key(combo),
             "condition_id": condition,
             "combo_key": combo,
             "market_end_ts_ms": end_ms,
@@ -301,9 +569,34 @@ class Dual40MakerEngine:
             "tte_sec": round(tte, 3),
             "up_token_id": str(market["up_token_id"]),
             "down_token_id": str(market["down_token_id"]),
+            "level_index": level_index,
+            "target_shares": float(self.policy.ladder[level_index]),
+            "recovery_pending": level_index > 0 or float(state_row["loss_pool_usdc"]) > 1e-9,
+            "recovery_debt_usdc": float(state_row["loss_pool_usdc"]),
         }
+        forecast = self._forecast_decision(
+            now_ms=int(now_ms),
+            combo_key=combo,
+            condition_id=condition,
+            tte_sec=tte,
+            profile=profile,
+        ).to_dict()
+        risk = self._global_risk_decision(
+            conn,
+            scope=scope,
+            level_index=level_index,
+            now_ms=int(now_ms),
+        )
+        not_evaluated = {"eligible": False, "reason": "NOT_EVALUATED"}
         if up is None or down is None:
-            return {**base, "eligible": False, "reason": "BOOK_PAIR_MISSING", "score": 0.0}
+            return self._compose_candidate_gates(
+                base=base,
+                base_gate={"eligible": False, "reason": "BOOK_PAIR_MISSING", "score": 0.0},
+                opening_gate=not_evaluated,
+                forecast_gate=forecast,
+                risk_gate=risk,
+                profile=profile,
+            )
 
         up_age = max(0, int(now_ms) - int(up["recv_ts_ms"]))
         down_age = max(0, int(now_ms) - int(down["recv_ts_ms"]))
@@ -314,10 +607,19 @@ class Dual40MakerEngine:
                 "max_book_age_ms": max(up_age, down_age),
                 "queue_ahead_up_at_40": float(up["bid_at_40"]),
                 "queue_ahead_down_at_40": float(down["bid_at_40"]),
+                "near_depth_up": float(up["near_ask_depth"]),
+                "near_depth_down": float(down["near_ask_depth"]),
             }
         )
         if max(up_age, down_age) > int(self.settings.dual40_book_fresh_ms):
-            return {**base, "eligible": False, "reason": "BOOK_STALE", "score": 0.0}
+            return self._compose_candidate_gates(
+                base=base,
+                base_gate={"eligible": False, "reason": "BOOK_STALE", "score": 0.0},
+                opening_gate=not_evaluated,
+                forecast_gate=forecast,
+                risk_gate=risk,
+                profile=profile,
+            )
 
         fee_ok, fee_reason = self._maker_fee_ready(
             p26,
@@ -326,7 +628,14 @@ class Dual40MakerEngine:
         )
         base["fee_gate"] = fee_reason
         if not fee_ok:
-            return {**base, "eligible": False, "reason": fee_reason, "score": 0.0}
+            return self._compose_candidate_gates(
+                base=base,
+                base_gate={"eligible": False, "reason": fee_reason, "score": 0.0},
+                opening_gate=not_evaluated,
+                forecast_gate=forecast,
+                risk_gate=risk,
+                profile=profile,
+            )
 
         history = self._mid_history(
             p26,
@@ -345,9 +654,86 @@ class Dual40MakerEngine:
             market_age_sec=market_age,
             tte_sec=tte,
         )
-        return {**base, **gate.to_dict(), "history_points": len(history)}
+        opening_up = self._opening_history(
+            p26,
+            condition_id=condition,
+            side="UP",
+            market_start_ts_ms=start_ms,
+            observation_sec=profile.observation_sec,
+            now_ms=int(now_ms),
+        )
+        opening_down = self._opening_history(
+            p26,
+            condition_id=condition,
+            side="DOWN",
+            market_start_ts_ms=start_ms,
+            observation_sec=profile.observation_sec,
+            now_ms=int(now_ms),
+        )
+        opening = evaluate_opening_stability(
+            profile=profile,
+            up_points=opening_up,
+            down_points=opening_down,
+            market_age_sec=market_age,
+            current_up_spread=float(up["spread"]),
+            current_down_spread=float(down["spread"]),
+            queue_up_at_40=float(up["bid_at_40"]),
+            queue_down_at_40=float(down["bid_at_40"]),
+            near_depth_up=float(up["near_ask_depth"]),
+            near_depth_down=float(down["near_ask_depth"]),
+        ).to_dict()
+        base["history_points"] = len(history)
+        base["opening_history_points_up"] = len(opening_up)
+        base["opening_history_points_down"] = len(opening_down)
+        return self._compose_candidate_gates(
+            base=base,
+            base_gate=gate.to_dict(),
+            opening_gate=opening,
+            forecast_gate=forecast,
+            risk_gate=risk,
+            profile=profile,
+        )
 
-    def _scan(self, p26, conn, *, scope: str, now_ms: int) -> dict[str, Any] | None:  # noqa: ANN001
+    def _decision_for_candidate(self, candidate: dict[str, Any], *, active: bool, hard_stop: bool) -> str:
+        if hard_stop:
+            return "SKIPPED_HARD_STOP"
+        if active:
+            return "SKIPPED_ASSET_ACTIVE"
+        if candidate.get("eligible"):
+            stable = float(candidate.get("stable_for_sec") or 0.0)
+            return "WOULD_OPEN" if stable + 1e-9 >= self.policy.confirm_sec else "WAITING_CONFIRMATION"
+        reason = str(candidate.get("reason") or "UNKNOWN")
+        if reason in {
+            "REGIME_HISTORY_INSUFFICIENT",
+            "MARKET_WARMUP",
+            "WAITING_OPENING_WINDOW",
+            "OPENING_HISTORY_INSUFFICIENT",
+        }:
+            return "WAITING_HISTORY"
+        if reason == "BOOK_PAIR_MISSING":
+            return "REJECTED_BOOK_MISSING"
+        if reason == "BOOK_STALE":
+            return "REJECTED_BOOK_STALE"
+        if reason == "POST_ONLY_WOULD_CROSS":
+            return "REJECTED_POST_ONLY_CROSS"
+        if reason.startswith("FEE_") or reason == "MAKER_ZERO_FEE_NOT_CONFIRMED":
+            return "REJECTED_FEE_LINEAGE"
+        if reason in {"ONE_WAY_SEQUENCE", "ONE_WAY_SLOPE"}:
+            return "REJECTED_ONE_WAY"
+        if reason.startswith("REJECTED_"):
+            return reason
+        return f"REJECTED_{reason}"
+
+    def _scan(
+        self,
+        p26,
+        conn,
+        *,
+        scope: str,
+        now_ms: int,
+        active_by_asset: dict[str, dict[str, Any]],
+        state_by_asset: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:  # noqa: ANN001
         transport = self._transport_status(p26)
         transport_connected = bool(transport.get("connected"))
         transport_recv = int(transport.get("last_receive_ms") or 0)
@@ -361,28 +747,127 @@ class Dual40MakerEngine:
         markets = self._active_markets(p26, int(now_ms))
         candidates: list[dict[str, Any]] = []
         reasons = Counter()
-        active_conditions = {str(market["condition_id"]) for market in markets}
-        for condition in list(self._gate_since):
-            if condition not in active_conditions:
-                self._gate_since.pop(condition, None)
+        active_gate_keys = {
+            f"{scope}:{market['asset']}:{market['condition_id']}"
+            for market in markets
+        }
+        for key in list(self._gate_since):
+            if key.split(":", 1)[0] == scope and key not in active_gate_keys:
+                self._gate_since.pop(key, None)
 
         if transport_ok:
             for market in markets:
-                item = self._candidate(p26, market, int(now_ms))
+                asset = str(market["asset"])
+                item = self._candidate(
+                    p26,
+                    conn,
+                    market,
+                    int(now_ms),
+                    scope=scope,
+                    state_row=state_by_asset[asset],
+                )
                 candidates.append(item)
                 reasons[str(item.get("reason") or "UNKNOWN")] += 1
+                asset = str(item["asset"])
                 condition = str(item["condition_id"])
+                gate_key = f"{scope}:{asset}:{condition}"
                 if item.get("eligible"):
-                    self._gate_since.setdefault(condition, time.monotonic())
+                    self._gate_since.setdefault(gate_key, time.monotonic())
                     item["stable_for_sec"] = round(
-                        max(0.0, time.monotonic() - self._gate_since[condition]),
+                        max(0.0, time.monotonic() - self._gate_since[gate_key]),
                         3,
                     )
                 else:
-                    self._gate_since.pop(condition, None)
+                    self._gate_since.pop(gate_key, None)
                     item["stable_for_sec"] = 0.0
+                active = asset in active_by_asset
+                hard_stop = bool((state_by_asset.get(asset) or {}).get("hard_stopped"))
+                decision = self._decision_for_candidate(item, active=active, hard_stop=hard_stop)
+                item["lane_status"] = "ACTIVE" if active else ("HARD_STOP" if hard_stop else "AVAILABLE")
+                item["decision"] = decision
+                item["active_cycle_id"] = (active_by_asset.get(asset) or {}).get("id")
+                final_stage = (
+                    "WOULD_OPEN"
+                    if decision == "WOULD_OPEN"
+                    else (
+                        "REJECTED"
+                        if decision.startswith(("REJECTED", "SKIPPED"))
+                        else decision
+                    )
+                )
+                item["stages"] = [
+                    *item.get("stages", []),
+                    {
+                        "stage": final_stage,
+                        "eligible": decision == "WOULD_OPEN",
+                        "reason": str(item.get("reason") or decision),
+                        "decision": decision,
+                    },
+                ]
+                upsert_market_decision(
+                    conn,
+                    scope=scope,
+                    asset=asset,
+                    combo_key=str(item["combo_key"]),
+                    condition_id=str(item["condition_id"]),
+                    market_start_ts_ms=int(item["market_end_ts_ms"]) - 300_000,
+                    market_end_ts_ms=int(item["market_end_ts_ms"]),
+                    decision=decision,
+                    reason=str(item.get("reason") or ""),
+                    score=float(item.get("score") or 0.0),
+                    eligible=bool(item.get("eligible")),
+                    final_gate=item,
+                    now_ms=int(now_ms),
+                )
         else:
             reasons["BOOK_TRANSPORT_NOT_LIVE"] += max(1, len(markets))
+            for market in markets:
+                asset = str(market["asset"])
+                active = asset in active_by_asset
+                hard_stop = bool((state_by_asset.get(asset) or {}).get("hard_stopped"))
+                item = {
+                    "asset": asset,
+                    "condition_id": str(market["condition_id"]),
+                    "combo_key": str(market["combo_key"]),
+                    "market_end_ts_ms": int(market["market_end_ts_ms"]),
+                    "eligible": False,
+                    "reason": "BOOK_TRANSPORT_NOT_LIVE",
+                    "score": 0.0,
+                    "stable_for_sec": 0.0,
+                    "lane_status": "ACTIVE" if active else ("HARD_STOP" if hard_stop else "AVAILABLE"),
+                    "active_cycle_id": (active_by_asset.get(asset) or {}).get("id"),
+                    "decision": "REJECTED_BOOK_TRANSPORT_NOT_LIVE",
+                    "stages": [
+                        {"stage": "SEEN", "eligible": True, "reason": "MARKET_DISCOVERED"},
+                        {
+                            "stage": "BOOK_FEE_GATE",
+                            "eligible": False,
+                            "reason": "BOOK_TRANSPORT_NOT_LIVE",
+                        },
+                        {
+                            "stage": "REJECTED",
+                            "eligible": False,
+                            "reason": "BOOK_TRANSPORT_NOT_LIVE",
+                            "decision": "REJECTED_BOOK_TRANSPORT_NOT_LIVE",
+                        },
+                    ],
+                }
+                candidates.append(item)
+                upsert_market_decision(
+                    conn,
+                    scope=scope,
+                    asset=asset,
+                    combo_key=str(item["combo_key"]),
+                    condition_id=str(item["condition_id"]),
+                    market_start_ts_ms=int(item["market_end_ts_ms"]) - 300_000,
+                    market_end_ts_ms=int(item["market_end_ts_ms"]),
+                    decision=str(item["decision"]),
+                    reason=str(item["reason"]),
+                    score=0.0,
+                    eligible=False,
+                    final_gate=item,
+                    now_ms=int(now_ms),
+                )
 
         scan = {
             "strategy": DUAL40_STRATEGY,
@@ -395,9 +880,24 @@ class Dual40MakerEngine:
             },
             "active_markets": len(markets),
             "eligible_markets": sum(1 for item in candidates if item.get("eligible")),
+            "would_open_base": sum(1 for item in candidates if item.get("would_open_base")),
+            "would_open_opening": sum(1 for item in candidates if item.get("would_open_opening")),
+            "would_open_opening_forecast": sum(
+                1 for item in candidates if item.get("would_open_opening_forecast")
+            ),
+            "would_open_strict_recovery": sum(
+                1 for item in candidates if item.get("would_open_strict_recovery")
+            ),
             "reason_counts": dict(reasons),
             "candidates": candidates,
-            "one_global_market_only": True,
+            "gate_modes": {
+                "opening": self.settings.dual40_opening_mode(),
+                "forecast": self.settings.dual40_forecast_mode(),
+                "global_risk": self.settings.dual40_risk_mode(),
+            },
+            "one_global_market_only": False,
+            "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
+            "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
         }
         if int(now_ms) - self._last_scan_write_ms >= 1000:
             write_scan_status(conn, scan)
@@ -411,26 +911,41 @@ class Dual40MakerEngine:
             and cycle_for_condition(
                 conn,
                 scope=scope,
+                asset=str(item["asset"]),
                 condition_id=str(item["condition_id"]),
             )
             is None
+            and str(item["asset"]) not in active_by_asset
+            and not bool((state_by_asset.get(str(item["asset"])) or {}).get("hard_stopped"))
         ]
-        if not ready:
-            return None
-        return max(
-            ready,
+        ready.sort(
             key=lambda item: (
-                float(item.get("score") or 0.0),
-                float(item.get("tte_sec") or 0.0),
-            ),
+                str(item.get("asset") or ""),
+                -float(item.get("score") or 0.0),
+                -float(item.get("tte_sec") or 0.0),
+            )
         )
+        return ready
 
     def _open_paper(self, conn, candidate: dict[str, Any], state_row: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN001
+        asset = str(candidate.get("asset") or asset_from_combo_key(str(candidate["combo_key"])))
         level = int(state_row["level_index"])
         quantity = float(self.policy.ladder[level])
+        opened_gate = {
+            **candidate,
+            "stages": [
+                *candidate.get("stages", []),
+                {
+                    "stage": "OPENED",
+                    "eligible": True,
+                    "reason": "PAPER_CYCLE_CREATED",
+                },
+            ],
+        }
         cycle_id = create_cycle(
             conn,
             scope="PAPER",
+            asset=asset,
             session_id=None,
             condition_id=str(candidate["condition_id"]),
             combo_key=str(candidate["combo_key"]),
@@ -439,7 +954,7 @@ class Dual40MakerEngine:
             target_shares=quantity,
             maker_price=self.policy.price,
             status="PAPER_RESTING",
-            gate=candidate,
+            gate=opened_gate,
             up_token_id=str(candidate["up_token_id"]),
             down_token_id=str(candidate["down_token_id"]),
             loss_pool_before_usdc=float(state_row["loss_pool_usdc"]),
@@ -451,14 +966,30 @@ class Dual40MakerEngine:
             },
         )
         log.info(
-            "DUAL40 PAPER OPEN id=%s combo=%s q=%.3f price=%.2f score=%.3f",
+            "DUAL40 PAPER OPEN id=%s asset=%s combo=%s q=%.3f price=%.2f score=%.3f",
             cycle_id,
+            asset,
             candidate["combo_key"],
             quantity,
             self.policy.price,
             float(candidate.get("score") or 0.0),
         )
-        return {"status": "PAPER_OPENED", "cycle_id": cycle_id}
+        upsert_market_decision(
+            conn,
+            scope="PAPER",
+            asset=asset,
+            combo_key=str(candidate["combo_key"]),
+            condition_id=str(candidate["condition_id"]),
+            market_start_ts_ms=int(candidate["market_end_ts_ms"]) - 300_000,
+            market_end_ts_ms=int(candidate["market_end_ts_ms"]),
+            decision="OPENED",
+            reason=str(candidate.get("reason") or ""),
+            score=float(candidate.get("score") or 0.0),
+            eligible=True,
+            opened_cycle_id=cycle_id,
+            final_gate=opened_gate,
+        )
+        return {"status": "PAPER_OPENED", "asset": asset, "cycle_id": cycle_id}
 
     def _fresh_preflight(self) -> bool:
         snap = self.state.snapshot()
@@ -474,6 +1005,7 @@ class Dual40MakerEngine:
         return True
 
     def _open_live(self, conn, candidate: dict[str, Any], state_row: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN001
+        asset = str(candidate.get("asset") or asset_from_combo_key(str(candidate["combo_key"])))
         if not self.state.can_auto_execute() or not self._fresh_preflight():
             return {"status": "LIVE_NOT_READY"}
         snap = self.state.snapshot()
@@ -501,6 +1033,7 @@ class Dual40MakerEngine:
         cycle_id = create_cycle(
             conn,
             scope="LIVE",
+            asset=asset,
             session_id=snap.session_id,
             condition_id=str(candidate["condition_id"]),
             combo_key=str(candidate["combo_key"]),
@@ -539,12 +1072,24 @@ class Dual40MakerEngine:
                 details_merge={"submit": posted},
             )
             self.state.halt(code)
-            return {"status": "HALTED_SUBMIT_FAILED", "cycle_id": cycle_id, "submit": posted}
+            return {"status": "HALTED_SUBMIT_FAILED", "asset": asset, "cycle_id": cycle_id, "submit": posted}
 
+        opened_gate = {
+            **candidate,
+            "stages": [
+                *candidate.get("stages", []),
+                {
+                    "stage": "OPENED",
+                    "eligible": True,
+                    "reason": "LIVE_ORDERS_POSTED",
+                },
+            ],
+        }
         update_cycle(
             conn,
             cycle_id,
             status="LIVE_RESTING",
+            gate_json=_json(opened_gate),
             up_order_id=posted.get("up_order_id"),
             down_order_id=posted.get("down_order_id"),
             heartbeat_id=posted.get("heartbeat_id"),
@@ -560,7 +1105,22 @@ class Dual40MakerEngine:
             self.policy.price,
             self.policy.price,
         )
-        return {"status": "LIVE_POSTED", "cycle_id": cycle_id}
+        upsert_market_decision(
+            conn,
+            scope="LIVE",
+            asset=asset,
+            combo_key=str(candidate["combo_key"]),
+            condition_id=str(candidate["condition_id"]),
+            market_start_ts_ms=int(candidate["market_end_ts_ms"]) - 300_000,
+            market_end_ts_ms=int(candidate["market_end_ts_ms"]),
+            decision="OPENED",
+            reason=str(candidate.get("reason") or ""),
+            score=float(candidate.get("score") or 0.0),
+            eligible=True,
+            opened_cycle_id=cycle_id,
+            final_gate=opened_gate,
+        )
+        return {"status": "LIVE_POSTED", "asset": asset, "cycle_id": cycle_id}
 
     def _book_for_cycle(self, p26, cycle: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:  # noqa: ANN001
         condition = str(cycle["condition_id"])
@@ -581,39 +1141,90 @@ class Dual40MakerEngine:
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:  # noqa: ANN001
         scope = str(cycle["scope"])
+        asset = str(cycle.get("asset") or asset_from_combo_key(str(cycle["combo_key"])))
         before = float(cycle["loss_pool_before_usdc"])
         transition = next_ladder_state(
             policy=self.policy,
             loss_pool_before=before,
             cycle_pnl=float(pnl),
         )
-        set_ladder_state(
-            conn,
-            scope=scope,
-            level_index=transition.level_index,
-            loss_pool_usdc=transition.loss_pool,
-            hard_stopped=transition.hard_stopped,
-            hard_stop_reason=(transition.reason if transition.hard_stopped else None),
-        )
-        update_cycle(
-            conn,
-            int(cycle["id"]),
-            status=status,
-            official_result=official_result,
-            realized_pnl_usdc=round(float(pnl), 6),
-            loss_pool_after_usdc=transition.loss_pool,
-            merge_tx_hash=merge_tx_hash,
-            resolved_at_ms=int(time.time() * 1000),
-            details_merge={
+        terminal_decision = "NO_FILL" if status == "NO_FILL" else "SETTLED"
+        prior_gate = cycle.get("gate") if isinstance(cycle.get("gate"), dict) else {}
+        settled_gate = {
+            **prior_gate,
+            "stages": [
+                *prior_gate.get("stages", []),
+                {
+                    "stage": terminal_decision,
+                    "eligible": True,
+                    "reason": status,
+                },
+            ],
+            "settlement": {
+                "status": status,
+                "pnl_usdc": round(float(pnl), 6),
+                "official_result": official_result,
                 "ladder_transition": transition.to_dict(),
-                **(details or {}),
             },
-        )
+        }
+        owns_transaction = not conn.in_transaction
+        if owns_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            set_ladder_state(
+                conn,
+                scope=scope,
+                asset=asset,
+                level_index=transition.level_index,
+                loss_pool_usdc=transition.loss_pool,
+                hard_stopped=transition.hard_stopped,
+                hard_stop_reason=(transition.reason if transition.hard_stopped else None),
+                last_cycle_id=int(cycle["id"]),
+                commit=False,
+            )
+            update_cycle(
+                conn,
+                int(cycle["id"]),
+                status=status,
+                official_result=official_result,
+                realized_pnl_usdc=round(float(pnl), 6),
+                loss_pool_after_usdc=transition.loss_pool,
+                merge_tx_hash=merge_tx_hash,
+                resolved_at_ms=int(time.time() * 1000),
+                details_merge={
+                    "ladder_transition": transition.to_dict(),
+                    **(details or {}),
+                },
+                commit=False,
+            )
+            upsert_market_decision(
+                conn,
+                scope=scope,
+                asset=asset,
+                combo_key=str(cycle["combo_key"]),
+                condition_id=str(cycle["condition_id"]),
+                market_start_ts_ms=int(cycle["market_end_ts_ms"]) - 300_000,
+                market_end_ts_ms=int(cycle["market_end_ts_ms"]),
+                decision=terminal_decision,
+                reason=status,
+                score=None,
+                eligible=True,
+                opened_cycle_id=int(cycle["id"]),
+                final_gate=settled_gate,
+                commit=False,
+            )
+            if owns_transaction:
+                conn.commit()
+        except Exception:
+            if owns_transaction:
+                conn.rollback()
+            raise
         if transition.hard_stopped and scope == "LIVE":
             self.state.halt(transition.reason)
         log.warning(
-            "DUAL40 FINAL scope=%s id=%s combo=%s status=%s pnl=%.4f pool=%.4f next=%.0f hard=%s",
+            "DUAL40 FINAL scope=%s asset=%s id=%s combo=%s status=%s pnl=%.4f pool=%.4f next=%.0f hard=%s",
             scope,
+            asset,
             cycle["id"],
             cycle["combo_key"],
             status,
@@ -624,6 +1235,7 @@ class Dual40MakerEngine:
         )
         return {
             "status": status,
+            "asset": asset,
             "cycle_id": cycle["id"],
             "pnl_usdc": round(float(pnl), 6),
             "ladder": transition.to_dict(),
@@ -1008,44 +1620,95 @@ class Dual40MakerEngine:
         conn = connect_dual40(self.settings.p3_db_path)
         p26 = open_p26_read_only(self.settings.p26_db_path)
         try:
-            cycle = active_cycle(conn)
-            if cycle is not None:
+            scope = "LIVE" if self.state.can_auto_execute() else "PAPER"
+            active = active_cycles(conn, scope=scope)
+            asset_results: dict[str, Any] = {}
+            for cycle in sorted(active, key=lambda item: str(item.get("asset") or "")):
                 if str(cycle["status"]) == "WAIT_RESOLUTION":
                     result = self._resolution_tick(conn, cycle, now_ms)
                 elif str(cycle["scope"]) == "PAPER":
                     result = self._paper_tick(conn, p26, cycle, now_ms)
                 else:
                     result = self._live_tick(conn, cycle, now_ms)
-                self._last_status = result
-                return result
+                asset_results[str(result.get("asset") or cycle.get("asset") or asset_from_combo_key(str(cycle["combo_key"])))] = result
 
-            scope = "LIVE" if self.state.can_auto_execute() else "PAPER"
             if scope == "PAPER" and not bool(self.settings.dual40_paper_enabled):
                 result = {"status": "IDLE_PAPER_DISABLED"}
                 self._last_status = result
                 return result
 
-            state_row = ladder_state(conn, scope)
-            if bool(state_row["hard_stopped"]):
-                reason = str(state_row.get("hard_stop_reason") or "DUAL40_HARD_STOP")
+            configured_assets = tuple(asset for asset in self.settings.dual40_assets() if asset in DUAL40_ASSETS)
+            state_by_asset = {asset: ladder_state(conn, scope, asset) for asset in configured_assets}
+            active = active_cycles(conn, scope=scope)
+            active_by_asset = {str(cycle.get("asset") or asset_from_combo_key(str(cycle["combo_key"]))): cycle for cycle in active}
+            ready = self._scan(
+                p26,
+                conn,
+                scope=scope,
+                now_ms=now_ms,
+                active_by_asset=active_by_asset,
+                state_by_asset=state_by_asset,
+            )
+            limit = (
+                int(self.settings.dual40_live_max_concurrent_assets)
+                if scope == "LIVE"
+                else int(self.settings.dual40_paper_max_concurrent_assets)
+            )
+            slots = max(0, limit - len(active_by_asset))
+            opened = 0
+            for candidate in ready:
+                if opened >= slots:
+                    break
+                asset = str(candidate["asset"])
+                if asset in asset_results or asset in active_by_asset:
+                    continue
+                state_row = state_by_asset[asset]
+                if bool(state_row["hard_stopped"]):
+                    reason = str(state_row.get("hard_stop_reason") or "DUAL40_HARD_STOP")
+                    if scope == "LIVE":
+                        self.state.halt(reason)
+                    asset_results[asset] = {
+                        "status": "HARD_STOPPED",
+                        "scope": scope,
+                        "asset": asset,
+                        "reason": reason,
+                        "loss_pool_usdc": float(state_row["loss_pool_usdc"]),
+                    }
+                    continue
                 if scope == "LIVE":
-                    self.state.halt(reason)
-                result = {
-                    "status": "HARD_STOPPED",
-                    "scope": scope,
-                    "reason": reason,
-                    "loss_pool_usdc": float(state_row["loss_pool_usdc"]),
-                }
-                self._last_status = result
-                return result
-
-            candidate = self._scan(p26, conn, scope=scope, now_ms=now_ms)
-            if candidate is None:
-                result = {"status": "WAITING_FOR_BALANCED_MARKET", "scope": scope}
-            elif scope == "LIVE":
-                result = self._open_live(conn, candidate, state_row)
-            else:
-                result = self._open_paper(conn, candidate, state_row)
+                    result = self._open_live(conn, candidate, state_row)
+                else:
+                    result = self._open_paper(conn, candidate, state_row)
+                asset_results[asset] = result
+                if result.get("cycle_id"):
+                    opened += 1
+                    active_by_asset[asset] = {"id": result["cycle_id"], "asset": asset}
+                if scope == "LIVE":
+                    break
+            for asset in configured_assets:
+                asset_results.setdefault(
+                    asset,
+                    {
+                        "status": (
+                            "ACTIVE"
+                            if asset in active_by_asset
+                            else (
+                                "HARD_STOPPED"
+                                if bool(state_by_asset[asset]["hard_stopped"])
+                                else "WAITING_FOR_BALANCED_MARKET"
+                            )
+                        ),
+                        "scope": scope,
+                        "asset": asset,
+                    },
+                )
+            result = {
+                "status": "MULTI_ASSET_TICK",
+                "scope": scope,
+                "assets": asset_results,
+                "active_cycle_count": len(active_by_asset),
+                "max_concurrent_assets": limit,
+            }
             self._last_status = result
             return result
         finally:
@@ -1053,7 +1716,11 @@ class Dual40MakerEngine:
             conn.close()
 
     def public_status(self) -> dict[str, Any]:
-        payload = store_summary(self.settings.p3_db_path, limit=50)
+        payload = build_dual40_summary(self.settings.p3_db_path, limit=100)
+        payload["p26_paper"] = p26_paper_decision_summary(
+            self.settings.p26_db_path,
+            limit=50,
+        )
         payload.update(
             {
                 "policy": {
@@ -1062,10 +1729,24 @@ class Dual40MakerEngine:
                     "pair_edge_per_share": self.policy.pair_edge_per_share,
                     "full_ladder_capital_usdc": self.policy.full_ladder_capital,
                     "hard_stop_after_30": True,
-                    "one_global_market_only": True,
+                    "one_global_market_only": False,
+                    "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
+                    "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
                     "paper_fill_rule": "BEST_ASK_LE_40",
                     "near_touch_41_diagnostic_only": True,
                     "entry": "BALANCED_STABLE_TWO_WAY",
+                    "opening_gate_mode": self.settings.dual40_opening_mode(),
+                    "forecast_gate_mode": self.settings.dual40_forecast_mode(),
+                    "global_risk_mode": self.settings.dual40_risk_mode(),
+                    "gate_profiles": [
+                        self.settings.dual40_gate_profile(level)
+                        for level in range(3)
+                    ],
+                    "forecast_max_age_ms": int(self.settings.dual40_forecast_max_age_ms),
+                    "daily_loss_limit_usdc": float(self.settings.dual40_daily_loss_limit_usdc),
+                    "max_recovery_exposure_usdc": float(
+                        self.settings.dual40_max_recovery_exposure_usdc
+                    ),
                     "cancel_tte_sec": self.policy.cancel_tte_sec,
                 },
                 "runtime": self._last_status,
@@ -1076,7 +1757,7 @@ class Dual40MakerEngine:
     def shutdown(self) -> None:
         conn = connect_dual40(self.settings.p3_db_path)
         try:
-            cycle = active_cycle(conn)
+            cycle = active_cycle(conn, scope="LIVE")
             if cycle is not None and str(cycle["scope"]) == "LIVE" and str(cycle["status"]) == "LIVE_RESTING":
                 try:
                     self._cancel_and_classify(conn, cycle, reason="DAEMON_SHUTDOWN")

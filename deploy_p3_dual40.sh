@@ -215,12 +215,12 @@ P3_EXPECTED_COMMIT="$DEPLOY_COMMIT" \
 
 "$PY" - <<'PY'
 from p3_config import get_p3_settings
-from p3_dual40_store import connect_dual40, ladder_state
+from p3_dual40_store import DUAL40_ASSETS, connect_dual40, ladder_state
 s=get_p3_settings(); s.validate_research_safety()
 assert s.dual40_active
 conn=connect_dual40(s.p3_db_path)
-paper=ladder_state(conn,'PAPER')
-live=ladder_state(conn,'LIVE')
+paper={asset:ladder_state(conn,'PAPER',asset) for asset in DUAL40_ASSETS}
+live={asset:ladder_state(conn,'LIVE',asset) for asset in DUAL40_ASSETS}
 conn.close()
 print('strategy=',s.strategy_mode)
 print('price=',s.dual40_price)
@@ -231,4 +231,4 @@ PY
 
 trap - ERR
 printf '%s\n' \
-  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | one_global_market=true | paper_fill=ask<=40c | near_touch_41=diagnostic | initial_live_arm_floor=\$35 | remaining_path_floor=35->33->29"
+  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | paper_parallel_assets=4 | live_parallel_assets=1 | paper_fill=ask<=40c | near_touch_41=diagnostic | initial_live_arm_floor=\$35 | remaining_path_floor=35->33->29"

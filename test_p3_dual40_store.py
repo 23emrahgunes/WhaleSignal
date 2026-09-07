@@ -17,6 +17,7 @@ def test_dual40_state_persists_and_hard_stop_survives_reconnect(tmp_path):
     set_ladder_state(
         conn,
         scope="LIVE",
+        asset="BTC",
         level_index=2,
         loss_pool_usdc=18.0,
         hard_stopped=True,
@@ -25,7 +26,7 @@ def test_dual40_state_persists_and_hard_stop_survives_reconnect(tmp_path):
     conn.close()
 
     reopened = connect_dual40(path)
-    state = ladder_state(reopened, "LIVE")
+    state = ladder_state(reopened, "LIVE", "BTC")
     assert state["level_index"] == 2
     assert state["loss_pool_usdc"] == 18.0
     assert state["hard_stopped"] == 1
@@ -39,6 +40,7 @@ def test_active_cycle_blocks_reset_until_terminal(tmp_path):
     cycle_id = create_cycle(
         conn,
         scope="PAPER",
+        asset="BTC",
         session_id=None,
         condition_id="0xcondition",
         combo_key="BTC:5m",
@@ -60,7 +62,7 @@ def test_active_cycle_blocks_reset_until_terminal(tmp_path):
     update_cycle(conn, cycle_id, status="NO_FILL", realized_pnl_usdc=0.0)
     assert active_cycle(conn) is None
     reset_scope(conn, scope="PAPER")
-    state = ladder_state(conn, "PAPER")
+    state = ladder_state(conn, "PAPER", "BTC")
     assert state["level_index"] == 0
     assert state["loss_pool_usdc"] == 0.0
     assert state["hard_stopped"] == 0

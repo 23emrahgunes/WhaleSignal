@@ -21,8 +21,9 @@ def _runtime_check(settings: P3Settings) -> dict[str, Any]:
     conn = connect_dual40(settings.p3_db_path)
     p26 = open_p26_read_only(settings.p26_db_path)
     try:
-        state = ladder_state(conn, "LIVE")
-        current = active_cycle(conn)
+        states = {asset: ladder_state(conn, "LIVE", asset) for asset in settings.dual40_assets()}
+        current = active_cycle(conn, scope="LIVE")
+        any_hard_stop = any(bool(row["hard_stopped"]) for row in states.values())
         health_row = p26.execute(
             "SELECT value FROM p26_meta WHERE key='book_collector_health_json'"
         ).fetchone()
@@ -65,14 +66,15 @@ def _runtime_check(settings: P3Settings) -> dict[str, Any]:
             1 for row in markets if int(row.get("maker_fee_sides") or 0) == 2
         )
         ok = bool(
-            not state["hard_stopped"]
+            not any_hard_stop
             and current is None
             and transport_ok
             and maker_ready >= 1
         )
         return {
             "ok": ok,
-            "ladder_state": state,
+            "ladder_state": states.get(settings.dual40_assets()[0]),
+            "ladder_states": states,
             "active_cycle": current,
             "transport": {
                 "connected": bool((health or {}).get("connected")),

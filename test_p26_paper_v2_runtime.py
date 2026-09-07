@@ -12,6 +12,7 @@ from p26_fair_value import new_champion
 from p26_features import EXTERNAL_FEATURE_NAMES, schema_hash
 from p26_oracle_store import OracleTick, OracleTickStore
 from p26_paper_v2_daemon import PaperV2Runtime
+from p3_dual40_analytics import p26_paper_decision_summary
 
 
 def _p25(path: Path):
@@ -123,5 +124,55 @@ def test_runtime_missing_artifacts_is_not_ready(tmp_path):
         result=runtime.process(now_ms=1000)
         assert result["status"]=="NOT_READY"
         assert result["reason"]=="MODEL_ARTIFACT_NOT_READY"
+    finally:
+        runtime.close()
+
+
+def test_disabled_paper_audit_records_model_not_ready_per_condition(tmp_path):
+    settings = _settings(tmp_path)
+    settings.paper_v2_enabled = False
+    _p25(Path(settings.p25_db_path))
+    oracle = OracleTickStore(settings.p26_db_path)
+    oracle.insert(OracleTick(
+        asset="BTC", source="POLYMARKET_RTDS_CHAINLINK", value_text="100",
+        value_real=100, source_ts_ms=1_799_999_939_000,
+        recv_ts_ms=1_799_999_939_010, payload_sha256="audit-tick",
+    ))
+    oracle.close()
+    from p26_dataset import CanonicalDatasetBuilder
+    builder = CanonicalDatasetBuilder(settings, code_commit="abc")
+    try:
+        assert builder.sync().inserted == 1
+    finally:
+        builder.close()
+
+    runtime = PaperV2Runtime(settings)
+    try:
+        result = runtime.audit(now_ms=1_799_999_940_300)
+        assert result["status"] == "NOT_READY"
+        assert result["processed"] == 1
+        assert result["would_open"] == 0
+        row = runtime.recorder.conn.execute(
+            "SELECT stage,decision,reason,would_open FROM p26_paper_decisions"
+        ).fetchone()
+        assert row["stage"] == "READINESS"
+        assert row["decision"] == "NOT_READY"
+        assert row["reason"] == "MODEL_ARTIFACT_NOT_READY"
+        assert row["would_open"] == 0
+        assert runtime.recorder.conn.execute(
+            "SELECT COUNT(*) FROM p26_paper_trades"
+        ).fetchone()[0] == 0
+        summary = p26_paper_decision_summary(settings.p26_db_path)
+        assert summary["status"] == "NOT_READY"
+        assert summary["readiness"]["reason"] == "MODEL_ARTIFACT_NOT_READY"
+        assert summary["candidates"] == 1
+
+        _artifacts(settings)
+        ready = runtime.audit(now_ms=1_799_999_945_300)
+        assert ready["status"] == "AUDIT_OK"
+        assert ready["processed"] == 0
+        refreshed = p26_paper_decision_summary(settings.p26_db_path)
+        assert refreshed["status"] == "AUDIT_OK"
+        assert refreshed["reason_counts"]["MODEL_ARTIFACT_NOT_READY"] == 1
     finally:
         runtime.close()

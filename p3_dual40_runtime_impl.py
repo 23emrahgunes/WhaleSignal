@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from p3_dual40_analytics import build_dual40_summary
+from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import matched_pair_pnl
 from p3_dual40_engine import Dual40MakerEngine, _book_view, _levels
@@ -15,7 +15,12 @@ from p3_dual40_paper import (
     visible_ask_capacity,
 )
 from p3_dual40_preflight import run_dual40_preflight
-from p3_dual40_store import create_cycle, update_cycle
+from p3_dual40_store import (
+    asset_from_combo_key,
+    create_cycle,
+    update_cycle,
+    upsert_market_decision,
+)
 from p3_schema import open_p26_read_only
 
 
@@ -395,6 +400,10 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             return {"status": "LIVE_NOT_READY"}
 
         snap = self.state.snapshot()
+        asset = str(
+            candidate.get("asset")
+            or asset_from_combo_key(str(candidate["combo_key"]))
+        )
         level = int(state_row["level_index"])
         quantity = float(self.policy.ladder[level])
         gateway = self._gateway_client()
@@ -424,6 +433,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         cycle_id = create_cycle(
             conn,
             scope="LIVE",
+            asset=asset,
             session_id=snap.session_id,
             condition_id=str(candidate["condition_id"]),
             combo_key=str(candidate["combo_key"]),
@@ -510,10 +520,27 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 reason="SUBMIT_RESPONSE_UNCERTAIN",
             )
 
+        opened_gate = {
+            **candidate,
+            "stages": [
+                *candidate.get("stages", []),
+                {
+                    "stage": "OPENED",
+                    "eligible": True,
+                    "reason": "LIVE_ORDERS_POSTED",
+                },
+            ],
+        }
         update_cycle(
             conn,
             cycle_id,
             status="LIVE_RESTING",
+            gate_json=json.dumps(
+                opened_gate,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ),
             up_order_id=posted.get("up_order_id"),
             down_order_id=posted.get("down_order_id"),
             heartbeat_id=posted.get("heartbeat_id"),
@@ -522,6 +549,21 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 posted.get("submitted_at_ms") or time.time() * 1000
             ),
             details_merge={"submit": posted},
+        )
+        upsert_market_decision(
+            conn,
+            scope="LIVE",
+            asset=asset,
+            combo_key=str(candidate["combo_key"]),
+            condition_id=str(candidate["condition_id"]),
+            market_start_ts_ms=int(candidate["market_end_ts_ms"]) - 300_000,
+            market_end_ts_ms=int(candidate["market_end_ts_ms"]),
+            decision="OPENED",
+            reason=str(candidate.get("reason") or ""),
+            score=float(candidate.get("score") or 0.0),
+            eligible=True,
+            opened_cycle_id=cycle_id,
+            final_gate=opened_gate,
         )
         log.warning(
             "DUAL40 LIVE POSTED id=%s combo=%s level=%s q=%.3f "
@@ -564,9 +606,13 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
 
     def public_status(self) -> dict[str, Any]:
         payload = build_dual40_summary(self.settings.p3_db_path, limit=100)
-        live_ladder = ((payload.get("state") or {}).get("LIVE") or {})
+        live_ladders = ((payload.get("state") or {}).get("LIVE") or {})
         try:
-            live_level = int(live_ladder.get("level_index") or 0)
+            live_level = max(
+                int(state.get("level_index") or 0)
+                for state in live_ladders.values()
+                if isinstance(state, dict)
+            )
             required_now = required_live_collateral(
                 policy=self.policy,
                 level_index=live_level,
@@ -574,9 +620,14 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     self.settings.dual40_min_collateral_to_arm_usdc
                 ),
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, StopIteration):
             live_level = None
             required_now = None
+
+        payload["p26_paper"] = p26_paper_decision_summary(
+            self.settings.p26_db_path,
+            limit=50,
+        )
 
         payload.update(
             {
@@ -591,11 +642,29 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     ),
                     "live_collateral_level_index": live_level,
                     "hard_stop_after_30": True,
-                    "one_global_market_only": True,
+                    "one_global_market_only": False,
+                    "paper_max_concurrent_assets": int(
+                        self.settings.dual40_paper_max_concurrent_assets
+                    ),
+                    "live_max_concurrent_assets": int(
+                        self.settings.dual40_live_max_concurrent_assets
+                    ),
                     "paper_fill_rule": "MAX_VISIBLE_ASK_DEPTH_AT_OR_BELOW_40",
                     "paper_repeated_snapshot_reuse": False,
                     "near_touch_41_diagnostic_only": True,
                     "entry": "BALANCED_STABLE_TWO_WAY",
+                    "opening_gate_mode": self.settings.dual40_opening_mode(),
+                    "forecast_gate_mode": self.settings.dual40_forecast_mode(),
+                    "global_risk_mode": self.settings.dual40_risk_mode(),
+                    "gate_profiles": [
+                        self.settings.dual40_gate_profile(level)
+                        for level in range(3)
+                    ],
+                    "forecast_max_age_ms": int(self.settings.dual40_forecast_max_age_ms),
+                    "daily_loss_limit_usdc": float(self.settings.dual40_daily_loss_limit_usdc),
+                    "max_recovery_exposure_usdc": float(
+                        self.settings.dual40_max_recovery_exposure_usdc
+                    ),
                     "market_age_sec": self.policy.min_market_age_sec,
                     "lookback_sec": self.policy.lookback_sec,
                     "confirm_sec": self.policy.confirm_sec,
