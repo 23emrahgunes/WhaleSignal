@@ -8,8 +8,11 @@
   const CSRF = csrfMeta ? csrfMeta.content : "";
   const byId = (id) => document.getElementById(id);
   const stateNode = byId("state");
+  const REQUEST_TIMEOUT_MS = 15000;
   let refreshHandle = null;
   let requestInFlight = false;
+  let lastSuccessfulAt = null;
+  let consecutiveFailures = 0;
 
   const escapeHtml = (value) => String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -69,7 +72,11 @@
 
   const fetchJson = async (url, options = {}) => {
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         credentials: "same-origin",
@@ -102,6 +109,13 @@
         throw error;
       }
       return data;
+    } catch (error) {
+      if (timedOut || (error && error.name === "AbortError")) {
+        const timeoutError = new Error("REQUEST_TIMEOUT");
+        timeoutError.code = "REQUEST_TIMEOUT";
+        throw timeoutError;
+      }
+      throw error;
     } finally {
       window.clearTimeout(timeout);
     }
@@ -140,13 +154,17 @@
     if (status) {
       const price = policy.price == null ? "—" : `${Math.round(Number(policy.price) * 100)}¢`;
       const gateModes = `${policy.opening_gate_mode || "—"} / ${policy.forecast_gate_mode || "—"}`;
+      const dbChecking = data.db_integrity === "checking";
+      const dbValue = data.db_integrity === "ok"
+        ? "SAĞLAM"
+        : dbChecking ? "KONTROL EDİLİYOR" : data.db_integrity;
       status.innerHTML =
         metric(mode, "Çalışma modu", mode === "LIVE_ARMED" ? "bad" : "ok") +
         metric(`${price} + ${price}`, "Emir çifti") +
         metric(ladder.join(" → "), "Recovery merdiveni") +
         metric(gateModes, "Opening / forecast") +
         metric(`${policy.paper_max_concurrent_assets ?? 4} / ${policy.live_max_concurrent_assets ?? 1}`, "PAPER / LIVE paralellik") +
-        metric(data.db_integrity === "ok" ? "SAĞLAM" : data.db_integrity, "Veritabanı", data.db_integrity === "ok" ? "ok" : "bad");
+        metric(dbValue, "Veritabanı", data.db_integrity === "ok" ? "ok" : dbChecking ? "warn" : "bad");
     }
 
     const lanes = byId("lanes");
@@ -366,6 +384,8 @@
     renderScan(data);
     renderDecisions(data);
     renderCycles(data);
+    lastSuccessfulAt = Date.now();
+    consecutiveFailures = 0;
     showState(`Güncel · ${new Date().toLocaleTimeString()}`, "mut ok");
   };
 
@@ -377,8 +397,20 @@
       render(data);
     } catch (error) {
       if (String(error && error.message) !== "AUTH_REQUIRED") {
-        console.error("DUAL40 dashboard refresh failed", error);
-        showState(`PANEL HATASI · ${error.message || error}`, "bad");
+        consecutiveFailures += 1;
+        if (error && error.code === "REQUEST_TIMEOUT") {
+          const lastSuccess = lastSuccessfulAt === null
+            ? "yeniden deneniyor"
+            : `son başarılı ${new Date(lastSuccessfulAt).toLocaleTimeString()}`;
+          console.warn("DUAL40 dashboard refresh delayed", {
+            consecutiveFailures,
+            lastSuccessfulAt,
+          });
+          showState(`VERİ GECİKİYOR · ${lastSuccess}`, "warn");
+        } else {
+          console.error("DUAL40 dashboard refresh failed", error);
+          showState(`PANEL HATASI · ${error.message || error}`, "bad");
+        }
       }
     } finally {
       requestInFlight = false;

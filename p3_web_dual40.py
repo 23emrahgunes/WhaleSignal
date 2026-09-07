@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from html import escape
+import threading
 import time
 from typing import Any, Callable
 
@@ -52,10 +53,47 @@ def _live_status(settings: P3Settings, state: LiveState | None) -> dict[str, Any
     return state.public_dict()
 
 
+class _DatabaseIntegrityCache:
+    def __init__(self, path: str, *, ttl_sec: float = 60.0) -> None:
+        self.path = str(path)
+        self.ttl_sec = max(1.0, float(ttl_sec))
+        self._value = "checking"
+        self._checked_at = 0.0
+        self._lock = threading.Lock()
+
+    def get(self) -> str:
+        now = time.monotonic()
+        if now - self._checked_at < self.ttl_sec:
+            return self._value
+
+        # An integrity scan may briefly outlive an HTTP request. A concurrent
+        # refresh should still return the operational data instead of queueing
+        # behind the same scan.
+        if not self._lock.acquire(blocking=False):
+            return self._value
+        try:
+            now = time.monotonic()
+            if now - self._checked_at < self.ttl_sec:
+                return self._value
+            try:
+                conn = connect_p3(self.path, read_only=True)
+                try:
+                    self._value = integrity_check(conn)
+                finally:
+                    conn.close()
+            except Exception as exc:  # noqa: BLE001
+                self._value = f"ERROR:{type(exc).__name__}"
+            self._checked_at = time.monotonic()
+            return self._value
+        finally:
+            self._lock.release()
+
+
 def _summary(
     settings: P3Settings,
     live_state: LiveState | None,
     dual40_engine: Any | None,
+    integrity_cache: _DatabaseIntegrityCache | None = None,
 ) -> dict[str, Any]:
     dual = (
         dual40_engine.public_status()
@@ -64,11 +102,11 @@ def _summary(
     )
     live = _live_status(settings, live_state)
     executing = bool(live_state and live_state.can_auto_execute())
-    conn = connect_p3(settings.p3_db_path)
-    try:
-        db_integrity = integrity_check(conn)
-    finally:
-        conn.close()
+    db_integrity = (
+        integrity_cache.get()
+        if integrity_cache is not None
+        else _DatabaseIntegrityCache(settings.p3_db_path).get()
+    )
     return {
         "ok": True,
         "strategy_mode": settings.strategy_mode,
@@ -99,6 +137,7 @@ def build_web_app(
     preflight_fn: Callable[..., dict[str, Any]] = run_live_preflight,
 ) -> web.Application:
     auth = auth_manager or WebAuthManager(settings)
+    integrity_cache = _DatabaseIntegrityCache(settings.p3_db_path)
 
     @web.middleware
     async def security_and_auth(request: web.Request, handler):  # noqa: ANN001
@@ -209,6 +248,7 @@ def build_web_app(
             settings,
             live_state,
             dual40_engine,
+            integrity_cache,
         )
         return web.json_response(payload)
 

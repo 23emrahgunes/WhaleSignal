@@ -10,13 +10,12 @@ from p3_dual40_core import DEFAULT_LADDER, DUAL40_STRATEGY
 from p3_dual40_store import (
     active_cycle,
     active_cycles,
-    connect_dual40,
     DUAL40_ASSETS,
     ladder_state,
     market_decisions,
     read_scan_status,
 )
-from p3_schema import open_p26_read_only
+from p3_schema import connect_p3, open_p26_read_only
 
 
 def _drawdown(rows: list[dict[str, Any]]) -> float:
@@ -233,7 +232,9 @@ def p26_paper_decision_summary(
 
 
 def build_dual40_summary(path: str, *, limit: int = 100) -> dict[str, Any]:
-    conn = connect_dual40(path)
+    # The runtime initializes/migrates the schema before serving the dashboard.
+    # Analytics must not replay DDL or request a write lock on every refresh.
+    conn = connect_p3(path, read_only=True)
     try:
         rows = [
             _cycle_dict(row)

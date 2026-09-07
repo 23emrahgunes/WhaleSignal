@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import p3_dual40_analytics as analytics
 from p3_dual40_analytics import build_dual40_summary
 from p3_dual40_store import (
     connect_dual40,
@@ -100,3 +101,21 @@ def test_asset_panel_metrics_keep_paper_and_live_scopes_separate(tmp_path):
     assert btc["markets_seen"] == 1
     assert btc["performance"]["PAPER"]["realized_pnl_usdc"] == 1.0
     assert btc["performance"]["LIVE"]["realized_pnl_usdc"] == -5.0
+
+
+def test_dual40_analytics_uses_read_only_connection(tmp_path, monkeypatch):
+    path = str(tmp_path / "p3.sqlite")
+    conn = connect_dual40(path)
+    conn.close()
+
+    real_connect = analytics.connect_p3
+    modes = []
+
+    def tracked_connect(db_path, *, read_only=False):
+        modes.append(read_only)
+        return real_connect(db_path, read_only=read_only)
+
+    monkeypatch.setattr(analytics, "connect_p3", tracked_connect)
+    build_dual40_summary(path)
+
+    assert modes == [True]

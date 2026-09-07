@@ -11,8 +11,8 @@ from p3_web_dual40_v2 import _ASSET_PATH, externalized_html
 def test_dual40_html_has_no_inline_executable_javascript():
     html = externalized_html(legacy._HTML)
 
-    assert f'src="{_ASSET_PATH}?v=3"' in html
-    assert '<script src="/assets/dual40-panel.js?v=3" defer></script>' in html
+    assert f'src="{_ASSET_PATH}?v=4"' in html
+    assert '<script src="/assets/dual40-panel.js?v=4" defer></script>' in html
     assert "<script>" not in html
     assert "onclick=" not in html
     assert 'id="probe-btn"' in html
@@ -38,6 +38,9 @@ def test_dual40_panel_script_has_visible_failure_state_and_bound_controls():
     assert 'fetchJson("/api/summary")' in script
     assert 'credentials: "same-origin"' in script
     assert 'PANEL HATASI' in script
+    assert 'VERİ GECİKİYOR' in script
+    assert 'error.code === "REQUEST_TIMEOUT"' in script
+    assert "lastSuccessfulAt" in script
     assert 'JAVASCRIPT HATASI' in script
     assert 'PROMISE HATASI' in script
     assert 'byId("probe-btn")?.addEventListener' in script
