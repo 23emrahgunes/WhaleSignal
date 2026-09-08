@@ -631,29 +631,63 @@ def reset_scope(
     scope: str,
     asset: str | None = None,
     clear_cycles: bool = False,
+    clear_decisions: bool = False,
+    discard_active_paper: bool = False,
 ) -> None:
-    if active_cycle(conn, scope=scope, asset=asset) is not None:
+    scope_value = str(scope).upper()
+    if discard_active_paper and scope_value != "PAPER":
+        raise ValueError("active cycles may only be discarded for PAPER")
+    if discard_active_paper and not clear_cycles:
+        raise ValueError("discarding active PAPER cycles requires clear_cycles")
+    if (
+        active_cycle(conn, scope=scope_value, asset=asset) is not None
+        and not discard_active_paper
+    ):
         raise RuntimeError("cannot reset DUAL40 while a cycle is active")
     assets = (normalize_asset(asset),) if asset is not None else DUAL40_ASSETS
-    for asset_value in assets:
-        set_ladder_state(
-            conn,
-            scope=scope,
-            asset=asset_value,
-            level_index=0,
-            loss_pool_usdc=0.0,
-            hard_stopped=False,
-            hard_stop_reason=None,
-        )
-    if clear_cycles:
-        if asset is None:
-            conn.execute("DELETE FROM p3_dual40_cycles WHERE scope=?", (scope.upper(),))
-        else:
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        if clear_cycles:
+            if asset is None:
+                conn.execute(
+                    "DELETE FROM p3_dual40_cycles WHERE scope=?",
+                    (scope_value,),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM p3_dual40_cycles WHERE scope=? AND asset=?",
+                    (scope_value, normalize_asset(asset)),
+                )
+        if clear_decisions:
+            if asset is None:
+                conn.execute(
+                    "DELETE FROM p3_dual40_market_decisions WHERE scope=?",
+                    (scope_value,),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM p3_dual40_market_decisions WHERE scope=? AND asset=?",
+                    (scope_value, normalize_asset(asset)),
+                )
+        now_ms = int(time.time() * 1000)
+        for asset_value in assets:
             conn.execute(
-                "DELETE FROM p3_dual40_cycles WHERE scope=? AND asset=?",
-                (scope.upper(), normalize_asset(asset)),
+                """
+                UPDATE p3_dual40_state
+                SET level_index=0,loss_pool_usdc=0,hard_stopped=0,
+                    hard_stop_reason=NULL,last_cycle_id=NULL,updated_at_ms=?
+                WHERE scope=? AND asset=?
+                """,
+                (now_ms, scope_value, asset_value),
             )
-        conn.commit()
+        if owns_transaction:
+            conn.commit()
+    except Exception:
+        if owns_transaction:
+            conn.rollback()
+        raise
 
 
 def _cycle_dict(row: sqlite3.Row | None) -> dict[str, Any]:
