@@ -1,10 +1,10 @@
 """Pure strategy math for the DUAL40 maker-recovery cohort.
 
-The strategy rests equal-share, post-only BUY orders at 40 cents on UP and DOWN,
-but only after the live CLOB path has remained balanced and non-directional.  It uses
-asset-scoped recovery ladders (5 -> 10 -> 30 shares) and permanently hard-stops only
-the affected asset when its realized loss pool can no longer be recovered by a fully
-matched 30-share pair.
+PAPER simulates ordinary equal-share 40-cent BUY limits with relaxed entry controls;
+LIVE retains balanced, confirmed, post-only entry. The strategy uses asset-scoped
+recovery ladders (5 -> 10 -> 30 shares) and permanently hard-stops only the affected
+asset when its realized loss pool can no longer be recovered by a fully matched
+30-share pair.
 
 This module performs no I/O, signing or order submission.  It is intentionally pure
 so regime gates, partial-fill PnL and ladder transitions are deterministic and easy
@@ -373,13 +373,14 @@ def evaluate_balanced_regime(
     current_down_ask: float | None,
     market_age_sec: float,
     tte_sec: float,
+    require_balanced_mid: bool = True,
+    require_post_only_safe: bool = True,
 ) -> RegimeDecision:
-    """Approve only balanced, two-way, maker-safe CLOB regimes.
+    """Evaluate the shared CLOB regime with scope-specific entry controls.
 
-    A 40-cent resting bid must never cross the current ask.  Therefore both asks must
-    be strictly above the configured maker price.  The function intentionally uses
-    actual order-book mids rather than a website display price, which may be a last
-    trade or midpoint and is not proof that a 40-cent bid was executable.
+    LIVE requires balanced mids and maker-safe asks. PAPER can disable those two
+    controls to simulate ordinary 40-cent limit orders, including an immediate full
+    virtual fill when an entry-time ask is already at or below the limit.
     """
     policy.validate()
     points = _clean_points(up_points)
@@ -422,14 +423,20 @@ def evaluate_balanced_regime(
         return reject("REGIME_HISTORY_INSUFFICIENT")
     if current_up_ask is None or current_down_ask is None:
         return reject("ASK_MISSING")
-    if (
+    if require_post_only_safe and (
         float(current_up_ask) <= policy.price + 1e-12
         or float(current_down_ask) <= policy.price + 1e-12
     ):
         return reject("POST_ONLY_WOULD_CROSS")
-    if not policy.balanced_mid_low <= up_mid <= policy.balanced_mid_high:
+    if (
+        require_balanced_mid
+        and not policy.balanced_mid_low <= up_mid <= policy.balanced_mid_high
+    ):
         return reject("UP_MID_NOT_BALANCED")
-    if not policy.balanced_mid_low <= down_mid <= policy.balanced_mid_high:
+    if (
+        require_balanced_mid
+        and not policy.balanced_mid_low <= down_mid <= policy.balanced_mid_high
+    ):
         return reject("DOWN_MID_NOT_BALANCED")
 
     up_spread = float(current_up_spread or 0.0)
@@ -484,9 +491,14 @@ def evaluate_balanced_regime(
         + 0.10 * residual_penalty
     )
     score = max(0.0, min(1.0, 1.0 - penalty))
+    reason = (
+        "BALANCED_STABLE_TWO_WAY"
+        if require_balanced_mid and require_post_only_safe
+        else "PAPER_ENTRY_REGIME_ACCEPTED"
+    )
     return RegimeDecision(
         True,
-        "BALANCED_STABLE_TWO_WAY",
+        reason,
         score,
         up_mid,
         down_mid,

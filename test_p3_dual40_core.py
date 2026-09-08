@@ -66,6 +66,26 @@ def test_post_only_cross_is_rejected():
     assert result.reason == "POST_ONLY_WOULD_CROSS"
 
 
+def test_paper_entry_can_disable_balance_band_and_post_only_cross():
+    policy = Dual40Policy(lookback_sec=20.0)
+    result = evaluate_balanced_regime(
+        policy=policy,
+        up_points=_points([0.75] * 11),
+        current_down_mid=0.25,
+        current_up_spread=0.02,
+        current_down_spread=0.02,
+        current_up_ask=0.76,
+        current_down_ask=0.26,
+        market_age_sec=45.0,
+        tte_sec=220.0,
+        require_balanced_mid=False,
+        require_post_only_safe=False,
+    )
+
+    assert result.eligible is True
+    assert result.reason == "PAPER_ENTRY_REGIME_ACCEPTED"
+
+
 def test_exact_recovery_ladder_is_5_10_30_then_hard_stop():
     policy = Dual40Policy()
 

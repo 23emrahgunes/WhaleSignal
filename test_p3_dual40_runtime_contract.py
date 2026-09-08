@@ -176,7 +176,7 @@ def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
         assert settled["down_filled_shares"] == pytest.approx(5.0)
         assert settled["realized_pnl_usdc"] == pytest.approx(1.0)
         assert settled["details"]["paper_fill_rule"] == (
-            "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+            "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
         )
         assert settled["details"]["paper_up_fill_evidence"]["touch_ts_ms"] == observed_ms
     finally:

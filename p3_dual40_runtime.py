@@ -6,7 +6,8 @@ cancellation, balance-reconciliation, merge, collateral or hard-stop behaviour:
 
 * P2.6 persists books in ``p26_clob_books`` and freshness is ordered by
   ``recv_ts_ms``;
-* PAPER replays recorded post-entry books so brief 40-cent touches are not lost;
+* PAPER counts entry-time marketable limits and replays post-entry books so brief
+  40-cent touches are not lost;
 * the paper diagnostic reads the configured 41-cent near-touch threshold.
 """
 from __future__ import annotations

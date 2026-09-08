@@ -220,8 +220,9 @@ async def run() -> None:
     if settings.dual40_active:
         dual40 = Dual40MakerEngine(settings, live_state)
         log.info(
-            "DUAL40 profile price=%.2f ladder=%s balanced=[%.2f,%.2f] "
-            "lookback=%.1fs confirm=%.1fs min_tte=%.1fs cancel_tte=%.1fs "
+            "DUAL40 profile price=%.2f ladder=%s paper_entry=relaxed_limit "
+            "live_balanced=[%.2f,%.2f] lookback=%.1fs live_confirm=%.1fs "
+            "min_tte=%.1fs cancel_tte=%.1fs "
             "paper_parallel_assets=%d live_parallel_assets=%d hard_stop_after_30=true",
             settings.dual40_price,
             settings.dual40_ladder(),

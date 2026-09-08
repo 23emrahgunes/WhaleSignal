@@ -123,7 +123,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             else {}
         )
         details: dict[str, Any] = {
-            "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+            "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
             "near_touch_41_is_diagnostic_only": True,
         }
 
@@ -740,10 +740,13 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     "live_max_concurrent_assets": int(
                         self.settings.dual40_live_max_concurrent_assets
                     ),
-                    "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
                     "paper_repeated_snapshot_reuse": False,
                     "near_touch_41_diagnostic_only": True,
-                    "entry": "BALANCED_STABLE_TWO_WAY",
+                    "entry": "PAPER_RELAXED_LIMIT",
+                    "paper_entry": "RELAXED_LIMIT",
+                    "live_entry": "BALANCED_STABLE_POST_ONLY",
                     "opening_gate_mode": self.settings.dual40_opening_mode(),
                     "forecast_gate_mode": self.settings.dual40_forecast_mode(),
                     "global_risk_mode": self.settings.dual40_risk_mode(),
@@ -759,6 +762,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     "market_age_sec": self.policy.min_market_age_sec,
                     "lookback_sec": self.policy.lookback_sec,
                     "confirm_sec": self.policy.confirm_sec,
+                    "paper_confirm_sec": 0.0,
                     "balanced_mid": [
                         self.policy.balanced_mid_low,
                         self.policy.balanced_mid_high,

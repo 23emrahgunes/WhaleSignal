@@ -349,12 +349,68 @@ def test_different_assets_can_have_active_cycles(tmp_path):
         conn.close()
 
 
-def test_gate_confirmation_is_asset_and_condition_scoped(tmp_path):
+def test_paper_entry_does_not_wait_for_confirmation(tmp_path):
     engine = _engine(tmp_path)
-    engine._gate_since = {"PAPER:BTC:cond-btc": time.monotonic() - 2.0}
+    engine._gate_since = {}
     result = engine.tick()
-    assert result["assets"]["BTC"]["status"] == "PAPER_OPENED"
-    assert result["assets"]["ETH"]["status"] == "WAITING_FOR_BALANCED_MARKET"
+    assert {
+        asset
+        for asset, value in result["assets"].items()
+        if value["status"] == "PAPER_OPENED"
+    } == set(ASSETS)
+
+
+def test_paper_marketable_limit_fills_entry_side_immediately(tmp_path):
+    settings = _settings(tmp_path)
+    engine = Dual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=False, auto_execute_enabled=False),
+        gateway_factory=lambda _: _FakeGateway(),
+    )
+    now_ms = int(time.time() * 1000)
+    candidate = {
+        "asset": "BTC",
+        "condition_id": "paper-cross-btc",
+        "combo_key": "BTC:5m",
+        "market_end_ts_ms": now_ms + 180_000,
+        "up_token_id": "btc-up",
+        "down_token_id": "btc-down",
+        "score": 0.0,
+        "stages": [],
+        "up_book": {
+            "id": 11,
+            "best_ask": 0.75,
+            "source_ts_ms": now_ms,
+            "recv_ts_ms": now_ms,
+        },
+        "down_book": {
+            "id": 12,
+            "best_ask": 0.25,
+            "source_ts_ms": now_ms,
+            "recv_ts_ms": now_ms,
+        },
+    }
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        result = engine._open_paper(
+            conn,
+            candidate,
+            ladder_state(conn, "PAPER", "BTC"),
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="BTC")
+
+        assert result["status"] == "PAPER_OPENED"
+        assert cycle is not None
+        assert cycle["up_filled_shares"] == pytest.approx(0.0)
+        assert cycle["down_filled_shares"] == pytest.approx(5.0)
+        assert cycle["residual_side"] == "DOWN"
+        assert cycle["details"]["post_only"] is False
+        assert cycle["details"]["paper_down_fill_evidence"]["best_ask"] == pytest.approx(0.25)
+        assert cycle["details"]["paper_down_fill_evidence"]["fill_kind"] == (
+            "ENTRY_MARKETABLE_LIMIT"
+        )
+    finally:
+        conn.close()
 
 
 def test_market_decision_record_created_for_every_condition(tmp_path):
@@ -405,6 +461,35 @@ def test_live_default_max_concurrent_is_one(tmp_path):
         assert settings.dual40_live_max_concurrent_assets == 1
         assert len(active_cycles(conn, scope="LIVE")) == 1
         assert len(gateway.posted) == 1
+    finally:
+        conn.close()
+
+
+def test_live_still_waits_for_confirmation(tmp_path):
+    settings = _settings(
+        tmp_path,
+        live_feature_enabled=True,
+        live_auto_execute_enabled=True,
+        web_auth_required=True,
+        web_password="very-safe-test-password",
+    )
+    _seed_p26(settings.p26_db_path)
+    state = LiveState(live_feature_enabled=True, auto_execute_enabled=True)
+    state.arm({"ok": True, "checked_at_ms": int(time.time() * 1000)})
+    gateway = _FakeGateway()
+    gateway.posted = []
+    engine = Dual40MakerEngine(settings, state, gateway_factory=lambda _: gateway)
+    engine._fresh_preflight = lambda: True
+
+    result = engine.tick()
+
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        assert active_cycles(conn, scope="LIVE") == []
+        assert gateway.posted == []
+        assert {
+            value["status"] for value in result["assets"].values()
+        } == {"WAITING_FOR_BALANCED_MARKET"}
     finally:
         conn.close()
 

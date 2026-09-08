@@ -170,6 +170,7 @@
     FORECAST_STALE: "Tahmin verisi eski",
     FORECAST_NEUTRAL: "Tahmin nötr",
     FORECAST_RESEARCH_ONLY: "Araştırma tahmini yalnız SHADOW kullanımına açık",
+    PAPER_ENTRY_REGIME_ACCEPTED: "PAPER giriş kontrolleri geçti",
     REJECTED_STRONG_DIRECTIONAL_ALPHA: "Güçlü yönlü tahmin nedeniyle reddedildi",
     FEATURE_CONFLICT: "Tahmin bileşenleri çelişiyor",
     INSUFFICIENT_DATA: "Tahmin için veri yetersiz",
@@ -281,7 +282,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> Emir açıldıktan sonra kaydedilen book'ta UP veya DOWN 40¢ ya da altını görürse o taraf tam dolu sayılır. 41¢ near-touch yalnız tanıdır.";
+        : "<b>DRY / PAPER.</b> 44–56 bandı, 5 sn teyit ve post-only cross reddi kapalıdır. Giriş anında veya sonrasında ask 40¢ ya da altındaysa o taraf tam dolu sayılır.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }
@@ -470,7 +471,9 @@
       candidates.innerHTML = (scan.candidates || []).map((candidate) => {
         const opening = candidate.opening_gate || {};
         const forecast = candidate.forecast_gate || {};
-        const stable = `${number(candidate.stable_for_sec, 1)} sn`;
+        const stable = Number(candidate.confirmation_required_sec ?? 0) <= 0
+          ? "Gerekmez"
+          : `${number(candidate.stable_for_sec, 1)} / ${number(candidate.confirmation_required_sec, 1)} sn`;
         const openingText = opening.reason === "PASS"
           ? `Geçti · r ${number(opening.mid_range)}`
           : reasonLabel(opening.reason);
@@ -492,6 +495,8 @@
           forecast.source_kind,
           `gate=${forecastMode}`,
         ].filter(Boolean).join(" · ");
+        const upAsk = candidate.up_book && candidate.up_book.best_ask;
+        const downAsk = candidate.down_book && candidate.down_book.best_ask;
         return (
         `<tr>` +
         `<td title="Condition: ${escapeHtml(candidate.condition_id || "")}">` +
@@ -501,7 +506,8 @@
         `<td><span class="cell-main">${escapeHtml(reasonLabel(candidate.reason))}</span><span class="cell-code" title="${escapeHtml(candidate.reason || "")}">${escapeHtml(candidate.reason || "—")}</span></td>` +
         `<td class="mobile-optional">${escapeHtml(candidate.target_shares ?? "—")}</td>` +
         `<td class="mobile-optional">${number(candidate.tte_sec, 1)} sn</td>` +
-        `<td class="price-pair">${number(candidate.up_mid)} / ${number(candidate.down_mid)}</td>` +
+        `<td class="price-pair"><span class="cell-main">Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}</span>` +
+        `<span class="cell-code">Ask ${number(upAsk)} / ${number(downAsk)}</span></td>` +
         `<td class="mobile-optional">${stable}</td>` +
         `<td class="desktop-optional" title="${escapeHtml(opening.reason || "")}">${escapeHtml(openingText)}</td>` +
         `<td class="desktop-optional" title="${escapeHtml(forecastTitle)}">${escapeHtml(forecastText)}<span class="cell-code">${escapeHtml(forecastMode)} · girişi ${forecastMode === "ENFORCE" ? "etkiler" : "engellemez"}</span></td>` +

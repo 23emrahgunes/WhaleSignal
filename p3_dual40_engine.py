@@ -1,9 +1,9 @@
-"""Stateful per-asset DUAL40 post-only maker recovery for P3.
+"""Stateful per-asset DUAL40 maker recovery for P3.
 
-PAPER lanes are independent for BTC/ETH/SOL/XRP. Entry always retains the proven
-balanced-regime gate; fixed opening-window and read-only forecast gates can be
-observed in SHADOW before they are explicitly enforced. LIVE order semantics remain
-unchanged and default to one concurrent asset.
+PAPER lanes are independent for BTC/ETH/SOL/XRP and simulate ordinary 40-cent
+limits without the balanced-mid, confirmation or post-only-cross entry controls.
+Opening-window and read-only forecast gates remain observable in SHADOW. LIVE keeps
+balanced, confirmed, post-only semantics and defaults to one concurrent asset.
 """
 from __future__ import annotations
 
@@ -586,6 +586,18 @@ class Dual40MakerEngine:
             "target_shares": float(self.policy.ladder[level_index]),
             "recovery_pending": level_index > 0 or float(state_row["loss_pool_usdc"]) > 1e-9,
             "recovery_debt_usdc": float(state_row["loss_pool_usdc"]),
+            "entry_profile": (
+                "PAPER_RELAXED_LIMIT"
+                if str(scope).upper() == "PAPER"
+                else "LIVE_BALANCED_POST_ONLY"
+            ),
+            "balanced_mid_gate_enabled": str(scope).upper() != "PAPER",
+            "post_only_cross_gate_enabled": str(scope).upper() != "PAPER",
+            "confirmation_required_sec": (
+                0.0
+                if str(scope).upper() == "PAPER"
+                else float(self.policy.confirm_sec)
+            ),
         }
         forecast = self._forecast_decision(
             now_ms=int(now_ms),
@@ -666,6 +678,8 @@ class Dual40MakerEngine:
             current_down_ask=float(down["best_ask"]),
             market_age_sec=market_age,
             tte_sec=tte,
+            require_balanced_mid=str(scope).upper() != "PAPER",
+            require_post_only_safe=str(scope).upper() != "PAPER",
         )
         opening_up = self._opening_history(
             p26,
@@ -714,7 +728,10 @@ class Dual40MakerEngine:
             return "SKIPPED_ASSET_ACTIVE"
         if candidate.get("eligible"):
             stable = float(candidate.get("stable_for_sec") or 0.0)
-            return "WOULD_OPEN" if stable + 1e-9 >= self.policy.confirm_sec else "WAITING_CONFIRMATION"
+            required = float(
+                candidate.get("confirmation_required_sec", self.policy.confirm_sec)
+            )
+            return "WOULD_OPEN" if stable + 1e-9 >= required else "WAITING_CONFIRMATION"
         reason = str(candidate.get("reason") or "UNKNOWN")
         if reason in {
             "REGIME_HISTORY_INSUFFICIENT",
@@ -920,7 +937,8 @@ class Dual40MakerEngine:
             item
             for item in candidates
             if item.get("eligible")
-            and float(item.get("stable_for_sec") or 0.0) + 1e-9 >= self.policy.confirm_sec
+            and float(item.get("stable_for_sec") or 0.0) + 1e-9
+            >= float(item.get("confirmation_required_sec", self.policy.confirm_sec))
             and cycle_for_condition(
                 conn,
                 scope=scope,
@@ -944,6 +962,23 @@ class Dual40MakerEngine:
         asset = str(candidate.get("asset") or asset_from_combo_key(str(candidate["combo_key"])))
         level = int(state_row["level_index"])
         quantity = float(self.policy.ladder[level])
+        opened_at_ms = int(time.time() * 1000)
+        immediate_fills: dict[str, dict[str, Any]] = {}
+        for side in ("UP", "DOWN"):
+            book = candidate.get(f"{side.lower()}_book")
+            if not isinstance(book, dict) or book.get("best_ask") is None:
+                continue
+            best_ask = float(book["best_ask"])
+            if best_ask <= self.policy.price + 1e-12:
+                immediate_fills[side] = {
+                    "book_id": int(book["id"]),
+                    "best_ask": best_ask,
+                    "observed_at_ms": int(book.get("recv_ts_ms") or opened_at_ms),
+                    "touch_ts_ms": opened_at_ms,
+                    "source_ts_ms": int(book.get("source_ts_ms") or 0),
+                    "recv_ts_ms": int(book.get("recv_ts_ms") or 0),
+                    "fill_kind": "ENTRY_MARKETABLE_LIMIT",
+                }
         opened_gate = {
             **candidate,
             "stages": [
@@ -972,20 +1007,63 @@ class Dual40MakerEngine:
             down_token_id=str(candidate["down_token_id"]),
             loss_pool_before_usdc=float(state_row["loss_pool_usdc"]),
             details={
-                "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
                 "near_touch_41_is_diagnostic_only": True,
-                "post_only": True,
-                "order_type": "GTC_SIMULATED",
+                "post_only": False,
+                "order_type": "GTC_SIMULATED_LIMIT",
+                "entry_cross_policy": "MARKETABLE_LIMIT_FULL_SIDE",
             },
         )
+        up_filled = quantity if "UP" in immediate_fills else 0.0
+        down_filled = quantity if "DOWN" in immediate_fills else 0.0
+        matched = min(up_filled, down_filled)
+        residual = abs(up_filled - down_filled)
+        residual_side = (
+            "UP"
+            if up_filled > down_filled
+            else ("DOWN" if down_filled > up_filled else None)
+        )
+        fill_details: dict[str, Any] = {}
+        for side in ("UP", "DOWN"):
+            book = candidate.get(f"{side.lower()}_book")
+            key = side.lower()
+            if isinstance(book, dict) and book.get("id") is not None:
+                fill_details[f"paper_last_scanned_{key}_book_id"] = int(book["id"])
+            if side in immediate_fills:
+                fill_details[f"paper_{key}_fill_evidence"] = immediate_fills[side]
+                fill_details[f"paper_lowest_{key}_best_ask"] = float(
+                    immediate_fills[side]["best_ask"]
+                )
+        update_cycle(
+            conn,
+            cycle_id,
+            orders_posted_at_ms=opened_at_ms,
+            up_filled_shares=up_filled,
+            down_filled_shares=down_filled,
+            matched_shares=matched,
+            residual_side=residual_side,
+            residual_shares=residual,
+            near_touch_up_41=int(
+                isinstance(candidate.get("up_book"), dict)
+                and float(candidate["up_book"]["best_ask"])
+                <= float(self.settings.dual40_near_touch_price) + 1e-12
+            ),
+            near_touch_down_41=int(
+                isinstance(candidate.get("down_book"), dict)
+                and float(candidate["down_book"]["best_ask"])
+                <= float(self.settings.dual40_near_touch_price) + 1e-12
+            ),
+            details_merge=fill_details,
+        )
         log.info(
-            "DUAL40 PAPER OPEN id=%s asset=%s combo=%s q=%.3f price=%.2f score=%.3f",
+            "DUAL40 PAPER OPEN id=%s asset=%s combo=%s q=%.3f price=%.2f score=%.3f immediate=%s",
             cycle_id,
             asset,
             candidate["combo_key"],
             quantity,
             self.policy.price,
             float(candidate.get("score") or 0.0),
+            ",".join(sorted(immediate_fills)) or "none",
         )
         upsert_market_decision(
             conn,
@@ -1752,9 +1830,12 @@ class Dual40MakerEngine:
                     "one_global_market_only": False,
                     "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
                     "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
-                    "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
                     "near_touch_41_diagnostic_only": True,
-                    "entry": "BALANCED_STABLE_TWO_WAY",
+                    "entry": "PAPER_RELAXED_LIMIT",
+                    "paper_entry": "RELAXED_LIMIT",
+                    "live_entry": "BALANCED_STABLE_POST_ONLY",
                     "opening_gate_mode": self.settings.dual40_opening_mode(),
                     "forecast_gate_mode": self.settings.dual40_forecast_mode(),
                     "global_risk_mode": self.settings.dual40_risk_mode(),

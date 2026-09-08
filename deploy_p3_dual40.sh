@@ -231,4 +231,4 @@ PY
 
 trap - ERR
 printf '%s\n' \
-  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c POST_ONLY_GTC | ladder=5->10->30 | hard_stop_after_30=true | entry=balanced_stable_two_way | paper_parallel_assets=4 | live_parallel_assets=1 | paper_fill=ask<=40c | near_touch_41=diagnostic | initial_live_arm_floor=\$35 | remaining_path_floor=35->33->29"
+  "DUAL40 DEPLOY PASS | starts=DRY | branch=$DEPLOY_BRANCH | commit=$DEPLOY_COMMIT | price=40c+40c | ladder=5->10->30 | hard_stop_after_30=true | paper_entry=relaxed_limit | live_entry=balanced_stable_post_only | paper_parallel_assets=4 | live_parallel_assets=1 | paper_fill=entry_or_recorded_ask<=40c | near_touch_41=diagnostic | initial_live_arm_floor=\$35 | remaining_path_floor=35->33->29"
