@@ -55,7 +55,7 @@ def externalized_html(template: str) -> str:
     _inline_script, after = remainder.split("</script>", 1)
     return (
         before
-        + f'<script src="{_ASSET_PATH}?v=5" defer></script>'
+        + f'<script src="{_ASSET_PATH}?v=6" defer></script>'
         + after
     )
 

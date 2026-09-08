@@ -28,6 +28,12 @@ def test_panel_contains_asset_lane_state():
     assert "renderCohorts" in script
     assert "renderP26" in script
     assert "forecast_gate_mode" in script
+    assert 'orderKind = String(cycle.scope || "PAPER")' in script
+    assert "${orderKind} emir çifti" in script
+    assert "cycle.maker_price" in script
+    assert "UP dolum" in script
+    assert "DOWN dolum" in script
+    assert "<th>Her Bacak</th><th>Limit</th>" in html
 
 
 def test_operational_panel_hides_diagnostic_logs_by_default():

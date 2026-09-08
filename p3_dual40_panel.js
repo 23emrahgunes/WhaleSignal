@@ -35,6 +35,12 @@
 
   const pnlClass = (value) => Number(value || 0) >= 0 ? "ok" : "bad";
 
+  const cycleStatusLabel = (value) => ({
+    PAPER_RESTING: "Sanal emirler bekliyor",
+    LIVE_RESTING: "Canlı emirler bekliyor",
+    WAIT_RESOLUTION: "Market sonucu bekleniyor",
+  })[String(value || "")] || String(value || "Aktif cycle");
+
   const REASON_LABELS = {
     PASS: "Kontroller geçti",
     MODEL_ARTIFACT_NOT_READY: "Model bekleniyor",
@@ -149,7 +155,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> Dört asset bağımsız recovery lane'lerinde izleniyor. 41¢ near-touch yalnız tanıdır; fill kanıtı değildir.";
+        : "<b>DRY / PAPER.</b> Açılan cycle'da UP ve DOWN için ayrı 40¢ sanal limit emir izlenir. 41¢ near-touch yalnız tanıdır; fill kanıtı değildir.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }
@@ -184,7 +190,12 @@
         const hardStopped = Boolean(paper.hard_stopped);
         const laneClass = hardStopped ? "bad-lane" : debt > 0 ? "warn-lane" : "";
         const badge = hardStopped ? "HARD STOP" : debt > 0 ? "RECOVERY" : "HAZIR";
-        const activeText = active ? `Cycle #${active.id} · ${active.status || "aktif"}` : "Aktif cycle yok";
+        const activeText = active
+          ? `#${active.id} · ${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ + ` +
+            `${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ · ` +
+            `UP ${number(active.up_filled_shares, 1)}/${number(active.target_shares, 1)} · ` +
+            `DN ${number(active.down_filled_shares, 1)}/${number(active.target_shares, 1)}`
+          : "Aktif cycle yok";
         return (
           `<article class="lane ${laneClass}">` +
           `<div class="lane-head"><span class="lane-asset">${asset}</span><span class="lane-badge">${badge}</span></div>` +
@@ -225,13 +236,26 @@
       node.innerHTML = '<div class="empty">Aktif cycle yok.</div>';
       return;
     }
-    node.innerHTML = active.map((cycle) => (
-      `<div class="active-row">` +
-      `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
-      `<span>${escapeHtml(cycle.status || "AKTİF")} · ${number(cycle.target_shares, 1)} share · UP ${number(cycle.up_filled_shares)} / DOWN ${number(cycle.down_filled_shares)}</span>` +
-      `<strong>#${escapeHtml(cycle.id || "—")}</strong>` +
-      `</div>`
-    )).join("");
+    node.innerHTML = active.map((cycle) => {
+      const target = number(cycle.target_shares, 1);
+      const limit = `${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢`;
+      const rawStatus = String(cycle.status || "AKTİF");
+      const orderKind = String(cycle.scope || "PAPER") === "LIVE" ? "Canlı" : "Sanal";
+      return (
+        `<div class="active-row">` +
+        `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
+        `<div class="active-order">` +
+        `<strong title="${escapeHtml(rawStatus)}">${escapeHtml(cycleStatusLabel(rawStatus))}</strong>` +
+        `<span>${orderKind} emir çifti · UP ${target} @ ${limit} · DOWN ${target} @ ${limit}</span>` +
+        `</div>` +
+        `<div class="active-fill">` +
+        `<span><b>UP dolum</b> ${number(cycle.up_filled_shares, 1)} / ${target}</span>` +
+        `<span><b>DOWN dolum</b> ${number(cycle.down_filled_shares, 1)} / ${target}</span>` +
+        `</div>` +
+        `<strong>#${escapeHtml(cycle.id || "—")}</strong>` +
+        `</div>`
+      );
+    }).join("");
   };
 
   const renderCohorts = (data) => {
@@ -367,6 +391,7 @@
       `<td>${escapeHtml(cycle.status)}</td>` +
       `<td>${escapeHtml(cycle.level_index)}</td>` +
       `<td>${number(cycle.target_shares, 1)}</td>` +
+      `<td>${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢</td>` +
       `<td>${number(cycle.up_filled_shares)}</td>` +
       `<td>${number(cycle.down_filled_shares)}</td>` +
       `<td>${number(cycle.matched_shares)}</td>` +
