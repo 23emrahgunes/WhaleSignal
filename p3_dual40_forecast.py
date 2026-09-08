@@ -215,7 +215,11 @@ class P25StateForecastProvider:
             return ForecastGateDecision(False, "FORECAST_TTE_MISSING", False)
         fetch_age = max(0, int(now_ms) - self._fetched_at_ms)
         payload_age = self._payload_age_ms(self._payload, int(now_ms))
-        elapsed_ms = max(fetch_age, payload_age or 0)
+        # The state payload can be freshly generated around an older in-memory
+        # card.  For the same condition, positive TTE drift is therefore another
+        # measure of card age rather than evidence of a different market.
+        card_tte_age_ms = max(0, int(round((card_tte - float(tte_sec)) * 1000.0)))
+        elapsed_ms = max(fetch_age, payload_age or 0, card_tte_age_ms)
         adjusted_card_tte = max(0.0, card_tte - elapsed_ms / 1000.0)
         if abs(adjusted_card_tte - float(tte_sec)) > self.tte_tolerance_sec:
             return ForecastGateDecision(False, "FORECAST_MARKET_MISMATCH", False)
@@ -224,7 +228,7 @@ class P25StateForecastProvider:
         age_ms = self._card_age_ms(
             card,
             fetch_age_ms=fetch_age,
-            payload_age_ms=payload_age,
+            payload_age_ms=max(payload_age or 0, card_tte_age_ms),
         )
         return evaluate_forecast_value(
             p_up_external=card.get("p_up_external"),

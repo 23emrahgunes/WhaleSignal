@@ -41,8 +41,13 @@
     ALPHA_ARTIFACT_NOT_READY: "Alpha profili bekleniyor",
     BOOK_PAIR_MISSING: "Emir defteri çifti eksik",
     BOOK_TRANSPORT_NOT_LIVE: "Book bağlantısı hazır değil",
+    FORECAST_CARD_MISSING: "Tahmin kartı bulunamadı",
     FORECAST_MARKET_MISMATCH: "Tahmin marketle eşleşmedi",
     FORECAST_MISSING: "Tahmin verisi yok",
+    FORECAST_NOT_READY: "Tahmin henüz hazır değil",
+    FORECAST_STALE: "Tahmin verisi eski",
+    FORECAST_NEUTRAL: "Tahmin nötr",
+    REJECTED_STRONG_DIRECTIONAL_ALPHA: "Güçlü yönlü tahmin nedeniyle reddedildi",
     NOT_EVALUATED: "Henüz değerlendirilmedi",
   };
 
