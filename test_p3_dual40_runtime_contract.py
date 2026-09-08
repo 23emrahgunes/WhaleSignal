@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 
 import pytest
 
@@ -8,6 +9,13 @@ from p26_book_store import BookSnapshotStore
 from p26_execution import OrderBookSnapshot
 from p3_config import DUAL40_MODE, P3Settings
 from p3_dual40_runtime import ProductionDual40MakerEngine
+from p3_dual40_store import (
+    active_cycle,
+    connect_dual40,
+    create_cycle,
+    cycle_for_condition,
+    update_cycle,
+)
 from p3_live_state import LiveState
 
 
@@ -79,3 +87,217 @@ def test_production_runtime_reads_real_p26_book_schema_and_near_touch(tmp_path):
     assert view["source_ts_ms"] == 1_000
     assert view["best_ask"] == pytest.approx(0.40)
     assert view["visible_ask_capacity_at_maker"] == pytest.approx(2.0)
+
+
+def _create_paper_cycle(
+    conn,
+    *,
+    now_ms: int,
+    status: str = "PAPER_RESTING",
+    market_end_ts_ms: int | None = None,
+) -> int:
+    return create_cycle(
+        conn,
+        scope="PAPER",
+        asset="XRP",
+        session_id=None,
+        condition_id="paper-condition",
+        combo_key="XRP:5m",
+        market_end_ts_ms=market_end_ts_ms or now_ms + 60_000,
+        level_index=0,
+        target_shares=5.0,
+        maker_price=0.40,
+        status=status,
+        gate={},
+        up_token_id="up-token",
+        down_token_id="down-token",
+        loss_pool_before_usdc=0.0,
+    )
+
+
+def _insert_touch_pair(
+    path: str,
+    *,
+    observed_ms: int,
+    source_ms: int | None = None,
+    ask_size: float = 0.01,
+) -> None:
+    store = BookSnapshotStore(path)
+    try:
+        for side, token in (("UP", "up-token"), ("DOWN", "down-token")):
+            store.insert(
+                condition_id="paper-condition",
+                combo_key="XRP:5m",
+                side=side,
+                snapshot=OrderBookSnapshot.from_levels(
+                    token_id=token,
+                    ts_ms=source_ms or observed_ms,
+                    bids=[(0.39, 10.0)],
+                    asks=[(0.40, ask_size)],
+                ),
+                recv_ts_ms=observed_ms,
+            )
+    finally:
+        store.close()
+
+
+def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(conn, now_ms=now_ms)
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        observed_ms = int(cycle["created_at_ms"]) + 100
+        _insert_touch_pair(settings.p26_db_path, observed_ms=observed_ms)
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, observed_ms + 100)
+        finally:
+            p26.close()
+
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert result["status"] == "PAPER_MATCHED_FILLED"
+        assert settled is not None
+        assert settled["up_filled_shares"] == pytest.approx(5.0)
+        assert settled["down_filled_shares"] == pytest.approx(5.0)
+        assert settled["realized_pnl_usdc"] == pytest.approx(1.0)
+        assert settled["details"]["paper_fill_rule"] == (
+            "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+        )
+        assert settled["details"]["paper_up_fill_evidence"]["touch_ts_ms"] == observed_ms
+    finally:
+        conn.close()
+
+
+def test_paper_counts_delayed_touch_sourced_before_market_close(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        market_end_ms = now_ms + 5_000
+        _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            market_end_ts_ms=market_end_ms,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        _insert_touch_pair(
+            settings.p26_db_path,
+            source_ms=int(cycle["created_at_ms"]) + 100,
+            observed_ms=market_end_ms + 100,
+        )
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, market_end_ms + 200)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_MATCHED_FILLED"
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["details"]["paper_up_fill_evidence"]["touch_ts_ms"] == (
+            int(cycle["created_at_ms"]) + 100
+        )
+    finally:
+        conn.close()
+
+
+def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            market_end_ts_ms=now_ms - 1_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            up_filled_shares=5.0,
+            residual_side="UP",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, now_ms)
+        finally:
+            p26.close()
+
+        assert result["status"] == "WAIT_RESOLUTION"
+        refreshed = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert refreshed is not None
+        assert refreshed["status"] == "WAIT_RESOLUTION"
+    finally:
+        conn.close()
+
+
+def test_paper_touch_before_cycle_open_does_not_fill_virtual_orders(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    before_open_ms = int(time.time() * 1000) - 10_000
+    _insert_touch_pair(settings.p26_db_path, observed_ms=before_open_ms)
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(conn, now_ms=now_ms)
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, now_ms + 100)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_RESTING"
+        refreshed = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert refreshed is not None
+        assert refreshed["up_filled_shares"] == pytest.approx(0.0)
+        assert refreshed["down_filled_shares"] == pytest.approx(0.0)
+    finally:
+        conn.close()

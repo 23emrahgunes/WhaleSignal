@@ -6,8 +6,8 @@ cancellation, balance-reconciliation, merge, collateral or hard-stop behaviour:
 
 * P2.6 persists books in ``p26_clob_books`` and freshness is ordered by
   ``recv_ts_ms``;
-* the paper diagnostic reads the configured 41-cent near-touch threshold from
-  ``P3Settings``.
+* PAPER replays recorded post-entry books so brief 40-cent touches are not lost;
+* the paper diagnostic reads the configured 41-cent near-touch threshold.
 """
 from __future__ import annotations
 
@@ -61,3 +61,75 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             max_price=self.policy.price,
         )
         return view
+
+    def _paper_touch_evidence(
+        self,
+        p26,
+        cycle: dict[str, Any],
+        side: str,
+        now_ms: int,
+    ) -> dict[str, Any] | None:  # noqa: ANN001
+        """Find the lowest recorded post-entry ask without replaying old rows."""
+        side_value = str(side).upper()
+        details = cycle.get("details") if isinstance(cycle.get("details"), dict) else {}
+        cursor = int(details.get(f"paper_last_scanned_{side_value.lower()}_book_id") or 0)
+        opened_ms = int(cycle.get("orders_posted_at_ms") or cycle["created_at_ms"])
+        market_end_ms = int(cycle["market_end_ts_ms"])
+        if market_end_ms < opened_ms:
+            return None
+        rows = p26.execute(
+            """
+            SELECT id,condition_id,token_id,side,source_ts_ms,recv_ts_ms,
+                   inserted_at_ms,bids_json,asks_json
+            FROM p26_clob_books
+            WHERE condition_id=? AND side=? AND id>?
+              AND recv_ts_ms>=? AND recv_ts_ms<=?
+              AND source_ts_ms<=?
+              AND (source_ts_ms>=? OR recv_ts_ms<=?)
+            ORDER BY id ASC
+            """,
+            (
+                str(cycle["condition_id"]),
+                side_value,
+                cursor,
+                opened_ms,
+                int(now_ms),
+                market_end_ms,
+                opened_ms,
+                market_end_ms,
+            ),
+        ).fetchall()
+        if not rows:
+            return None
+
+        last_scanned = max(int(row["id"]) for row in rows)
+        best_view: dict[str, Any] | None = None
+        for row in rows:
+            view = _book_view(row)
+            if view is None:
+                continue
+            if best_view is None or float(view["best_ask"]) < float(best_view["best_ask"]):
+                best_view = view
+        if best_view is None:
+            return {
+                "last_scanned_book_id": last_scanned,
+                "book_id": None,
+                "best_ask": None,
+                "observed_at_ms": None,
+                "touch_ts_ms": None,
+                "source_ts_ms": None,
+                "recv_ts_ms": None,
+            }
+        return {
+            "last_scanned_book_id": last_scanned,
+            "book_id": int(best_view["id"]),
+            "best_ask": float(best_view["best_ask"]),
+            "observed_at_ms": int(best_view["recv_ts_ms"]),
+            "touch_ts_ms": (
+                int(best_view["source_ts_ms"])
+                if int(best_view["source_ts_ms"]) >= opened_ms
+                else int(best_view["recv_ts_ms"])
+            ),
+            "source_ts_ms": int(best_view["source_ts_ms"]),
+            "recv_ts_ms": int(best_view["recv_ts_ms"]),
+        }

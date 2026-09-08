@@ -10,10 +10,7 @@ from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import matched_pair_pnl
 from p3_dual40_engine import Dual40MakerEngine, _book_view, _levels
-from p3_dual40_paper import (
-    observed_fill_from_visible_depth,
-    visible_ask_capacity,
-)
+from p3_dual40_paper import visible_ask_capacity
 from p3_dual40_preflight import run_dual40_preflight
 from p3_dual40_store import (
     asset_from_combo_key,
@@ -28,7 +25,7 @@ log = logging.getLogger("direction_engine.p3.dual40.runtime")
 
 
 class ProductionDual40MakerEngine(Dual40MakerEngine):
-    """Use real collector health, conservative paper fills and fail-closed LIVE I/O."""
+    """Use real collector health, deterministic PAPER fills and fail-closed LIVE I/O."""
 
     def __init__(self, settings, state, **kwargs):  # noqa: ANN001,ANN003
         kwargs.setdefault("preflight_fn", run_dual40_preflight)
@@ -80,43 +77,89 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         )
         return view
 
-    def _paper_tick(
+    def _paper_touch_evidence(
+        self,
+        p26,
+        cycle: dict[str, Any],
+        side: str,
+        now_ms: int,
+    ) -> dict[str, Any] | None:  # noqa: ANN001
+        """Return the latest in-window book as a fallback for test adapters."""
+        book = self._latest_book(p26, str(cycle["condition_id"]), str(side))
+        if book is None:
+            return None
+        opened_ms = int(cycle.get("orders_posted_at_ms") or cycle["created_at_ms"])
+        cutoff_ms = min(int(now_ms), int(cycle["market_end_ts_ms"]))
+        observed_ms = int(book.get("recv_ts_ms") or book.get("inserted_at_ms") or 0)
+        if observed_ms < opened_ms or observed_ms > cutoff_ms:
+            return None
+        return {
+            "last_scanned_book_id": int(book["id"]),
+            "book_id": int(book["id"]),
+            "best_ask": float(book["best_ask"]),
+            "observed_at_ms": observed_ms,
+            "touch_ts_ms": observed_ms,
+            "source_ts_ms": int(book.get("source_ts_ms") or 0),
+            "recv_ts_ms": int(book.get("recv_ts_ms") or 0),
+        }
+
+    def _reconcile_paper_touch_fills(
         self,
         conn,
         p26,
         cycle: dict[str, Any],
         now_ms: int,
     ) -> dict[str, Any]:  # noqa: ANN001
-        """Count at most the maximum visible executable depth, never repeated polls."""
-        up, down = self._book_for_cycle(p26, cycle)
-        if up is None or down is None:
-            return {"status": "PAPER_WAIT_BOOK", "cycle_id": cycle["id"]}
-
+        """Apply deterministic PAPER fills from recorded post-entry best asks."""
         quantity = float(cycle["target_shares"])
         maker_price = float(cycle["maker_price"])
-        epsilon = float(self.settings.dual40_fill_epsilon)
         up_filled = float(cycle["up_filled_shares"])
         down_filled = float(cycle["down_filled_shares"])
         near_up = int(cycle["near_touch_up_41"])
         near_down = int(cycle["near_touch_down_41"])
-
-        if up["best_ask"] <= self.policy.near_touch_price + 1e-12:
-            near_up = 1
-        if down["best_ask"] <= self.policy.near_touch_price + 1e-12:
-            near_down = 1
-
-        up_capacity = float(up.get("visible_ask_capacity_at_maker") or 0.0)
-        down_capacity = float(down.get("visible_ask_capacity_at_maker") or 0.0)
-        up_filled = observed_fill_from_visible_depth(
-            previous_filled=up_filled,
-            target_shares=quantity,
-            visible_capacity=up_capacity,
+        prior_details = (
+            cycle.get("details")
+            if isinstance(cycle.get("details"), dict)
+            else {}
         )
-        down_filled = observed_fill_from_visible_depth(
-            previous_filled=down_filled,
-            target_shares=quantity,
-            visible_capacity=down_capacity,
-        )
+        details: dict[str, Any] = {
+            "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+            "near_touch_41_is_diagnostic_only": True,
+        }
+
+        evidence_by_side: dict[str, dict[str, Any] | None] = {}
+        for side in ("UP", "DOWN"):
+            evidence = self._paper_touch_evidence(p26, cycle, side, int(now_ms))
+            evidence_by_side[side] = evidence
+            if evidence is None:
+                continue
+            key = side.lower()
+            details[f"paper_last_scanned_{key}_book_id"] = int(
+                evidence["last_scanned_book_id"]
+            )
+            best_ask = evidence.get("best_ask")
+            if best_ask is None:
+                continue
+            previous_low = prior_details.get(f"paper_lowest_{key}_best_ask")
+            details[f"paper_lowest_{key}_best_ask"] = min(
+                float(best_ask),
+                float(previous_low) if previous_low is not None else float(best_ask),
+            )
+            if float(best_ask) <= self.policy.near_touch_price + 1e-12:
+                if side == "UP":
+                    near_up = 1
+                else:
+                    near_down = 1
+            if float(best_ask) <= maker_price + 1e-12:
+                if side == "UP":
+                    up_filled = quantity
+                else:
+                    down_filled = quantity
+                details[f"paper_{key}_fill_evidence"] = {
+                    field: value
+                    for field, value in evidence.items()
+                    if field != "last_scanned_book_id"
+                }
 
         matched = min(up_filled, down_filled)
         residual = abs(up_filled - down_filled)
@@ -135,17 +178,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             residual_shares=residual,
             near_touch_up_41=near_up,
             near_touch_down_41=near_down,
-            details_merge={
-                "paper_fill_rule": "MAX_VISIBLE_ASK_DEPTH_AT_OR_BELOW_MAKER",
-                "last_up_book_id": up["id"],
-                "last_down_book_id": down["id"],
-                "last_up_best_ask": up["best_ask"],
-                "last_down_best_ask": down["best_ask"],
-                "last_visible_up_capacity_at_maker": up_capacity,
-                "last_visible_down_capacity_at_maker": down_capacity,
-                "max_observed_up_fill": up_filled,
-                "max_observed_down_fill": down_filled,
-            },
+            details_merge=details,
         )
         cycle.update(
             {
@@ -158,6 +191,30 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 "near_touch_down_41": near_down,
             }
         )
+        return {
+            "up_filled": up_filled,
+            "down_filled": down_filled,
+            "matched": matched,
+            "residual_side": residual_side,
+            "residual_shares": residual,
+            "evidence": evidence_by_side,
+        }
+
+    def _paper_tick(
+        self,
+        conn,
+        p26,
+        cycle: dict[str, Any],
+        now_ms: int,
+    ) -> dict[str, Any]:  # noqa: ANN001
+        """Reconcile PAPER touches and always advance expired cycles."""
+        up, down = self._book_for_cycle(p26, cycle)
+        quantity = float(cycle["target_shares"])
+        maker_price = float(cycle["maker_price"])
+        epsilon = float(self.settings.dual40_fill_epsilon)
+        fills = self._reconcile_paper_touch_fills(conn, p26, cycle, int(now_ms))
+        up_filled = float(fills["up_filled"])
+        down_filled = float(fills["down_filled"])
 
         if up_filled + epsilon >= quantity and down_filled + epsilon >= quantity:
             return self._apply_ladder_and_finalize(
@@ -192,15 +249,49 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 "down_filled": down_filled,
             }
 
+        if up is None or down is None:
+            return {
+                "status": "PAPER_WAIT_BOOK",
+                "cycle_id": cycle["id"],
+                "up_filled": up_filled,
+                "down_filled": down_filled,
+                "tte_sec": round(tte, 3),
+            }
+
         return {
             "status": "PAPER_RESTING",
             "cycle_id": cycle["id"],
             "up_filled": up_filled,
             "down_filled": down_filled,
-            "up_visible_capacity": up_capacity,
-            "down_visible_capacity": down_capacity,
             "tte_sec": round(tte, 3),
         }
+
+    def _resolution_tick(
+        self,
+        conn,
+        cycle: dict[str, Any],
+        now_ms: int,
+        p26=None,
+    ) -> dict[str, Any]:  # noqa: ANN001
+        if str(cycle.get("scope")) == "PAPER" and p26 is not None:
+            fills = self._reconcile_paper_touch_fills(conn, p26, cycle, int(now_ms))
+            quantity = float(cycle["target_shares"])
+            epsilon = float(self.settings.dual40_fill_epsilon)
+            if (
+                float(fills["up_filled"]) + epsilon >= quantity
+                and float(fills["down_filled"]) + epsilon >= quantity
+            ):
+                return self._apply_ladder_and_finalize(
+                    conn,
+                    cycle=cycle,
+                    status="PAPER_MATCHED_FILLED",
+                    pnl=matched_pair_pnl(
+                        price=float(cycle["maker_price"]),
+                        matched_shares=quantity,
+                    ),
+                    official_result=None,
+                )
+        return super()._resolution_tick(conn, cycle, now_ms, p26=p26)
 
     def _cancel_and_classify(
         self,
@@ -649,7 +740,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     "live_max_concurrent_assets": int(
                         self.settings.dual40_live_max_concurrent_assets
                     ),
-                    "paper_fill_rule": "MAX_VISIBLE_ASK_DEPTH_AT_OR_BELOW_40",
+                    "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
                     "paper_repeated_snapshot_reuse": False,
                     "near_touch_41_diagnostic_only": True,
                     "entry": "BALANCED_STABLE_TWO_WAY",

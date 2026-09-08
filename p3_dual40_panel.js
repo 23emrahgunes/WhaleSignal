@@ -87,23 +87,99 @@
 
   const cycleStatusLabel = (value) => ({
     PAPER_RESTING: "Sanal emirler bekliyor",
+    PAPER_WAIT_BOOK: "Emir defteri bekleniyor",
     LIVE_RESTING: "Canlı emirler bekliyor",
     WAIT_RESOLUTION: "Market sonucu bekleniyor",
+    PAPER_MATCHED: "İki taraf doldu",
+    PAPER_MATCHED_FILLED: "İki taraf doldu",
+    MATCHED_FILLED: "İki taraf doldu",
+    LIVE_MATCHED_MERGED: "İki taraf doldu ve birleştirildi",
+    NO_FILL: "Dolum olmadı",
+    RESOLVED_UP: "UP sonucu ile kapandı",
+    RESOLVED_DOWN: "DOWN sonucu ile kapandı",
   })[String(value || "")] || String(value || "Aktif cycle");
+
+  const ladderStepLabel = (levelIndex, targetShares) => {
+    const index = Number(levelIndex || 0);
+    const names = ["Başlangıç", "Recovery", "Son basamak"];
+    const target = targetShares == null ? "—" : number(targetShares, 1);
+    return `${index + 1}. basamak · ${names[index] || "Recovery"} · ${target} share`;
+  };
+
+  const fillStatusLabel = (cycle) => {
+    const target = Number(cycle.target_shares || 0);
+    const up = Number(cycle.up_filled_shares || 0);
+    const down = Number(cycle.down_filled_shares || 0);
+    const upFull = target > 0 && up + 1e-9 >= target;
+    const downFull = target > 0 && down + 1e-9 >= target;
+    if (upFull && downFull) return "İki taraf doldu";
+    if (upFull) return "UP doldu · DOWN bekliyor";
+    if (downFull) return "DOWN doldu · UP bekliyor";
+    if (up > 0 || down > 0) return "Kısmi dolum var";
+    return "Henüz dolum yok";
+  };
+
+  const fillEvidenceLabel = (cycle, side) => {
+    const details = cycle.details || {};
+    const evidence = details[`paper_${String(side).toLowerCase()}_fill_evidence`] || {};
+    const atMs = evidence.touch_ts_ms || evidence.observed_at_ms;
+    if (evidence.best_ask == null || timestampMs(atMs) === null) return "";
+    return `${Math.round(Number(evidence.best_ask) * 100)}¢ dokunuş ${localTime(atMs)}`;
+  };
 
   const REASON_LABELS = {
     PASS: "Kontroller geçti",
     MODEL_ARTIFACT_NOT_READY: "Model bekleniyor",
     ALPHA_ARTIFACT_NOT_READY: "Alpha profili bekleniyor",
     BOOK_PAIR_MISSING: "Emir defteri çifti eksik",
+    BOOK_STALE: "Emir defteri verisi eski",
     BOOK_TRANSPORT_NOT_LIVE: "Book bağlantısı hazır değil",
+    TTE_TOO_LOW: "Giriş için süre çok az",
+    MARKET_WARMUP: "Market başlangıç verisi birikiyor",
+    REGIME_HISTORY_INSUFFICIENT: "Rejim geçmişi yetersiz",
+    WAITING_OPENING_WINDOW: "Açılış penceresi bekleniyor",
+    OPENING_HISTORY_INSUFFICIENT: "Açılış geçmişi yetersiz",
+    POST_ONLY_WOULD_CROSS: "40¢ emir anında eşleşeceği için bekleniyor",
+    MID_MISSING: "Orta fiyat eksik",
+    ASK_MISSING: "Satış fiyatı eksik",
+    UP_MID_NOT_BALANCED: "UP fiyatı dengeli bölgede değil",
+    DOWN_MID_NOT_BALANCED: "DOWN fiyatı dengeli bölgede değil",
+    SPREAD_INVALID: "Alış-satış farkı geçersiz",
+    SPREAD_TOO_WIDE: "Alış-satış farkı fazla geniş",
+    MID_RANGE_TOO_WIDE: "Fiyat aralığı fazla geniş",
+    NET_DRIFT_TOO_HIGH: "Net fiyat kayması fazla",
+    ONE_WAY_SLOPE: "Tek yönlü fiyat eğimi",
+    ONE_WAY_SEQUENCE: "Tek yönlü fiyat dizisi",
+    SINGLE_JUMP_TOO_LARGE: "Tek fiyat sıçraması fazla büyük",
+    COMPLEMENT_RESIDUAL_TOO_HIGH: "UP/DOWN toplam fiyat sapması yüksek",
+    FEE_SCHEDULE_MISSING: "Komisyon doğrulaması eksik",
+    MAKER_ZERO_FEE_NOT_CONFIRMED: "Maker sıfır komisyon doğrulanmadı",
+    REJECTED_OPENING_RANGE: "Açılış fiyat aralığı fazla geniş",
+    REJECTED_OPENING_DRIFT: "Açılış net fiyat kayması fazla",
+    REJECTED_OPENING_SLOPE: "Açılış tek yönlü eğilim gösteriyor",
+    REJECTED_OPENING_ONE_WAY_SEQUENCE: "Açılış tek yönlü ilerliyor",
+    REJECTED_OPENING_JUMP: "Açılışta ani fiyat sıçraması var",
+    REJECTED_OPENING_COMPLEMENT_RESIDUAL: "Açılış UP/DOWN toplamı sapıyor",
+    REJECTED_OPENING_SPREAD_EXPANSION: "Açılış alış-satış farkı büyüyor",
+    REJECTED_ASYMMETRIC_40C_QUEUE: "40¢ emir sıraları dengesiz",
+    REJECTED_THIN_COUNTER_LEG: "Karşı taraf derinliği yetersiz",
     FORECAST_CARD_MISSING: "Tahmin kartı bulunamadı",
     FORECAST_MARKET_MISMATCH: "Tahmin marketle eşleşmedi",
     FORECAST_MISSING: "Tahmin verisi yok",
     FORECAST_NOT_READY: "Tahmin henüz hazır değil",
     FORECAST_STALE: "Tahmin verisi eski",
     FORECAST_NEUTRAL: "Tahmin nötr",
+    FORECAST_RESEARCH_ONLY: "Araştırma tahmini yalnız SHADOW kullanımına açık",
     REJECTED_STRONG_DIRECTIONAL_ALPHA: "Güçlü yönlü tahmin nedeniyle reddedildi",
+    FEATURE_CONFLICT: "Tahmin bileşenleri çelişiyor",
+    INSUFFICIENT_DATA: "Tahmin için veri yetersiz",
+    CLOB_MISSING: "Tahmin için emir defteri eksik",
+    PTB_MISSING: "Tahmin için fiyat verisi eksik",
+    MODEL_NOT_TRAINED: "Doğrulanmış model henüz eğitilmedi",
+    HIGH_VOL: "Oynaklık çok yüksek",
+    CHAOTIC: "Market yapısı kararsız",
+    LOW_PREDICTABILITY: "Öngörülebilirlik düşük",
+    STALE_DATA: "Kaynak veri eski",
     NOT_EVALUATED: "Henüz değerlendirilmedi",
   };
 
@@ -205,7 +281,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> Açılan cycle'da UP ve DOWN için ayrı 40¢ sanal limit emir izlenir. 41¢ near-touch yalnız tanıdır; fill kanıtı değildir.";
+        : "<b>DRY / PAPER.</b> Emir açıldıktan sonra kaydedilen book'ta UP veya DOWN 40¢ ya da altını görürse o taraf tam dolu sayılır. 41¢ near-touch yalnız tanıdır.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }
@@ -237,6 +313,8 @@
         const target = ladder[level] ?? "—";
         const debt = Number(paper.recovery_debt_usdc ?? paper.loss_pool_usdc ?? 0);
         const active = paper.active_cycle;
+        const paperDecisions = (assetSummary.decisions || {}).PAPER || {};
+        const latestEvaluation = paperDecisions.latest_evaluation || paperDecisions.latest_skip;
         const hardStopped = Boolean(paper.hard_stopped);
         const laneClass = hardStopped ? "bad-lane" : debt > 0 ? "warn-lane" : "";
         const badge = hardStopped ? "HARD STOP" : debt > 0 ? "RECOVERY" : "HAZIR";
@@ -246,12 +324,14 @@
             `${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ · ` +
             `UP ${number(active.up_filled_shares, 1)}/${number(active.target_shares, 1)} · ` +
             `DN ${number(active.down_filled_shares, 1)}/${number(active.target_shares, 1)}`
-          : "Aktif cycle yok";
+          : latestEvaluation
+            ? `Aktif cycle yok · Son değerlendirme ${localTime(latestEvaluation.at_ms)} · ${reasonLabel(latestEvaluation.reason)}`
+            : "Aktif cycle yok";
         return (
           `<article class="lane ${laneClass}">` +
           `<div class="lane-head"><span class="lane-asset">${asset}</span><span class="lane-badge">${badge}</span></div>` +
           `<div class="lane-values">` +
-          `<div class="lane-value"><b>${escapeHtml(target)}</b><span>Hedef share</span></div>` +
+          `<div class="lane-value"><b>${escapeHtml(target)}</b><span>${escapeHtml(ladderStepLabel(level, target))}</span></div>` +
           `<div class="lane-value"><b class="${debt > 0 ? "warn" : "ok"}">$${number(debt)}</b><span>Recovery borcu</span></div>` +
           `<div class="lane-value"><b>${escapeHtml(paper.markets_skipped ?? 0)}</b><span>Atlanan market</span></div>` +
           `</div><div class="lane-foot" title="${escapeHtml(activeText)}">${escapeHtml(activeText)}</div>` +
@@ -294,11 +374,14 @@
       const orderKind = String(cycle.scope || "PAPER") === "LIVE" ? "Canlı" : "Sanal";
       const openedAtMs = timestampMs(cycle.orders_posted_at_ms) ?? timestampMs(cycle.created_at_ms);
       const conditionId = String(cycle.condition_id || "");
+      const upEvidence = fillEvidenceLabel(cycle, "UP");
+      const downEvidence = fillEvidenceLabel(cycle, "DOWN");
       return (
         `<div class="active-row">` +
         `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
         `<div class="active-order">` +
-        `<strong title="${escapeHtml(rawStatus)}">${escapeHtml(cycleStatusLabel(rawStatus))}</strong>` +
+        `<strong title="${escapeHtml(rawStatus)}">${escapeHtml(fillStatusLabel(cycle))}</strong>` +
+        `<span>${escapeHtml(cycleStatusLabel(rawStatus))} · ${escapeHtml(ladderStepLabel(cycle.level_index, cycle.target_shares))}</span>` +
         `<span class="active-market" title="Condition: ${escapeHtml(conditionId)}">${escapeHtml(marketWindowLabel(cycle))}</span>` +
         `<span>${orderKind} emir çifti · UP ${target} @ ${limit} · DOWN ${target} @ ${limit}</span>` +
         `<span class="active-time" title="${escapeHtml(fullLocalDateTime(openedAtMs))}">` +
@@ -306,8 +389,10 @@
         `ID ${escapeHtml(shortIdentifier(conditionId))}</span>` +
         `</div>` +
         `<div class="active-fill">` +
-        `<span><b>UP dolum</b> ${number(cycle.up_filled_shares, 1)} / ${target}</span>` +
-        `<span><b>DOWN dolum</b> ${number(cycle.down_filled_shares, 1)} / ${target}</span>` +
+        `<span><b>UP dolum</b> ${number(cycle.up_filled_shares, 1)} / ${target}` +
+        `${upEvidence ? ` · ${escapeHtml(upEvidence)}` : ""}</span>` +
+        `<span><b>DOWN dolum</b> ${number(cycle.down_filled_shares, 1)} / ${target}` +
+        `${downEvidence ? ` · ${escapeHtml(downEvidence)}` : ""}</span>` +
         `</div>` +
         `<strong>#${escapeHtml(cycle.id || "—")}</strong>` +
         `</div>`
@@ -341,7 +426,7 @@
     if (metrics) {
       const [topReason, topReasonCount] = topCount(audit.reason_counts);
       metrics.innerHTML =
-        metric(audit.status === "NOT_READY" ? "HAZIR DEĞİL" : audit.status || "—", "Model durumu", audit.status === "NOT_READY" ? "warn" : "ok") +
+        metric(audit.status === "NOT_READY" ? "HAZIR DEĞİL" : audit.status || "—", "Araştırma audit durumu", audit.status === "NOT_READY" ? "warn" : "ok") +
         metric(audit.candidates ?? 0, "İncelenen aday") +
         metric(audit.would_open ?? 0, "Would open") +
         metric(audit.opened ?? 0, "Açılan") +
@@ -389,9 +474,24 @@
         const openingText = opening.reason === "PASS"
           ? `Geçti · r ${number(opening.mid_range)}`
           : reasonLabel(opening.reason);
+        const forecastMode = String(
+          (candidate.gate_modes || {}).forecast ||
+          (scan.gate_modes || {}).forecast ||
+          "—"
+        );
+        const sourceText = forecast.source_kind === "P25_RESEARCH_FORECAST"
+          ? "Araştırma tahmini"
+          : "Doğrulanmış sinyal";
         const forecastText = forecast.p_up_external == null
-          ? reasonLabel(forecast.reason)
-          : `${number(forecast.p_up_external, 3)} · ${reasonLabel(forecast.reason)}`;
+          ? `Hazır değil · ${reasonLabel(forecast.source_reason || forecast.reason)}`
+          : `${number(forecast.p_up_external, 3)} · ${sourceText} · ${reasonLabel(forecast.reason)}`;
+        const forecastTitle = [
+          forecast.reason,
+          forecast.source_reason,
+          forecast.forecast_status,
+          forecast.source_kind,
+          `gate=${forecastMode}`,
+        ].filter(Boolean).join(" · ");
         return (
         `<tr>` +
         `<td title="Condition: ${escapeHtml(candidate.condition_id || "")}">` +
@@ -404,7 +504,7 @@
         `<td class="price-pair">${number(candidate.up_mid)} / ${number(candidate.down_mid)}</td>` +
         `<td class="mobile-optional">${stable}</td>` +
         `<td class="desktop-optional" title="${escapeHtml(opening.reason || "")}">${escapeHtml(openingText)}</td>` +
-        `<td class="desktop-optional" title="${escapeHtml(forecast.reason || "")}">${escapeHtml(forecastText)}</td>` +
+        `<td class="desktop-optional" title="${escapeHtml(forecastTitle)}">${escapeHtml(forecastText)}<span class="cell-code">${escapeHtml(forecastMode)} · girişi ${forecastMode === "ENFORCE" ? "etkiler" : "engellemez"}</span></td>` +
         `<td class="mobile-optional">${escapeHtml(candidate.lane_status || "—")}</td>` +
         `</tr>`
         );
@@ -453,12 +553,12 @@
       `<span class="cell-main">${escapeHtml(marketWindowLabel(cycle))}</span>` +
       `<span class="cell-code">ID ${escapeHtml(shortIdentifier(conditionId))}</span></td>` +
       `<td title="${escapeHtml(fullLocalDateTime(openedAtMs))}">${escapeHtml(localTime(openedAtMs))}</td>` +
-      `<td>${escapeHtml(cycle.status)}</td>` +
-      `<td>${escapeHtml(cycle.level_index)}</td>` +
+      `<td><span class="cell-main">${escapeHtml(cycleStatusLabel(cycle.status))}</span><span class="cell-code">${escapeHtml(cycle.status)}</span></td>` +
+      `<td>${escapeHtml(ladderStepLabel(cycle.level_index, cycle.target_shares))}</td>` +
       `<td>${number(cycle.target_shares, 1)}</td>` +
       `<td>${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢</td>` +
-      `<td>${number(cycle.up_filled_shares)}</td>` +
-      `<td>${number(cycle.down_filled_shares)}</td>` +
+      `<td><span class="cell-main">${number(cycle.up_filled_shares)}</span><span class="cell-code">${escapeHtml(fillEvidenceLabel(cycle, "UP") || "Kanıt saati yok")}</span></td>` +
+      `<td><span class="cell-main">${number(cycle.down_filled_shares)}</span><span class="cell-code">${escapeHtml(fillEvidenceLabel(cycle, "DOWN") || "Kanıt saati yok")}</span></td>` +
       `<td>${number(cycle.matched_shares)}</td>` +
       `<td>${escapeHtml(cycle.residual_side || "—")} ${number(cycle.residual_shares)}</td>` +
       `<td>${escapeHtml(cycle.official_result || "—")}</td>` +

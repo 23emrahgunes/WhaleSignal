@@ -198,6 +198,89 @@ def test_forecast_provider_matches_current_card_and_caches_one_fetch():
     assert len(calls) == 1
 
 
+def test_forecast_provider_uses_research_forecast_when_validated_signal_abstains():
+    payload = {
+        "cards": [
+            {
+                "combo": "BTC:5m",
+                "active": True,
+                "condition_id": "0xABCDEF0012345678",
+                "tte_sec": 240.0,
+                "prediction_ready": False,
+                "abstain_reason": "FEATURE_CONFLICT",
+                "forecast_p_up": 0.54,
+                "forecast_confidence": 0.21,
+                "forecast_status": "CONFLICTED",
+                "forecast_source": "ROBUST_ENSEMBLE_V1",
+                "clob_age_ms": 100,
+            }
+        ]
+    }
+    provider = P25StateForecastProvider(
+        state_url="http://127.0.0.1:8091/api/state",
+        timeout_ms=250,
+        max_age_ms=2000,
+        cache_ms=2000,
+        tte_tolerance_sec=3.0,
+        opener=lambda _request, timeout: _Response(payload),
+    )
+
+    decision = provider.evaluate(
+        now_ms=10_000,
+        combo_key="BTC:5m",
+        condition_id="condition-12345678",
+        tte_sec=240.0,
+        minimum_p_up=0.45,
+        maximum_p_up=0.55,
+    )
+
+    assert decision.eligible is True
+    assert decision.p_up_external == pytest.approx(0.54)
+    assert decision.source_kind == "P25_RESEARCH_FORECAST"
+    assert decision.source_reason == "FEATURE_CONFLICT"
+    assert decision.forecast_status == "CONFLICTED"
+
+
+def test_forecast_provider_preserves_abstain_reason_when_no_forecast_exists():
+    payload = {
+        "cards": [
+            {
+                "combo": "SOL:5m",
+                "active": True,
+                "condition_id": "0xABCDEF0012345678",
+                "tte_sec": 240.0,
+                "prediction_ready": False,
+                "abstain_reason": "CLOB_MISSING",
+                "forecast_p_up": None,
+                "forecast_status": "NO_DATA",
+                "clob_age_ms": 100,
+            }
+        ]
+    }
+    provider = P25StateForecastProvider(
+        state_url="http://127.0.0.1:8091/api/state",
+        timeout_ms=250,
+        max_age_ms=2000,
+        cache_ms=2000,
+        tte_tolerance_sec=3.0,
+        opener=lambda _request, timeout: _Response(payload),
+    )
+
+    decision = provider.evaluate(
+        now_ms=10_000,
+        combo_key="SOL:5m",
+        condition_id="condition-12345678",
+        tte_sec=240.0,
+        minimum_p_up=0.45,
+        maximum_p_up=0.55,
+    )
+
+    assert decision.available is False
+    assert decision.reason == "FORECAST_NOT_READY"
+    assert decision.source_reason == "CLOB_MISSING"
+    assert decision.forecast_status == "NO_DATA"
+
+
 def test_forecast_provider_adjusts_cached_tte_and_rejects_stale_payload():
     payload = {
         "now": 100.0,
@@ -354,6 +437,40 @@ class _FixedForecast:
             kwargs["combo_key"],
             kwargs["condition_id"][-8:],
         )
+
+
+class _FixedResearchForecast(_FixedForecast):
+    def evaluate(self, **kwargs):  # noqa: ANN003
+        decision = super().evaluate(**kwargs)
+        return ForecastGateDecision(
+            **{
+                **decision.to_dict(),
+                "source_kind": "P25_RESEARCH_FORECAST",
+                "forecast_status": "PROVISIONAL",
+            }
+        )
+
+
+def test_research_forecast_cannot_be_promoted_to_enforced_gate_implicitly(tmp_path):
+    settings = _settings(tmp_path, dual40_forecast_gate_mode="ENFORCE")
+    engine = Dual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=False, auto_execute_enabled=False),
+        gateway_factory=lambda _: _FakeGateway(),
+        forecast_provider=_FixedResearchForecast(0.50),
+    )
+
+    decision = engine._forecast_decision(
+        now_ms=10_000,
+        combo_key="BTC:5m",
+        condition_id="condition-12345678",
+        tte_sec=240.0,
+        profile=engine._opening_profile(0),
+    )
+
+    assert decision.available is True
+    assert decision.eligible is False
+    assert decision.reason == "FORECAST_RESEARCH_ONLY"
 
 
 def _engine_with_forecast(tmp_path, *, mode: str, probability: float) -> Dual40MakerEngine:

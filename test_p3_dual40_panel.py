@@ -16,7 +16,8 @@ def test_panel_contains_asset_lane_state():
 
     assert "Market Karar Günlüğü" in html
     assert "Gate Kohortları" in html
-    assert "P2.6 Readiness" in html
+    assert "P2.6 Araştırma Audit" in html
+    assert "DUAL40 girişinden bağımsız model deneyi" in html
     assert "Market Taraması" in html
     assert "PAPER / LIVE paralellik" in script
     assert "policy.paper_max_concurrent_assets" in script
@@ -41,6 +42,14 @@ def test_panel_contains_asset_lane_state():
     assert "Emir açılışı" in script
     assert "Market bitişi" in script
     assert "marketWindowLabel(candidate)" in script
+    assert "40¢ ya da altını görürse" in script
+    assert "ladderStepLabel" in script
+    assert "fillStatusLabel" in script
+    assert "fillEvidenceLabel" in script
+    assert "dokunuş ${localTime(atMs)}" in script
+    assert "Son değerlendirme" in script
+    assert "girişi ${forecastMode === \"ENFORCE\" ? \"etkiler\" : \"engellemez\"}" in script
+    assert "<th>Basamak</th>" in html
 
 
 def test_operational_panel_hides_diagnostic_logs_by_default():
@@ -114,6 +123,47 @@ def test_asset_panel_metrics_keep_paper_and_live_scopes_separate(tmp_path):
     assert btc["markets_seen"] == 1
     assert btc["performance"]["PAPER"]["realized_pnl_usdc"] == 1.0
     assert btc["performance"]["LIVE"]["realized_pnl_usdc"] == -5.0
+    assert btc["decisions"]["PAPER"]["latest_skip"]["reason"] == "PAPER_ONLY"
+    assert btc["decisions"]["LIVE"]["latest_skip"]["reason"] == "LIVE_ONLY"
+    assert btc["decisions"]["PAPER"]["latest_evaluation"]["reason"] == "PAPER_ONLY"
+
+
+def test_pair_completion_counts_production_matched_status(tmp_path):
+    path = str(tmp_path / "p3.sqlite")
+    conn = connect_dual40(path)
+    try:
+        cycle_id = create_cycle(
+            conn,
+            scope="PAPER",
+            asset="ETH",
+            session_id=None,
+            condition_id="paper-matched",
+            combo_key="ETH:5m",
+            market_end_ts_ms=1_000,
+            level_index=0,
+            target_shares=5.0,
+            maker_price=0.40,
+            status="PAPER_MATCHED_FILLED",
+            gate={},
+            up_token_id="paper-up",
+            down_token_id="paper-down",
+            loss_pool_before_usdc=0.0,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            up_filled_shares=5.0,
+            down_filled_shares=5.0,
+            matched_shares=5.0,
+            realized_pnl_usdc=1.0,
+            resolved_at_ms=2_000,
+        )
+    finally:
+        conn.close()
+
+    paper = build_dual40_summary(path)["performance"]["PAPER"]
+    assert paper["matched_cycles"] == 1
+    assert paper["pair_completion_rate"] == 1.0
 
 
 def test_dual40_analytics_uses_read_only_connection(tmp_path, monkeypatch):

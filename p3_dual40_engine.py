@@ -14,6 +14,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import Counter
+from dataclasses import replace
 from typing import Any, Callable
 
 from p25_discovery import authoritative_official_result
@@ -56,6 +57,8 @@ log = logging.getLogger("direction_engine.p3.dual40")
 
 TERMINAL_STATUSES = {
     "PAPER_MATCHED",
+    "PAPER_MATCHED_FILLED",
+    "MATCHED_FILLED",
     "LIVE_MATCHED_MERGED",
     "NO_FILL",
     "RESOLVED_UP",
@@ -344,7 +347,7 @@ class Dual40MakerEngine:
         if self.settings.dual40_forecast_mode() == "OFF":
             return ForecastGateDecision(True, "FORECAST_GATE_OFF", False)
         try:
-            return self.forecast_provider.evaluate(
+            decision = self.forecast_provider.evaluate(
                 now_ms=int(now_ms),
                 combo_key=str(combo_key),
                 condition_id=str(condition_id),
@@ -352,6 +355,16 @@ class Dual40MakerEngine:
                 minimum_p_up=float(profile.forecast_min_p_up),
                 maximum_p_up=float(profile.forecast_max_p_up),
             )
+            if (
+                self.settings.dual40_forecast_mode() == "ENFORCE"
+                and decision.source_kind == "P25_RESEARCH_FORECAST"
+            ):
+                return replace(
+                    decision,
+                    eligible=False,
+                    reason="FORECAST_RESEARCH_ONLY",
+                )
+            return decision
         except Exception as exc:  # noqa: BLE001
             log.exception("DUAL40 forecast adapter failed combo=%s", combo_key)
             return ForecastGateDecision(
@@ -959,7 +972,7 @@ class Dual40MakerEngine:
             down_token_id=str(candidate["down_token_id"]),
             loss_pool_before_usdc=float(state_row["loss_pool_usdc"]),
             details={
-                "paper_fill_rule": "CONSERVATIVE_BEST_ASK_LE_40",
+                "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
                 "near_touch_41_is_diagnostic_only": True,
                 "post_only": True,
                 "order_type": "GTC_SIMULATED",
@@ -1575,7 +1588,14 @@ class Dual40MakerEngine:
             return (result.value if result is not None else None), source
         return None, "CONDITION_NOT_FOUND"
 
-    def _resolution_tick(self, conn, cycle: dict[str, Any], now_ms: int) -> dict[str, Any]:  # noqa: ANN001
+    def _resolution_tick(
+        self,
+        conn,
+        cycle: dict[str, Any],
+        now_ms: int,
+        p26=None,
+    ) -> dict[str, Any]:  # noqa: ANN001
+        del p26
         if int(now_ms) < int(cycle["market_end_ts_ms"]) + 2_000:
             return {"status": "WAIT_RESOLUTION", "cycle_id": cycle["id"]}
         last = self._last_resolution_poll_ms.get(int(cycle["id"]), 0)
@@ -1625,7 +1645,7 @@ class Dual40MakerEngine:
             asset_results: dict[str, Any] = {}
             for cycle in sorted(active, key=lambda item: str(item.get("asset") or "")):
                 if str(cycle["status"]) == "WAIT_RESOLUTION":
-                    result = self._resolution_tick(conn, cycle, now_ms)
+                    result = self._resolution_tick(conn, cycle, now_ms, p26=p26)
                 elif str(cycle["scope"]) == "PAPER":
                     result = self._paper_tick(conn, p26, cycle, now_ms)
                 else:
@@ -1732,7 +1752,7 @@ class Dual40MakerEngine:
                     "one_global_market_only": False,
                     "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
                     "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
-                    "paper_fill_rule": "BEST_ASK_LE_40",
+                    "paper_fill_rule": "ANY_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
                     "near_touch_41_diagnostic_only": True,
                     "entry": "BALANCED_STABLE_TWO_WAY",
                     "opening_gate_mode": self.settings.dual40_opening_mode(),

@@ -48,7 +48,13 @@ def _scope_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     matched = sum(
         1
         for row in rows
-        if row.get("status") in {"PAPER_MATCHED", "LIVE_MATCHED_MERGED"}
+        if row.get("status")
+        in {
+            "PAPER_MATCHED",
+            "PAPER_MATCHED_FILLED",
+            "MATCHED_FILLED",
+            "LIVE_MATCHED_MERGED",
+        }
     )
     single_leg = sum(
         1
@@ -123,6 +129,25 @@ def _decision_metrics(decisions: list[dict[str, Any]]) -> dict[str, Any]:
     reason_counts: dict[str, int] = defaultdict(int)
     for item in rejected:
         reason_counts[str(item.get("reason") or "UNKNOWN")] += 1
+    latest_skip = rejected[0] if rejected else None
+    evaluations = [
+        item
+        for item in decisions
+        if str(item.get("decision") or "") not in {"OPENED", "SETTLED", "NO_FILL"}
+    ]
+    latest_evaluation = evaluations[0] if evaluations else None
+
+    def compact(item: dict[str, Any] | None) -> dict[str, Any] | None:
+        if item is None:
+            return None
+        return {
+            "combo_key": item.get("combo_key"),
+            "condition_id": item.get("condition_id"),
+            "decision": item.get("decision"),
+            "reason": item.get("reason"),
+            "at_ms": item.get("updated_at_ms") or item.get("last_seen_ms"),
+        }
+
     return {
         "markets_seen": len(decisions),
         "markets_eligible": sum(bool(item.get("eligible")) for item in decisions),
@@ -139,6 +164,8 @@ def _decision_metrics(decisions: list[dict[str, Any]]) -> dict[str, Any]:
         "rejected": len(rejected),
         "markets_skipped": len(rejected),
         "reason_counts": dict(reason_counts),
+        "latest_skip": compact(latest_skip),
+        "latest_evaluation": compact(latest_evaluation),
     }
 
 

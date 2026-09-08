@@ -24,6 +24,9 @@ class ForecastGateDecision:
     age_ms: int | None = None
     combo_key: str | None = None
     condition_suffix: str | None = None
+    source_kind: str | None = None
+    source_reason: str | None = None
+    forecast_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -40,15 +43,32 @@ def evaluate_forecast_value(
     maximum_p_up: float,
     combo_key: str,
     condition_suffix: str,
+    source_kind: str | None = None,
+    source_reason: str | None = None,
+    forecast_status: str | None = None,
 ) -> ForecastGateDecision:
     try:
         probability = float(p_up_external) if p_up_external is not None else None
     except (TypeError, ValueError):
         probability = None
     if probability is None or not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
-        return ForecastGateDecision(False, "FORECAST_VALUE_MISSING", False)
+        return ForecastGateDecision(
+            False,
+            "FORECAST_VALUE_MISSING",
+            False,
+            source_kind=source_kind,
+            source_reason=source_reason,
+            forecast_status=forecast_status,
+        )
     if not model_version:
-        return ForecastGateDecision(False, "FORECAST_MODEL_VERSION_MISSING", False)
+        return ForecastGateDecision(
+            False,
+            "FORECAST_MODEL_VERSION_MISSING",
+            False,
+            source_kind=source_kind,
+            source_reason=source_reason,
+            forecast_status=forecast_status,
+        )
     if age_ms is None or int(age_ms) < 0 or int(age_ms) > int(max_age_ms):
         return ForecastGateDecision(
             False,
@@ -60,6 +80,9 @@ def evaluate_forecast_value(
             age_ms,
             combo_key,
             condition_suffix,
+            source_kind,
+            source_reason,
+            forecast_status,
         )
     allowed = float(minimum_p_up) <= probability <= float(maximum_p_up)
     return ForecastGateDecision(
@@ -72,6 +95,9 @@ def evaluate_forecast_value(
         int(age_ms),
         combo_key,
         condition_suffix,
+        source_kind,
+        source_reason,
+        forecast_status,
     )
 
 
@@ -223,13 +249,48 @@ class P25StateForecastProvider:
         adjusted_card_tte = max(0.0, card_tte - elapsed_ms / 1000.0)
         if abs(adjusted_card_tte - float(tte_sec)) > self.tte_tolerance_sec:
             return ForecastGateDecision(False, "FORECAST_MARKET_MISMATCH", False)
-        if not bool(card.get("prediction_ready")):
-            return ForecastGateDecision(False, "FORECAST_NOT_READY", False)
         age_ms = self._card_age_ms(
             card,
             fetch_age_ms=fetch_age,
             payload_age_ms=max(payload_age or 0, card_tte_age_ms),
         )
+        source_reason = str(
+            card.get("abstain_reason")
+            or card.get("decision_gate")
+            or ""
+        ) or None
+        forecast_status = str(card.get("forecast_status") or "").upper() or None
+        if card.get("forecast_p_up") is not None and forecast_status != "NO_DATA":
+            return evaluate_forecast_value(
+                p_up_external=card.get("forecast_p_up"),
+                confidence=(
+                    float(card["forecast_confidence"])
+                    if card.get("forecast_confidence") is not None
+                    else None
+                ),
+                model_version=str(card.get("forecast_source") or "") or None,
+                age_ms=age_ms,
+                max_age_ms=self.max_age_ms,
+                minimum_p_up=minimum_p_up,
+                maximum_p_up=maximum_p_up,
+                combo_key=str(combo_key),
+                condition_suffix=condition_suffix,
+                source_kind="P25_RESEARCH_FORECAST",
+                source_reason=source_reason,
+                forecast_status=forecast_status,
+            )
+        if not bool(card.get("prediction_ready")):
+            return ForecastGateDecision(
+                False,
+                "FORECAST_NOT_READY",
+                False,
+                age_ms=age_ms,
+                combo_key=str(combo_key),
+                condition_suffix=condition_suffix,
+                source_kind="P25_VALIDATED_SIGNAL",
+                source_reason=source_reason,
+                forecast_status=forecast_status,
+            )
         return evaluate_forecast_value(
             p_up_external=card.get("p_up_external"),
             confidence=(
@@ -244,6 +305,9 @@ class P25StateForecastProvider:
             maximum_p_up=maximum_p_up,
             combo_key=str(combo_key),
             condition_suffix=condition_suffix,
+            source_kind="P25_VALIDATED_SIGNAL",
+            source_reason=source_reason,
+            forecast_status=forecast_status,
         )
 
 
