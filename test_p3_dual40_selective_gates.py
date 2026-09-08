@@ -151,7 +151,7 @@ def test_forecast_provider_matches_current_card_and_caches_one_fetch():
             {
                 "combo": "BTC:5m",
                 "active": True,
-                "condition_id": "12345678",
+                "condition_id": "0xABCDEF0012345678",
                 "tte_sec": 240.0,
                 "prediction_ready": True,
                 "p_up_external": 0.50,
@@ -205,7 +205,7 @@ def test_forecast_provider_adjusts_cached_tte_and_rejects_stale_payload():
             {
                 "combo": "ETH:5m",
                 "active": True,
-                "condition_id": "12345678",
+                "condition_id": "0xabcdef0012345678",
                 "tte_sec": 240.0,
                 "prediction_ready": True,
                 "p_up_external": 0.50,
@@ -257,6 +257,44 @@ def test_forecast_provider_adjusts_cached_tte_and_rejects_stale_payload():
     assert stale.eligible is False
     assert stale.reason == "FORECAST_STALE"
     assert stale.age_ms == 13_820
+
+
+def test_forecast_provider_rejects_different_condition_suffix():
+    payload = {
+        "cards": [
+            {
+                "combo": "BTC:5m",
+                "active": True,
+                "condition_id": "0xabcdef0087654321",
+                "tte_sec": 240.0,
+                "prediction_ready": True,
+                "p_up_external": 0.50,
+                "confidence": 0.04,
+                "model_version": "model-v1",
+                "clob_age_ms": 100,
+            }
+        ]
+    }
+    provider = P25StateForecastProvider(
+        state_url="http://127.0.0.1:8091/api/state",
+        timeout_ms=250,
+        max_age_ms=2000,
+        cache_ms=2000,
+        tte_tolerance_sec=3.0,
+        opener=lambda _request, timeout: _Response(payload),
+    )
+
+    decision = provider.evaluate(
+        now_ms=10_000,
+        combo_key="BTC:5m",
+        condition_id="0xabcdef0012345678",
+        tte_sec=240.0,
+        minimum_p_up=0.45,
+        maximum_p_up=0.55,
+    )
+
+    assert decision.eligible is False
+    assert decision.reason == "FORECAST_MARKET_MISMATCH"
 
 
 class _FixedForecast:

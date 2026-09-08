@@ -8,6 +8,11 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 
+def _condition_suffix(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized[-8:] if normalized else ""
+
+
 @dataclass(frozen=True)
 class ForecastGateDecision:
     eligible: bool
@@ -188,12 +193,16 @@ class P25StateForecastProvider:
         ]
         if not cards:
             return ForecastGateDecision(False, "FORECAST_CARD_MISSING", False)
-        condition_suffix = str(condition_id)[-8:]
-        matching = [
-            card
-            for card in cards
-            if str(card.get("condition_id") or "") == condition_suffix
-        ]
+        condition_suffix = _condition_suffix(condition_id)
+        matching = (
+            [
+                card
+                for card in cards
+                if _condition_suffix(card.get("condition_id")) == condition_suffix
+            ]
+            if condition_suffix
+            else []
+        )
         if not matching:
             return ForecastGateDecision(False, "FORECAST_MARKET_MISMATCH", False)
         card = min(
