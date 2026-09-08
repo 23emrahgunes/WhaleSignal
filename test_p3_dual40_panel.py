@@ -34,6 +34,13 @@ def test_panel_contains_asset_lane_state():
     assert "UP dolum" in script
     assert "DOWN dolum" in script
     assert "<th>Her Bacak</th><th>Limit</th>" in html
+    assert "<th>Market / Aralık</th><th>Açılış</th>" in html
+    assert "marketWindowLabel" in script
+    assert "cycle.market_end_ts_ms" in script
+    assert "cycle.created_at_ms" in script
+    assert "Emir açılışı" in script
+    assert "Market bitişi" in script
+    assert "marketWindowLabel(candidate)" in script
 
 
 def test_operational_panel_hides_diagnostic_logs_by_default():

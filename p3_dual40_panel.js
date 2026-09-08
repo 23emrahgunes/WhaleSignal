@@ -33,6 +33,56 @@
     return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : "—";
   };
 
+  const timestampMs = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+
+  const localTime = (value, includeSeconds = true) => {
+    const parsed = timestampMs(value);
+    if (parsed === null) return "—";
+    return new Intl.DateTimeFormat("tr-TR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      ...(includeSeconds ? { second: "2-digit" } : {}),
+      hour12: false,
+    }).format(new Date(parsed));
+  };
+
+  const fullLocalDateTime = (value) => {
+    const parsed = timestampMs(value);
+    if (parsed === null) return "—";
+    return new Intl.DateTimeFormat("tr-TR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date(parsed));
+  };
+
+  const marketIntervalMinutes = (comboKey) => {
+    const match = String(comboKey || "").match(/:(\d+)m$/i);
+    return match ? Number(match[1]) : 5;
+  };
+
+  const marketWindowLabel = (cycle) => {
+    const asset = String(cycle.asset || cycle.combo_key || "—").split(":", 1)[0];
+    const minutes = marketIntervalMinutes(cycle.combo_key);
+    const endMs = timestampMs(cycle.market_end_ts_ms);
+    if (endMs === null) return `${asset} ${minutes} dk`;
+    const startMs = endMs - (minutes * 60 * 1000);
+    return `${asset} ${minutes} dk · ${localTime(startMs, false)}–${localTime(endMs, false)}`;
+  };
+
+  const shortIdentifier = (value) => {
+    const text = String(value || "");
+    return text.length > 18 ? `${text.slice(0, 9)}…${text.slice(-6)}` : text || "—";
+  };
+
   const pnlClass = (value) => Number(value || 0) >= 0 ? "ok" : "bad";
 
   const cycleStatusLabel = (value) => ({
@@ -191,7 +241,8 @@
         const laneClass = hardStopped ? "bad-lane" : debt > 0 ? "warn-lane" : "";
         const badge = hardStopped ? "HARD STOP" : debt > 0 ? "RECOVERY" : "HAZIR";
         const activeText = active
-          ? `#${active.id} · ${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ + ` +
+          ? `#${active.id} · ${marketWindowLabel(active)} · ` +
+            `${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ + ` +
             `${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ · ` +
             `UP ${number(active.up_filled_shares, 1)}/${number(active.target_shares, 1)} · ` +
             `DN ${number(active.down_filled_shares, 1)}/${number(active.target_shares, 1)}`
@@ -241,12 +292,18 @@
       const limit = `${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢`;
       const rawStatus = String(cycle.status || "AKTİF");
       const orderKind = String(cycle.scope || "PAPER") === "LIVE" ? "Canlı" : "Sanal";
+      const openedAtMs = timestampMs(cycle.orders_posted_at_ms) ?? timestampMs(cycle.created_at_ms);
+      const conditionId = String(cycle.condition_id || "");
       return (
         `<div class="active-row">` +
         `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
         `<div class="active-order">` +
         `<strong title="${escapeHtml(rawStatus)}">${escapeHtml(cycleStatusLabel(rawStatus))}</strong>` +
+        `<span class="active-market" title="Condition: ${escapeHtml(conditionId)}">${escapeHtml(marketWindowLabel(cycle))}</span>` +
         `<span>${orderKind} emir çifti · UP ${target} @ ${limit} · DOWN ${target} @ ${limit}</span>` +
+        `<span class="active-time" title="${escapeHtml(fullLocalDateTime(openedAtMs))}">` +
+        `Emir açılışı ${escapeHtml(localTime(openedAtMs))} · Market bitişi ${escapeHtml(localTime(cycle.market_end_ts_ms))} · ` +
+        `ID ${escapeHtml(shortIdentifier(conditionId))}</span>` +
         `</div>` +
         `<div class="active-fill">` +
         `<span><b>UP dolum</b> ${number(cycle.up_filled_shares, 1)} / ${target}</span>` +
@@ -337,7 +394,9 @@
           : `${number(forecast.p_up_external, 3)} · ${reasonLabel(forecast.reason)}`;
         return (
         `<tr>` +
-        `<td><span class="cell-main">${escapeHtml(candidate.combo_key)}</span></td>` +
+        `<td title="Condition: ${escapeHtml(candidate.condition_id || "")}">` +
+        `<span class="cell-main">${escapeHtml(marketWindowLabel(candidate))}</span>` +
+        `<span class="cell-code">ID ${escapeHtml(shortIdentifier(candidate.condition_id))}</span></td>` +
         `<td class="${candidate.eligible ? "ok" : "bad"}">${candidate.eligible ? "UYGUN" : "BEKLE"}</td>` +
         `<td><span class="cell-main">${escapeHtml(reasonLabel(candidate.reason))}</span><span class="cell-code" title="${escapeHtml(candidate.reason || "")}">${escapeHtml(candidate.reason || "—")}</span></td>` +
         `<td class="mobile-optional">${escapeHtml(candidate.target_shares ?? "—")}</td>` +
@@ -382,12 +441,18 @@
     const node = byId("cycles");
     if (!node) return;
     const cycles = (data.dual40 || {}).cycles || [];
-    node.innerHTML = cycles.map((cycle) => (
+    node.innerHTML = cycles.map((cycle) => {
+      const openedAtMs = timestampMs(cycle.orders_posted_at_ms) ?? timestampMs(cycle.created_at_ms);
+      const conditionId = String(cycle.condition_id || "");
+      return (
       `<tr>` +
       `<td>${escapeHtml(cycle.id)}</td>` +
       `<td>${escapeHtml(cycle.scope)}</td>` +
       `<td>${escapeHtml(cycle.asset || "—")}</td>` +
-      `<td>${escapeHtml(cycle.combo_key)}</td>` +
+      `<td title="Condition: ${escapeHtml(conditionId)}">` +
+      `<span class="cell-main">${escapeHtml(marketWindowLabel(cycle))}</span>` +
+      `<span class="cell-code">ID ${escapeHtml(shortIdentifier(conditionId))}</span></td>` +
+      `<td title="${escapeHtml(fullLocalDateTime(openedAtMs))}">${escapeHtml(localTime(openedAtMs))}</td>` +
       `<td>${escapeHtml(cycle.status)}</td>` +
       `<td>${escapeHtml(cycle.level_index)}</td>` +
       `<td>${number(cycle.target_shares, 1)}</td>` +
@@ -402,7 +467,8 @@
       `<td>${cycle.near_touch_up_41 ? "UP " : ""}${cycle.near_touch_down_41 ? "DN" : ""}</td>` +
       `<td>${escapeHtml(cycle.error_code || "—")}</td>` +
       `</tr>`
-    )).join("");
+      );
+    }).join("");
   };
 
   const render = (data) => {
