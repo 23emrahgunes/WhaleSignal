@@ -249,6 +249,75 @@ def test_paper_fill_price_is_first_recorded_executable_ask(tmp_path):
         conn.close()
 
 
+def test_paper_rechecks_existing_book_rows_when_recv_time_advances(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(conn, now_ms=now_ms)
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        opened_ms = int(cycle["created_at_ms"])
+
+        store = BookSnapshotStore(settings.p26_db_path)
+        try:
+            snapshot = OrderBookSnapshot.from_levels(
+                token_id="up-token",
+                ts_ms=opened_ms - 100,
+                bids=[(0.005, 10.0)],
+                asks=[(0.01, 5.0)],
+            )
+            store.insert(
+                condition_id="paper-condition",
+                combo_key="XRP:5m",
+                side="UP",
+                snapshot=snapshot,
+                recv_ts_ms=opened_ms - 50,
+            )
+            row_id = store.conn.execute(
+                "SELECT id FROM p26_clob_books WHERE condition_id=? AND side='UP'",
+                ("paper-condition",),
+            ).fetchone()[0]
+            store.insert(
+                condition_id="paper-condition",
+                combo_key="XRP:5m",
+                side="UP",
+                snapshot=snapshot,
+                recv_ts_ms=opened_ms + 250,
+            )
+        finally:
+            store.close()
+
+        update_cycle(
+            conn,
+            int(cycle["id"]),
+            details_merge={"paper_last_scanned_up_book_id": int(row_id) + 100},
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, opened_ms + 300)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_WAIT_BOOK"
+        waiting = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert waiting is not None
+        assert waiting["up_filled_shares"] == pytest.approx(5.0)
+        assert waiting["up_fill_price"] == pytest.approx(0.01)
+        assert waiting["details"]["paper_up_fill_evidence"]["book_id"] == row_id
+    finally:
+        conn.close()
+
+
 def test_paper_counts_delayed_touch_sourced_before_market_close(tmp_path):
     settings = _settings(tmp_path)
     engine = ProductionDual40MakerEngine(

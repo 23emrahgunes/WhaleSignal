@@ -72,10 +72,8 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
         side: str,
         now_ms: int,
     ) -> dict[str, Any] | None:  # noqa: ANN001
-        """Find the first executable post-entry ask without replaying old rows."""
+        """Find the first executable ask observed while the virtual order was live."""
         side_value = str(side).upper()
-        details = cycle.get("details") if isinstance(cycle.get("details"), dict) else {}
-        cursor = int(details.get(f"paper_last_scanned_{side_value.lower()}_book_id") or 0)
         opened_ms = int(cycle.get("orders_posted_at_ms") or cycle["created_at_ms"])
         market_end_ms = int(cycle["market_end_ts_ms"])
         if market_end_ms < opened_ms:
@@ -85,7 +83,7 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             SELECT id,condition_id,token_id,side,source_ts_ms,recv_ts_ms,
                    inserted_at_ms,bids_json,asks_json
             FROM p26_clob_books
-            WHERE condition_id=? AND side=? AND id>?
+            WHERE condition_id=? AND side=?
               AND recv_ts_ms>=? AND recv_ts_ms<=?
               AND source_ts_ms<=?
               AND (source_ts_ms>=? OR recv_ts_ms<=?)
@@ -94,7 +92,6 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             (
                 str(cycle["condition_id"]),
                 side_value,
-                cursor,
                 opened_ms,
                 int(now_ms),
                 market_end_ms,
