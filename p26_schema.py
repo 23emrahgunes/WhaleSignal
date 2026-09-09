@@ -13,6 +13,8 @@ from typing import Iterable
 
 
 P26_SCHEMA_VERSION = 1
+P26_SCHEMA_BUSY_RETRIES = 12
+P26_SCHEMA_BUSY_SLEEP_SEC = 2.5
 
 
 DDL = """
@@ -134,18 +136,37 @@ def connect_p26(path: str, *, read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+def _is_busy_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
+
+
+def _run_with_busy_retry(label: str, fn) -> None:
+    for attempt in range(P26_SCHEMA_BUSY_RETRIES + 1):
+        try:
+            fn()
+            return
+        except sqlite3.OperationalError as exc:
+            if not _is_busy_error(exc) or attempt >= P26_SCHEMA_BUSY_RETRIES:
+                raise
+            time.sleep(P26_SCHEMA_BUSY_SLEEP_SEC)
+
+
 def ensure_p26_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(DDL)
+    _run_with_busy_retry("p26 schema ddl", lambda: conn.executescript(DDL))
     now_ms = int(time.time() * 1000)
-    conn.execute(
-        """
-        INSERT INTO p26_meta(key,value,updated_at_ms)
-        VALUES('schema_version',?,?)
-        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms
-        """,
-        (str(P26_SCHEMA_VERSION), now_ms),
+    _run_with_busy_retry(
+        "p26 schema meta",
+        lambda: conn.execute(
+            """
+            INSERT INTO p26_meta(key,value,updated_at_ms)
+            VALUES('schema_version',?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms
+            """,
+            (str(P26_SCHEMA_VERSION), now_ms),
+        ),
     )
-    conn.commit()
+    _run_with_busy_retry("p26 schema commit", conn.commit)
 
 
 def integrity_check(conn: sqlite3.Connection) -> str:

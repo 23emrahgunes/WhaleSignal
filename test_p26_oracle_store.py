@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 
 from p26_oracle_store import OracleTick, OracleTickStore, iter_rtds_ticks
@@ -101,3 +102,51 @@ def test_schema_is_wal_and_integrity_ok(tmp_path):
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         conn.close()
+
+
+def test_schema_retries_transient_sqlite_lock(monkeypatch):
+    sleeps = []
+
+    class LockedThenReady:
+        def __init__(self) -> None:
+            self.ddl_attempts = 0
+            self.meta_attempts = 0
+            self.commits = 0
+
+        def executescript(self, _sql):
+            self.ddl_attempts += 1
+            if self.ddl_attempts < 3:
+                raise sqlite3.OperationalError("database is locked")
+
+        def execute(self, _sql, _params=None):
+            self.meta_attempts += 1
+            return None
+
+        def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr("p26_schema.P26_SCHEMA_BUSY_SLEEP_SEC", 0)
+    monkeypatch.setattr("p26_schema.time.sleep", sleeps.append)
+
+    conn = LockedThenReady()
+    ensure_p26_schema(conn)
+
+    assert conn.ddl_attempts == 3
+    assert conn.meta_attempts == 1
+    assert conn.commits == 1
+    assert sleeps == [0, 0]
+
+
+def test_schema_does_not_retry_non_lock_sqlite_error(monkeypatch):
+    class Broken:
+        def executescript(self, _sql):
+            raise sqlite3.OperationalError("no such collation sequence")
+
+    monkeypatch.setattr("p26_schema.time.sleep", lambda _seconds: None)
+
+    try:
+        ensure_p26_schema(Broken())
+    except sqlite3.OperationalError as exc:
+        assert "no such collation" in str(exc)
+    else:
+        raise AssertionError("expected sqlite operational error")
