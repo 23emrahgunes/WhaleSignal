@@ -62,6 +62,45 @@ def test_oracle_store_dedup_rehydrate_and_lookup(tmp_path):
         store.close()
 
 
+def test_oracle_store_retries_transient_insert_lock(monkeypatch, tmp_path):
+    store = OracleTickStore(str(tmp_path / "p26.sqlite"))
+    sleeps = []
+
+    class LockedInsertConn:
+        def __init__(self) -> None:
+            self.total_changes = 0
+            self.attempts = 0
+            self.rollbacks = 0
+
+        def executemany(self, _sql, rows):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise sqlite3.OperationalError("database is locked")
+            self.total_changes += len(rows)
+
+        def commit(self):
+            return None
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            return None
+
+    fake = LockedInsertConn()
+    try:
+        store.conn = fake
+        monkeypatch.setattr("p26_oracle_store.ORACLE_INSERT_BUSY_SLEEP_SEC", 0)
+        monkeypatch.setattr("p26_oracle_store.time.sleep", sleeps.append)
+
+        assert store.insert_many([_tick("BTC", 1000), _tick("ETH", 1000)]) == 2
+        assert fake.attempts == 3
+        assert fake.rollbacks == 2
+        assert sleeps == [0, 0]
+    finally:
+        store.close()
+
+
 def test_prune_preserves_tick_referenced_by_canonical_row(tmp_path):
     path = str(tmp_path / "p26.sqlite")
     store = OracleTickStore(path)

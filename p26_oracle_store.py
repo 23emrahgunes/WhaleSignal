@@ -14,6 +14,13 @@ from p26_schema import connect_p26, ensure_p26_schema
 
 ORACLE_SOURCE = "POLYMARKET_RTDS_CHAINLINK"
 ORACLE_SCHEMA_VERSION = "P26_ORACLE_TICK_V1"
+ORACLE_INSERT_BUSY_RETRIES = 12
+ORACLE_INSERT_BUSY_SLEEP_SEC = 2.5
+
+
+def _is_busy_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
 
 
 def _canonical_json(payload: dict) -> bytes:
@@ -110,19 +117,31 @@ class OracleTickStore:
         rows = list(ticks)
         if not rows:
             return 0
-        before = self.conn.total_changes
-        now_ms = int(time.time() * 1000)
-        self.conn.executemany(
-            """
-            INSERT OR IGNORE INTO p26_oracle_ticks(
-                asset,source,value_text,value_real,source_ts_ms,recv_ts_ms,
-                payload_sha256,schema_version,inserted_at_ms
-            ) VALUES (?,?,?,?,?,?,?,?,?)
-            """,
-            [tick.as_insert_tuple(now_ms) for tick in rows],
-        )
-        self.conn.commit()
-        return self.conn.total_changes - before
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(ORACLE_INSERT_BUSY_RETRIES + 1):
+            before = self.conn.total_changes
+            now_ms = int(time.time() * 1000)
+            try:
+                self.conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO p26_oracle_ticks(
+                        asset,source,value_text,value_real,source_ts_ms,recv_ts_ms,
+                        payload_sha256,schema_version,inserted_at_ms
+                    ) VALUES (?,?,?,?,?,?,?,?,?)
+                    """,
+                    [tick.as_insert_tuple(now_ms) for tick in rows],
+                )
+                self.conn.commit()
+                return self.conn.total_changes - before
+            except sqlite3.OperationalError as exc:
+                self.conn.rollback()
+                if not _is_busy_error(exc) or attempt >= ORACLE_INSERT_BUSY_RETRIES:
+                    raise
+                last_error = exc
+                time.sleep(ORACLE_INSERT_BUSY_SLEEP_SEC)
+        if last_error is not None:
+            raise last_error
+        return 0
 
     def insert(self, tick: OracleTick) -> bool:
         return self.insert_many([tick]) == 1
