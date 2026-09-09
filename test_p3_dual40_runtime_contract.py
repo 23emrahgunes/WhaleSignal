@@ -675,6 +675,61 @@ def test_finalize_uses_current_loss_pool_when_cycle_was_opened_from_stale_state(
         conn.close()
 
 
+def test_paper_hard_stop_terminal_loss_starts_new_base_series(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(conn, cycle_id, level_index=2, loss_pool_before_usdc=20.0)
+        cycle = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert cycle is not None
+
+        result = engine._apply_ladder_and_finalize(
+            conn,
+            cycle=cycle,
+            status="RESOLVED_DOWN",
+            pnl=-12.0,
+            official_result="DOWN",
+        )
+
+        assert result["ladder"]["hard_stopped"] is True
+        assert result["ladder"]["state_hard_stopped"] is False
+        recovery = ladder_state(conn, "PAPER", "XRP")
+        assert recovery["hard_stopped"] == 0
+        assert recovery["level_index"] == 0
+        assert recovery["loss_pool_usdc"] == pytest.approx(0.0)
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["loss_pool_after_usdc"] == pytest.approx(0.0)
+        assert settled["details"]["paper_hard_stop_action"] == (
+            "RESET_TO_BASE_NEXT_SERIES"
+        )
+        assert settled["details"]["paper_unrecovered_loss_pool_usdc"] > 0
+    finally:
+        conn.close()
+
+
 def test_paper_touch_before_cycle_open_does_not_fill_virtual_orders(tmp_path):
     settings = _settings(tmp_path)
     engine = ProductionDual40MakerEngine(

@@ -270,7 +270,7 @@ def test_recovery_state_is_asset_scoped(tmp_path):
         conn.close()
 
 
-def test_hard_stop_is_asset_scoped(tmp_path):
+def test_paper_hard_stop_resets_to_base_and_reopens_next_series(tmp_path):
     engine = _engine(tmp_path)
     conn = connect_dual40(engine.settings.p3_db_path)
     try:
@@ -290,8 +290,57 @@ def test_hard_stop_is_asset_scoped(tmp_path):
     conn = connect_dual40(engine.settings.p3_db_path)
     try:
         active_assets = {cycle["asset"] for cycle in active_cycles(conn, scope="PAPER")}
-        assert active_assets == {"ETH", "SOL", "XRP"}
-        assert ladder_state(conn, "PAPER", "BTC")["hard_stopped"] == 1
+        assert active_assets == set(ASSETS)
+        btc_state = ladder_state(conn, "PAPER", "BTC")
+        assert btc_state["hard_stopped"] == 0
+        assert btc_state["level_index"] == 0
+        assert btc_state["loss_pool_usdc"] == 0.0
+        btc_cycle = active_cycle(conn, scope="PAPER", asset="BTC")
+        assert btc_cycle is not None
+        assert btc_cycle["target_shares"] == 5.0
+    finally:
+        conn.close()
+
+
+def test_live_hard_stop_remains_locked(tmp_path):
+    settings = _settings(
+        tmp_path,
+        live_feature_enabled=True,
+        live_auto_execute_enabled=True,
+        web_auth_required=True,
+        web_password="very-safe-test-password",
+    )
+    _seed_p26(settings.p26_db_path)
+    state = LiveState(live_feature_enabled=True, auto_execute_enabled=True)
+    state.arm({"ok": True, "checked_at_ms": int(time.time() * 1000)})
+    gateway = _FakeGateway()
+    gateway.posted = []
+    engine = Dual40MakerEngine(settings, state, gateway_factory=lambda _: gateway)
+    engine._fresh_preflight = lambda: True
+    now = time.monotonic()
+    for asset in ASSETS:
+        engine._gate_since[f"LIVE:{asset}:cond-{asset.lower()}"] = now - 2.0
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        set_ladder_state(
+            conn,
+            scope="LIVE",
+            asset="BTC",
+            level_index=2,
+            loss_pool_usdc=18.0,
+            hard_stopped=True,
+            hard_stop_reason="HARD_STOP_MAX_30_CANNOT_RECOVER",
+        )
+    finally:
+        conn.close()
+
+    engine.tick()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        assert active_cycle(conn, scope="LIVE", asset="BTC") is None
+        assert ladder_state(conn, "LIVE", "BTC")["hard_stopped"] == 1
+        assert len(gateway.posted) == 1
+        assert gateway.posted[0]["up_token_id"] != "btc-up"
     finally:
         conn.close()
 

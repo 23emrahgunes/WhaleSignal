@@ -1291,6 +1291,21 @@ class Dual40MakerEngine:
             loss_pool_before=before,
             cycle_pnl=float(pnl),
         )
+        state_level_index = transition.level_index
+        state_loss_pool = transition.loss_pool
+        state_hard_stopped = transition.hard_stopped
+        state_hard_stop_reason = transition.reason if transition.hard_stopped else None
+        settlement_extra: dict[str, Any] = {}
+        if scope == "PAPER" and transition.hard_stopped:
+            state_level_index = 0
+            state_loss_pool = 0.0
+            state_hard_stopped = False
+            state_hard_stop_reason = None
+            settlement_extra = {
+                "paper_hard_stop_action": "RESET_TO_BASE_NEXT_SERIES",
+                "paper_unrecovered_loss_pool_usdc": round(transition.loss_pool, 6),
+                "paper_hard_stop_reason": transition.reason,
+            }
         terminal_decision = "NO_FILL" if status == "NO_FILL" else "SETTLED"
         prior_gate = cycle.get("gate") if isinstance(cycle.get("gate"), dict) else {}
         settled_gate = {
@@ -1308,6 +1323,7 @@ class Dual40MakerEngine:
                 "pnl_usdc": round(float(pnl), 6),
                 "official_result": official_result,
                 "ladder_transition": transition.to_dict(),
+                **settlement_extra,
             },
         }
         owns_transaction = not conn.in_transaction
@@ -1318,10 +1334,10 @@ class Dual40MakerEngine:
                 conn,
                 scope=scope,
                 asset=asset,
-                level_index=transition.level_index,
-                loss_pool_usdc=transition.loss_pool,
-                hard_stopped=transition.hard_stopped,
-                hard_stop_reason=(transition.reason if transition.hard_stopped else None),
+                level_index=state_level_index,
+                loss_pool_usdc=state_loss_pool,
+                hard_stopped=state_hard_stopped,
+                hard_stop_reason=state_hard_stop_reason,
                 last_cycle_id=int(cycle["id"]),
                 commit=False,
             )
@@ -1331,11 +1347,12 @@ class Dual40MakerEngine:
                 status=status,
                 official_result=official_result,
                 realized_pnl_usdc=round(float(pnl), 6),
-                loss_pool_after_usdc=transition.loss_pool,
+                loss_pool_after_usdc=state_loss_pool,
                 merge_tx_hash=merge_tx_hash,
                 resolved_at_ms=int(time.time() * 1000),
                 details_merge={
                     "ladder_transition": transition.to_dict(),
+                    **settlement_extra,
                     **(details or {}),
                 },
                 commit=False,
@@ -1372,16 +1389,21 @@ class Dual40MakerEngine:
             cycle["combo_key"],
             status,
             pnl,
-            transition.loss_pool,
-            transition.target_shares,
-            transition.hard_stopped,
+            state_loss_pool,
+            float(self.policy.ladder[state_level_index]),
+            state_hard_stopped,
         )
         return {
             "status": status,
             "asset": asset,
             "cycle_id": cycle["id"],
             "pnl_usdc": round(float(pnl), 6),
-            "ladder": transition.to_dict(),
+            "ladder": {
+                **transition.to_dict(),
+                "state_level_index": state_level_index,
+                "state_loss_pool": round(state_loss_pool, 6),
+                "state_hard_stopped": state_hard_stopped,
+            },
         }
 
     def _paper_tick(self, conn, p26, cycle: dict[str, Any], now_ms: int) -> dict[str, Any]:  # noqa: ANN001
@@ -1883,6 +1905,20 @@ class Dual40MakerEngine:
 
             configured_assets = tuple(asset for asset in self.settings.dual40_assets() if asset in DUAL40_ASSETS)
             state_by_asset = {asset: ladder_state(conn, scope, asset) for asset in configured_assets}
+            if scope == "PAPER":
+                for asset, state_row in list(state_by_asset.items()):
+                    if bool(state_row["hard_stopped"]):
+                        set_ladder_state(
+                            conn,
+                            scope=scope,
+                            asset=asset,
+                            level_index=0,
+                            loss_pool_usdc=0.0,
+                            hard_stopped=False,
+                            hard_stop_reason=None,
+                            commit=True,
+                        )
+                        state_by_asset[asset] = ladder_state(conn, scope, asset)
             active = active_cycles(conn, scope=scope)
             active_by_asset = {str(cycle.get("asset") or asset_from_combo_key(str(cycle["combo_key"]))): cycle for cycle in active}
             ready = self._scan(
