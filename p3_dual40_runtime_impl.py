@@ -741,7 +741,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
                     "paper_waits_for_official_result": False,
                     "paper_settlement_grace_ms": 2000,
-                    "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
+                    "paper_entry_profile": "RELAXED_LIMIT_NO_PRICE_REGIME_NO_CONFIRM_NO_CROSS_REJECT",
                     "paper_repeated_snapshot_reuse": False,
                     "near_touch_41_diagnostic_only": True,
                     "entry": "PAPER_RELAXED_LIMIT",

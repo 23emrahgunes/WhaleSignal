@@ -7,6 +7,7 @@ import time
 import pytest
 
 from p3_config import DUAL40_MODE, P3Settings
+from p3_dual40_core import RegimeDecision
 from p3_dual40_engine import Dual40MakerEngine
 from p3_dual40_store import (
     active_cycle,
@@ -358,6 +359,104 @@ def test_paper_entry_does_not_wait_for_confirmation(tmp_path):
         for asset, value in result["assets"].items()
         if value["status"] == "PAPER_OPENED"
     } == set(ASSETS)
+
+
+@pytest.mark.parametrize("research_reason", ["MID_RANGE_TOO_WIDE", "NET_DRIFT_TOO_HIGH"])
+def test_paper_price_history_rejections_are_diagnostic_only(
+    tmp_path,
+    monkeypatch,
+    research_reason,
+):
+    engine = _engine(tmp_path)
+
+    def rejected_regime(**_kwargs):
+        return RegimeDecision(
+            eligible=False,
+            reason=research_reason,
+            score=0.0,
+            up_mid=0.70,
+            down_mid=0.30,
+            mid_range=0.30,
+            net_drift=0.20,
+            slope_per_sec=0.02,
+            one_way_ratio=1.0,
+            max_jump=0.10,
+            complement_residual=0.0,
+            history_span_sec=20.0,
+        )
+
+    monkeypatch.setattr(
+        "p3_dual40_engine.evaluate_balanced_regime",
+        rejected_regime,
+    )
+    result = engine.tick()
+
+    assert {
+        asset
+        for asset, value in result["assets"].items()
+        if value["status"] == "PAPER_OPENED"
+    } == set(ASSETS)
+    conn = connect_dual40(engine.settings.p3_db_path)
+    try:
+        decisions = market_decisions(conn, scope="PAPER")
+        assert all(item["reason"] == "PAPER_RELAXED_LIMIT_READY" for item in decisions)
+        assert all(
+            item["final_gate"]["base_gate"]["research_reason"] == research_reason
+            for item in decisions
+        )
+        assert all(
+            item["final_gate"]["base_gate"]["reason"]
+            == "PAPER_RELAXED_LIMIT_READY"
+            for item in decisions
+        )
+    finally:
+        conn.close()
+
+
+def test_live_keeps_price_history_regime_rejections(tmp_path, monkeypatch):
+    settings = _settings(
+        tmp_path,
+        live_feature_enabled=True,
+        live_auto_execute_enabled=True,
+        web_auth_required=True,
+        web_password="very-safe-test-password",
+    )
+    _seed_p26(settings.p26_db_path)
+    state = LiveState(live_feature_enabled=True, auto_execute_enabled=True)
+    state.arm({"ok": True, "checked_at_ms": int(time.time() * 1000)})
+    gateway = _FakeGateway()
+    gateway.posted = []
+    engine = Dual40MakerEngine(settings, state, gateway_factory=lambda _: gateway)
+    engine._fresh_preflight = lambda: True
+
+    monkeypatch.setattr(
+        "p3_dual40_engine.evaluate_balanced_regime",
+        lambda **_kwargs: RegimeDecision(
+            eligible=False,
+            reason="MID_RANGE_TOO_WIDE",
+            score=0.0,
+            up_mid=0.70,
+            down_mid=0.30,
+            mid_range=0.30,
+            net_drift=0.20,
+            slope_per_sec=0.02,
+            one_way_ratio=1.0,
+            max_jump=0.10,
+            complement_residual=0.0,
+            history_span_sec=20.0,
+        ),
+    )
+    engine.tick()
+
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        assert active_cycles(conn, scope="LIVE") == []
+        assert gateway.posted == []
+        assert {
+            item["reason"] for item in market_decisions(conn, scope="LIVE")
+        } == {"MID_RANGE_TOO_WIDE"}
+    finally:
+        conn.close()
 
 
 def test_paper_marketable_limit_fills_entry_side_immediately(tmp_path):

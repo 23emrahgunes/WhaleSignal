@@ -49,7 +49,8 @@ def test_panel_contains_asset_lane_state():
     assert "dokunuş ${localTime(atMs)}" in script
     assert "Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}" in script
     assert "Ask ${number(upAsk)} / ${number(downAsk)}" in script
-    assert "resmi sonuç beklenmeden 40¢ maliyeti zarar yazılır" in script
+    assert "Fiyat-geçmişi rejim kontrolleri girişe engel değildir" in script
+    assert "market sonunda eşleşmeyen 40¢ maliyeti zarar yazılır" in script
     assert "PAPER_SINGLE_LEG_LOSS" in script
     assert '? "Gerekmez"' in script
     assert "Son değerlendirme" in script

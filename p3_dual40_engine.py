@@ -2,8 +2,9 @@
 
 PAPER lanes are independent for BTC/ETH/SOL/XRP and simulate ordinary 40-cent
 limits without the balanced-mid, confirmation or post-only-cross entry controls.
-Opening-window and read-only forecast gates remain observable in SHADOW. LIVE keeps
-balanced, confirmed, post-only semantics and defaults to one concurrent asset.
+Price-history, opening-window and read-only forecast gates remain observable in
+SHADOW. PAPER price-history regime checks do not block entry. LIVE keeps balanced,
+confirmed, post-only semantics and defaults to one concurrent asset.
 At PAPER market expiry, unmatched virtual exposure is booked directly as a loss;
 the official outcome is never required for PAPER settlement.
 """
@@ -596,6 +597,7 @@ class Dual40MakerEngine:
                 else "LIVE_BALANCED_POST_ONLY"
             ),
             "balanced_mid_gate_enabled": str(scope).upper() != "PAPER",
+            "price_history_regime_gate_enabled": str(scope).upper() != "PAPER",
             "post_only_cross_gate_enabled": str(scope).upper() != "PAPER",
             "confirmation_required_sec": (
                 0.0
@@ -685,6 +687,27 @@ class Dual40MakerEngine:
             require_balanced_mid=str(scope).upper() != "PAPER",
             require_post_only_safe=str(scope).upper() != "PAPER",
         )
+        gate_payload = gate.to_dict()
+        if str(scope).upper() == "PAPER":
+            base["research_regime_gate"] = gate_payload
+            if market_age + 1e-9 < self.policy.min_market_age_sec:
+                paper_ready = False
+                paper_reason = "MARKET_WARMUP"
+            elif tte + 1e-9 < self.policy.min_tte_sec:
+                paper_ready = False
+                paper_reason = "TTE_TOO_LOW"
+            else:
+                paper_ready = True
+                paper_reason = "PAPER_RELAXED_LIMIT_READY"
+            gate_payload = {
+                **gate_payload,
+                "eligible": paper_ready,
+                "reason": paper_reason,
+                "up_mid": gate_payload.get("up_mid") or float(up["mid"]),
+                "down_mid": gate_payload.get("down_mid") or float(down["mid"]),
+                "research_eligible": bool(gate.eligible),
+                "research_reason": str(gate.reason),
+            }
         opening_up = self._opening_history(
             p26,
             condition_id=condition,
@@ -718,7 +741,7 @@ class Dual40MakerEngine:
         base["opening_history_points_down"] = len(opening_down)
         return self._compose_candidate_gates(
             base=base,
-            base_gate=gate.to_dict(),
+            base_gate=gate_payload,
             opening_gate=opening,
             forecast_gate=forecast,
             risk_gate=risk,
@@ -1910,7 +1933,7 @@ class Dual40MakerEngine:
                     "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
                     "paper_waits_for_official_result": False,
                     "paper_settlement_grace_ms": 2000,
-                    "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
+                    "paper_entry_profile": "RELAXED_LIMIT_NO_PRICE_REGIME_NO_CONFIRM_NO_CROSS_REJECT",
                     "near_touch_41_diagnostic_only": True,
                     "entry": "PAPER_RELAXED_LIMIT",
                     "paper_entry": "RELAXED_LIMIT",

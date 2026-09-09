@@ -172,6 +172,7 @@
     FORECAST_NEUTRAL: "Tahmin nötr",
     FORECAST_RESEARCH_ONLY: "Araştırma tahmini yalnız SHADOW kullanımına açık",
     PAPER_ENTRY_REGIME_ACCEPTED: "PAPER giriş kontrolleri geçti",
+    PAPER_RELAXED_LIMIT_READY: "PAPER limit girişi hazır",
     REJECTED_STRONG_DIRECTIONAL_ALPHA: "Güçlü yönlü tahmin nedeniyle reddedildi",
     FEATURE_CONFLICT: "Tahmin bileşenleri çelişiyor",
     INSUFFICIENT_DATA: "Tahmin için veri yetersiz",
@@ -283,7 +284,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> Ask 40¢ ya da altındaysa o taraf tam dolu sayılır. Market sonunda karşı bacak dolmamışsa resmi sonuç beklenmeden 40¢ maliyeti zarar yazılır ve recovery ilerler.";
+        : "<b>DRY / PAPER.</b> Fiyat-geçmişi rejim kontrolleri girişe engel değildir. Ask 40¢ ya da altındaysa o taraf tam dolu sayılır; market sonunda eşleşmeyen 40¢ maliyeti zarar yazılır.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }
