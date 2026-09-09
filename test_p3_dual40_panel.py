@@ -56,6 +56,10 @@ def test_panel_contains_asset_lane_state():
     assert "Son değerlendirme" in script
     assert "girişi ${forecastMode === \"ENFORCE\" ? \"etkiler\" : \"engellemez\"}" in script
     assert "<th>Basamak</th>" in html
+    assert "Asset Bazlı PnL" in script
+    assert "asset-pnl-grid" in html
+    assert "asset-pnl-row" in script
+    assert "EV $" in script
 
 
 def test_operational_panel_hides_diagnostic_logs_by_default():

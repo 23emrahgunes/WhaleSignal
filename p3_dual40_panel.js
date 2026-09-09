@@ -352,8 +352,25 @@
     const performance = dual.performance || {};
     const paper = performance.PAPER || {};
     const live = performance.LIVE || {};
+    const byAsset = dual.by_asset || {};
     const node = byId("performance");
     if (!node) return;
+
+    const assetRows = ["BTC", "ETH", "SOL", "XRP"].map((asset) => {
+      const assetPaper = ((byAsset[asset] || {}).performance || {}).PAPER || byAsset[asset] || {};
+      const pnl = Number(assetPaper.realized_pnl_usdc || 0);
+      const settled = Number(assetPaper.settled || 0);
+      const ev = settled > 0 ? assetPaper.ev_per_settled_usdc : null;
+      return (
+        `<div class="asset-pnl-row">` +
+        `<b>${asset}</b>` +
+        `<span class="${pnlClass(pnl)}">$${number(pnl)}</span>` +
+        `<span>${assetPaper.wins ?? 0}/${assetPaper.losses ?? 0} W/L</span>` +
+        `<span>${settled} settled</span>` +
+        `<span class="${pnlClass(ev)}">EV $${number(ev)}</span>` +
+        `</div>`
+      );
+    }).join("");
 
     node.innerHTML =
       metric(`$${number(paper.realized_pnl_usdc)}`, "Gerçekleşen PnL", pnlClass(paper.realized_pnl_usdc)) +
@@ -362,7 +379,11 @@
       metric(percent(paper.single_leg_rate), "Tek bacak riski", Number(paper.single_leg_rate || 0) > 0 ? "warn" : "ok") +
       metric(`$${number(paper.max_drawdown_usdc)}`, "Maksimum düşüş", Number(paper.max_drawdown_usdc || 0) > 0 ? "warn" : "ok") +
       metric(`${number(paper.average_recovery_duration_sec, 1)} sn`, `${paper.recovery_cycles ?? 0} recovery cycle`) +
-      metric(`$${number(live.realized_pnl_usdc)}`, `LIVE PnL · ${live.cycles ?? 0} cycle`, pnlClass(live.realized_pnl_usdc));
+      metric(`$${number(live.realized_pnl_usdc)}`, `LIVE PnL · ${live.cycles ?? 0} cycle`, pnlClass(live.realized_pnl_usdc)) +
+      `<div class="asset-pnl-panel">` +
+      `<div class="asset-pnl-title">Asset Bazlı PnL</div>` +
+      `<div class="asset-pnl-grid">${assetRows}</div>` +
+      `</div>`;
   };
 
   const renderActiveCycle = (data) => {
