@@ -701,17 +701,14 @@ class Dual40MakerEngine:
         gate_payload = gate.to_dict()
         if str(scope).upper() == "PAPER":
             base["research_regime_gate"] = gate_payload
-            if market_age + 1e-9 < self.policy.min_market_age_sec:
+            if market_age - 1e-9 > float(self.settings.dual40_paper_entry_window_sec):
                 paper_ready = False
-                paper_reason = "MARKET_WARMUP"
-            elif tte + 1e-9 < self.policy.min_tte_sec:
-                paper_ready = False
-                paper_reason = "TTE_TOO_LOW"
+                paper_reason = "PAPER_ENTRY_WINDOW_EXPIRED"
             elif min(float(up["best_ask"]), float(down["best_ask"])) + 1e-12 < float(
                 self.settings.dual40_paper_min_entry_ask
             ):
                 paper_ready = False
-                paper_reason = "PAPER_ENTRY_ASK_TOO_LOW"
+                paper_reason = "PAPER_PTB_TOO_FAR"
             else:
                 paper_ready = True
                 paper_reason = "PAPER_RELAXED_LIMIT_READY"
@@ -722,6 +719,7 @@ class Dual40MakerEngine:
                 "up_mid": gate_payload.get("up_mid") or float(up["mid"]),
                 "down_mid": gate_payload.get("down_mid") or float(down["mid"]),
                 "paper_min_entry_ask": float(self.settings.dual40_paper_min_entry_ask),
+                "paper_entry_window_sec": float(self.settings.dual40_paper_entry_window_sec),
                 "research_eligible": bool(gate.eligible),
                 "research_reason": str(gate.reason),
             }
@@ -781,6 +779,7 @@ class Dual40MakerEngine:
             "REGIME_HISTORY_INSUFFICIENT",
             "MARKET_WARMUP",
             "PAPER_ENTRY_ASK_TOO_LOW",
+            "PAPER_PTB_TOO_FAR",
             "WAITING_OPENING_WINDOW",
             "OPENING_HISTORY_INSUFFICIENT",
         }:

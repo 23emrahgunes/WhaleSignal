@@ -160,6 +160,8 @@
     TTE_TOO_LOW: "Giriş için süre çok az",
     MARKET_WARMUP: "Market başlangıç verisi birikiyor",
     PAPER_ENTRY_ASK_TOO_LOW: "Fiyat PTB'den uzak, bekleniyor",
+    PAPER_PTB_TOO_FAR: "Fiyat PTB'den uzak, bekleniyor",
+    PAPER_ENTRY_WINDOW_EXPIRED: "İlk 5 sn giriş penceresi kaçtı",
     REGIME_HISTORY_INSUFFICIENT: "Rejim geçmişi yetersiz",
     WAITING_OPENING_WINDOW: "Açılış penceresi bekleniyor",
     OPENING_HISTORY_INSUFFICIENT: "Açılış geçmişi yetersiz",
