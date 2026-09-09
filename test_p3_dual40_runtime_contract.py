@@ -16,6 +16,7 @@ from p3_dual40_store import (
     create_cycle,
     cycle_for_condition,
     ladder_state,
+    set_ladder_state,
     update_cycle,
 )
 from p3_live_state import LiveState
@@ -610,6 +611,66 @@ def test_official_result_uses_p26_slug_when_condition_filter_lags(
         assert settled["details"]["official_result_source"].startswith(
             "event_slug:"
         )
+    finally:
+        conn.close()
+
+
+def test_finalize_uses_current_loss_pool_when_cycle_was_opened_from_stale_state(
+    tmp_path,
+):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        set_ladder_state(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            level_index=1,
+            loss_pool_usdc=0.95,
+            hard_stopped=False,
+            hard_stop_reason=None,
+        )
+        cycle = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert cycle is not None
+        assert cycle["loss_pool_before_usdc"] == pytest.approx(0.0)
+
+        result = engine._apply_ladder_and_finalize(
+            conn,
+            cycle=cycle,
+            status="RESOLVED_UP",
+            pnl=-0.50,
+            official_result="UP",
+        )
+
+        assert result["status"] == "RESOLVED_UP"
+        recovery = ladder_state(conn, "PAPER", "XRP")
+        assert recovery["loss_pool_usdc"] == pytest.approx(1.45)
+        assert recovery["level_index"] == 1
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["loss_pool_after_usdc"] == pytest.approx(1.45)
     finally:
         conn.close()
 

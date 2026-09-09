@@ -1281,7 +1281,11 @@ class Dual40MakerEngine:
     ) -> dict[str, Any]:  # noqa: ANN001
         scope = str(cycle["scope"])
         asset = str(cycle.get("asset") or asset_from_combo_key(str(cycle["combo_key"])))
-        before = float(cycle["loss_pool_before_usdc"])
+        current_state = ladder_state(conn, scope, asset)
+        before = max(
+            float(cycle["loss_pool_before_usdc"]),
+            float(current_state["loss_pool_usdc"]),
+        )
         transition = next_ladder_state(
             policy=self.policy,
             loss_pool_before=before,
