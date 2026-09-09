@@ -1841,16 +1841,37 @@ class Dual40MakerEngine:
         try:
             official, source = self._fetch_official_result(cycle)
         except Exception as exc:  # noqa: BLE001
+            update_cycle(
+                conn,
+                int(cycle["id"]),
+                details_merge={
+                    "last_resolution_attempt_ms": int(now_ms),
+                    "last_resolution_error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc)[:240],
+                    },
+                },
+            )
             return {
                 "status": "WAIT_RESOLUTION",
                 "cycle_id": cycle["id"],
                 "resolution_error": type(exc).__name__,
             }
         if official not in {"UP", "DOWN"}:
+            details = cycle.get("details") if isinstance(cycle.get("details"), dict) else {}
+            attempts = int(details.get("resolution_attempts") or 0) + 1
             update_cycle(
                 conn,
                 int(cycle["id"]),
-                details_merge={"last_resolution_source": source},
+                details_merge={
+                    "last_resolution_attempt_ms": int(now_ms),
+                    "last_resolution_source": source,
+                    "resolution_attempts": attempts,
+                    "resolution_wait_age_sec": round(
+                        max(0, int(now_ms) - int(cycle["market_end_ts_ms"])) / 1000.0,
+                        3,
+                    ),
+                },
             )
             return {"status": "WAIT_RESOLUTION", "cycle_id": cycle["id"], "source": source}
 

@@ -131,6 +131,25 @@
     return `${Math.round(Number(fillPrice) * 100)}¢ dolum${time}`;
   };
 
+  const resolutionInfoLabel = (cycle) => {
+    if (String(cycle.status || "") !== "WAIT_RESOLUTION") return "";
+    const details = cycle.details || {};
+    const endMs = timestampMs(cycle.market_end_ts_ms);
+    const ageSec = endMs === null ? null : Math.max(0, Math.round((Date.now() - endMs) / 1000));
+    const ageText = ageSec === null
+      ? ""
+      : ageSec >= 3600
+        ? `${number(ageSec / 3600, 1)} sa geçti`
+        : ageSec >= 60
+          ? `${number(ageSec / 60, 1)} dk geçti`
+          : `${ageSec} sn geçti`;
+    const source = details.last_resolution_source ? `kaynak ${details.last_resolution_source}` : "";
+    const error = details.last_resolution_error
+      ? `hata ${details.last_resolution_error.type || details.last_resolution_error}`
+      : "";
+    return [ageText, source, error].filter(Boolean).join(" · ");
+  };
+
   const REASON_LABELS = {
     PASS: "Kontroller geçti",
     MODEL_ARTIFACT_NOT_READY: "Model bekleniyor",
@@ -404,12 +423,14 @@
       const conditionId = String(cycle.condition_id || "");
       const upEvidence = fillEvidenceLabel(cycle, "UP");
       const downEvidence = fillEvidenceLabel(cycle, "DOWN");
+      const resolutionInfo = resolutionInfoLabel(cycle);
       return (
         `<div class="active-row">` +
         `<b>${escapeHtml(cycle.asset || cycle.combo_key || "—")}</b>` +
         `<div class="active-order">` +
         `<strong title="${escapeHtml(rawStatus)}">${escapeHtml(fillStatusLabel(cycle))}</strong>` +
         `<span>${escapeHtml(cycleStatusLabel(rawStatus))} · ${escapeHtml(ladderStepLabel(cycle.level_index, cycle.target_shares))}</span>` +
+        `${resolutionInfo ? `<span class="warn">${escapeHtml(resolutionInfo)}</span>` : ""}` +
         `<span class="active-market" title="Condition: ${escapeHtml(conditionId)}">${escapeHtml(marketWindowLabel(cycle))}</span>` +
         `<span>${orderKind} emir çifti · UP ${target} @ ${limit} · DOWN ${target} @ ${limit}</span>` +
         `<span class="active-time" title="${escapeHtml(fullLocalDateTime(openedAtMs))}">` +
@@ -586,7 +607,7 @@
       `<span class="cell-main">${escapeHtml(marketWindowLabel(cycle))}</span>` +
       `<span class="cell-code">ID ${escapeHtml(shortIdentifier(conditionId))}</span></td>` +
       `<td title="${escapeHtml(fullLocalDateTime(openedAtMs))}">${escapeHtml(localTime(openedAtMs))}</td>` +
-      `<td><span class="cell-main">${escapeHtml(cycleStatusLabel(cycle.status))}</span><span class="cell-code">${escapeHtml(cycle.status)}</span></td>` +
+      `<td><span class="cell-main">${escapeHtml(cycleStatusLabel(cycle.status))}</span><span class="cell-code">${escapeHtml(resolutionInfoLabel(cycle) || cycle.status)}</span></td>` +
       `<td>${escapeHtml(ladderStepLabel(cycle.level_index, cycle.target_shares))}</td>` +
       `<td>${number(cycle.target_shares, 1)}</td>` +
       `<td>${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢</td>` +

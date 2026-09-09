@@ -567,6 +567,98 @@ def test_paper_wait_resolution_advances_ladder_only_after_actual_loss(
         conn.close()
 
 
+def test_wait_resolution_records_unresolved_source(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            down_filled_shares=5.0,
+            down_fill_price=0.25,
+            residual_side="DOWN",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        monkeypatch.setattr(
+            engine,
+            "_fetch_official_result",
+            lambda _cycle: (None, "CONDITION_NOT_FOUND"),
+        )
+
+        result = engine._resolution_tick(conn, cycle, now_ms)
+
+        assert result["status"] == "WAIT_RESOLUTION"
+        waiting = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert waiting is not None
+        assert waiting["details"]["last_resolution_source"] == "CONDITION_NOT_FOUND"
+        assert waiting["details"]["last_resolution_attempt_ms"] == now_ms
+        assert waiting["details"]["resolution_attempts"] == 1
+        assert waiting["details"]["resolution_wait_age_sec"] == pytest.approx(3.0)
+    finally:
+        conn.close()
+
+
+def test_wait_resolution_records_fetch_error(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            1,
+            down_filled_shares=5.0,
+            down_fill_price=0.25,
+            residual_side="DOWN",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        def broken(_cycle):
+            raise TimeoutError("gamma timed out")
+
+        monkeypatch.setattr(engine, "_fetch_official_result", broken)
+
+        result = engine._resolution_tick(conn, cycle, now_ms)
+
+        assert result["status"] == "WAIT_RESOLUTION"
+        waiting = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert waiting is not None
+        assert waiting["details"]["last_resolution_error"]["type"] == "TimeoutError"
+        assert waiting["details"]["last_resolution_attempt_ms"] == now_ms
+    finally:
+        conn.close()
+
+
 def test_official_result_uses_p26_slug_when_condition_filter_lags(
     tmp_path,
     monkeypatch,
