@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 
@@ -492,6 +493,123 @@ def test_paper_wait_resolution_advances_ladder_only_after_actual_loss(
         recovery = ladder_state(conn, "PAPER", "XRP")
         assert recovery["level_index"] == 1
         assert recovery["loss_pool_usdc"] == pytest.approx(1.25)
+    finally:
+        conn.close()
+
+
+def test_official_result_uses_p26_slug_when_condition_filter_lags(
+    tmp_path,
+    monkeypatch,
+):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            down_filled_shares=5.0,
+            down_fill_price=0.25,
+            residual_side="DOWN",
+            residual_shares=5.0,
+        )
+        p26 = sqlite3.connect(settings.p26_db_path)
+        try:
+            p26.execute(
+                """
+                INSERT INTO p26_canonical_rows(
+                    condition_id,market_id,slug,combo_key,asset,horizon,
+                    market_start_ts_ms,market_end_ts_ms,checkpoint_sec,
+                    nominal_target_ts_ms,decision_ts_ms,capture_lag_ms,
+                    source_snapshot_id,feature_vector_json,feature_names_json,
+                    feature_vector_sha256,feature_schema_version,feature_schema_hash,
+                    extraction_policy_version,quality_status,lineage_status,
+                    training_eligible,lineage_json,code_commit,created_at_ms
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "paper-condition",
+                    "123",
+                    "xrp-updown-5m-test",
+                    "XRP:5m",
+                    "XRP",
+                    "5m",
+                    now_ms - 300_000,
+                    now_ms - 3_000,
+                    60,
+                    now_ms,
+                    now_ms,
+                    0,
+                    1,
+                    "{}",
+                    "[]",
+                    "sha",
+                    "v1",
+                    "hash",
+                    "policy",
+                    "OK",
+                    "OK",
+                    1,
+                    "{}",
+                    "test",
+                    now_ms,
+                ),
+            )
+            p26.commit()
+        finally:
+            p26.close()
+
+        def fake_gamma_json(url):
+            assert "condition_ids" not in url
+            if url.endswith("/markets/123"):
+                return {"conditionId": "other-condition"}
+            if url.endswith("/events/slug/xrp-updown-5m-test"):
+                return {
+                    "markets": [
+                        {
+                            "conditionId": "paper-condition",
+                            "umaResolutionStatus": "resolved",
+                            "closed": True,
+                            "outcomes": json.dumps(["Up", "Down"]),
+                            "clobTokenIds": json.dumps(["up-token", "down-token"]),
+                            "outcomePrices": json.dumps(["1", "0"]),
+                        }
+                    ]
+                }
+            raise AssertionError(url)
+
+        monkeypatch.setattr(engine, "_gamma_json", fake_gamma_json)
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        result = engine._resolution_tick(conn, cycle, now_ms)
+
+        assert result["status"] == "RESOLVED_UP"
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["official_result"] == "UP"
+        assert settled["details"]["official_result_source"].startswith(
+            "event_slug:"
+        )
     finally:
         conn.close()
 

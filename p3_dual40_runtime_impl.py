@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import time
+import urllib.parse
+import urllib.request
 from typing import Any
 
+from p25_discovery import authoritative_official_result
 from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import matched_pair_pnl
@@ -700,6 +704,9 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         }
 
     def _fetch_official_result(self, cycle: dict[str, Any]) -> tuple[str | None, str]:
+        condition_id = str(cycle["condition_id"])
+        row = None
+        meta = None
         p26 = open_p26_read_only(self.settings.p26_db_path)
         try:
             row = p26.execute(
@@ -707,15 +714,94 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 SELECT official_label,official_result_source,official_resolved_at_ms
                 FROM p26_labels WHERE condition_id=?
                 """,
-                (str(cycle["condition_id"]),),
+                (condition_id,),
             ).fetchone()
+            meta = p26.execute(
+                """
+                SELECT market_id,slug
+                FROM p26_canonical_rows
+                WHERE condition_id=?
+                ORDER BY decision_ts_ms DESC,id DESC LIMIT 1
+                """,
+                (condition_id,),
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+            meta = None
         finally:
             p26.close()
         if row is not None and row["official_label"] in (0, 1):
             side = "UP" if int(row["official_label"]) == 1 else "DOWN"
             source = str(row["official_result_source"] or "P26_OFFICIAL_LABEL")
             return side, f"P26:{source}"
+
+        for market, fetch_source in self._official_result_markets(condition_id, meta):
+            result, source = authoritative_official_result(
+                market,
+                str(cycle["up_token_id"]),
+                str(cycle["down_token_id"]),
+            )
+            if result is not None:
+                return result.value, f"{fetch_source}:{source}"
         return super()._fetch_official_result(cycle)
+
+    def _official_result_markets(
+        self,
+        condition_id: str,
+        meta,  # noqa: ANN001
+    ) -> list[tuple[dict[str, Any], str]]:
+        out: list[tuple[dict[str, Any], str]] = []
+        base = self.settings.dual40_gamma_host.rstrip("/")
+        market_id = str(meta["market_id"] or "").strip() if meta is not None else ""
+        slug = str(meta["slug"] or "").strip() if meta is not None else ""
+
+        if market_id:
+            try:
+                market = self._gamma_json(
+                    f"{base}/markets/{urllib.parse.quote(market_id)}"
+                )
+                if self._condition_matches(market, condition_id):
+                    out.append((market, "market_id"))
+            except Exception as exc:  # noqa: BLE001
+                log.debug(
+                    "DUAL40 exact resolution lookup failed market_id=%s error=%s",
+                    market_id,
+                    type(exc).__name__,
+                )
+
+        if slug:
+            try:
+                event = self._gamma_json(
+                    f"{base}/events/slug/{urllib.parse.quote(slug)}"
+                )
+                if isinstance(event, dict):
+                    for market in event.get("markets") or []:
+                        if self._condition_matches(market, condition_id):
+                            out.append((market, "event_slug"))
+            except Exception as exc:  # noqa: BLE001
+                log.debug(
+                    "DUAL40 slug resolution lookup failed slug=%s error=%s",
+                    slug,
+                    type(exc).__name__,
+                )
+
+        return out
+
+    @staticmethod
+    def _condition_matches(market: object, condition_id: str) -> bool:
+        return (
+            isinstance(market, dict)
+            and str(market.get("conditionId") or "") == str(condition_id)
+        )
+
+    @staticmethod
+    def _gamma_json(url: str) -> Any:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "WhaleSignal-DUAL40-Reconcile/1.1"},
+        )
+        with urllib.request.urlopen(request, timeout=6.0) as response:
+            return json.loads(response.read().decode("utf-8"))
 
     def public_status(self) -> dict[str, Any]:
         payload = build_dual40_summary(self.settings.p3_db_path, limit=100)
