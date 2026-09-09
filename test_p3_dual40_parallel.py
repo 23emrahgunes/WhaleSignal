@@ -49,7 +49,14 @@ def _settings(tmp_path, **overrides) -> P3Settings:
     return settings
 
 
-def _seed_p26(path: str, assets=ASSETS, *, now_ms: int | None = None) -> None:
+def _seed_p26(
+    path: str,
+    assets=ASSETS,
+    *,
+    now_ms: int | None = None,
+    up_ask: float = 0.52,
+    down_ask: float = 0.52,
+) -> None:
     now = int(now_ms or time.time() * 1000)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -97,13 +104,18 @@ def _seed_p26(path: str, assets=ASSETS, *, now_ms: int | None = None) -> None:
                 json.dumps({"connected": True, "last_receive_ms": now}),
             ),
         )
-        bids = json.dumps([[0.48, 10.0], [0.40, 2.0]])
-        asks = json.dumps([[0.52, 20.0]])
         for index, asset in enumerate(assets):
             condition = f"cond-{asset.lower()}"
             end_ms = now + 180_000 + index
             for side in ("UP", "DOWN"):
                 token = f"{asset.lower()}-{side.lower()}"
+                ask = up_ask if side == "UP" else down_ask
+                bids = json.dumps(
+                    [[0.48, 10.0], [0.40, 2.0]]
+                    if ask > 0.50
+                    else [[max(0.01, round(ask - 0.005, 4)), 10.0]]
+                )
+                asks = json.dumps([[ask, 20.0]])
                 conn.execute(
                     """
                     INSERT INTO p26_market_tokens
@@ -458,6 +470,42 @@ def test_paper_price_history_rejections_are_diagnostic_only(
             == "PAPER_RELAXED_LIMIT_READY"
             for item in decisions
         )
+    finally:
+        conn.close()
+
+
+def test_paper_waits_when_entry_ask_is_far_below_ptb(tmp_path):
+    settings = _settings(
+        tmp_path,
+        dual40_assets_csv="BTC",
+        dual40_paper_max_concurrent_assets=1,
+        dual40_paper_min_entry_ask=0.25,
+    )
+    now_ms = int(time.time() * 1000)
+    _seed_p26(
+        settings.p26_db_path,
+        assets=("BTC",),
+        now_ms=now_ms,
+        up_ask=0.04,
+        down_ask=0.97,
+    )
+    state = LiveState(
+        live_feature_enabled=settings.live_feature_enabled,
+        auto_execute_enabled=settings.live_auto_execute_enabled,
+    )
+    engine = Dual40MakerEngine(settings, state, gateway_factory=lambda _: _FakeGateway())
+    engine._gate_since["PAPER:BTC:cond-btc"] = time.monotonic() - 2.0
+
+    result = engine.tick()
+
+    assert result["assets"]["BTC"]["status"] != "PAPER_OPENED"
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        assert active_cycles(conn, scope="PAPER") == []
+        decisions = market_decisions(conn, scope="PAPER")
+        assert len(decisions) == 1
+        assert decisions[0]["reason"] == "PAPER_ENTRY_ASK_TOO_LOW"
+        assert decisions[0]["final_gate"]["base_gate"]["paper_min_entry_ask"] == 0.25
     finally:
         conn.close()
 

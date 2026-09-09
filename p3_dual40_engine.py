@@ -707,6 +707,11 @@ class Dual40MakerEngine:
             elif tte + 1e-9 < self.policy.min_tte_sec:
                 paper_ready = False
                 paper_reason = "TTE_TOO_LOW"
+            elif min(float(up["best_ask"]), float(down["best_ask"])) + 1e-12 < float(
+                self.settings.dual40_paper_min_entry_ask
+            ):
+                paper_ready = False
+                paper_reason = "PAPER_ENTRY_ASK_TOO_LOW"
             else:
                 paper_ready = True
                 paper_reason = "PAPER_RELAXED_LIMIT_READY"
@@ -716,6 +721,7 @@ class Dual40MakerEngine:
                 "reason": paper_reason,
                 "up_mid": gate_payload.get("up_mid") or float(up["mid"]),
                 "down_mid": gate_payload.get("down_mid") or float(down["mid"]),
+                "paper_min_entry_ask": float(self.settings.dual40_paper_min_entry_ask),
                 "research_eligible": bool(gate.eligible),
                 "research_reason": str(gate.reason),
             }
@@ -774,6 +780,7 @@ class Dual40MakerEngine:
         if reason in {
             "REGIME_HISTORY_INSUFFICIENT",
             "MARKET_WARMUP",
+            "PAPER_ENTRY_ASK_TOO_LOW",
             "WAITING_OPENING_WINDOW",
             "OPENING_HISTORY_INSUFFICIENT",
         }:

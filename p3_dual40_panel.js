@@ -140,6 +140,7 @@
     BOOK_TRANSPORT_NOT_LIVE: "Book bağlantısı hazır değil",
     TTE_TOO_LOW: "Giriş için süre çok az",
     MARKET_WARMUP: "Market başlangıç verisi birikiyor",
+    PAPER_ENTRY_ASK_TOO_LOW: "Fiyat PTB'den uzak, bekleniyor",
     REGIME_HISTORY_INSUFFICIENT: "Rejim geçmişi yetersiz",
     WAITING_OPENING_WINDOW: "Açılış penceresi bekleniyor",
     OPENING_HISTORY_INSUFFICIENT: "Açılış geçmişi yetersiz",

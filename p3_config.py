@@ -120,6 +120,9 @@ class P3Settings(BaseSettings):
     )
     dual40_max_spread_each: float = Field(default=0.10, alias="P3_DUAL40_MAX_SPREAD_EACH")
     dual40_near_touch_price: float = Field(default=0.41, alias="P3_DUAL40_NEAR_TOUCH_PRICE")
+    dual40_paper_min_entry_ask: float = Field(
+        default=0.25, alias="P3_DUAL40_PAPER_MIN_ENTRY_ASK"
+    )
     dual40_book_fresh_ms: int = Field(default=1500, alias="P3_DUAL40_BOOK_FRESH_MS")
     dual40_heartbeat_sec: float = Field(default=5.0, alias="P3_DUAL40_HEARTBEAT_SEC")
     dual40_balance_poll_sec: float = Field(default=1.0, alias="P3_DUAL40_BALANCE_POLL_SEC")
@@ -510,6 +513,8 @@ class P3Settings(BaseSettings):
                 raise ValueError("DUAL40 maker price is hard-locked to 0.40")
             if self.dual40_near_touch_price < self.dual40_price:
                 raise ValueError("DUAL40 near-touch price cannot be below maker price")
+            if not 0.01 <= float(self.dual40_paper_min_entry_ask) <= float(self.dual40_price):
+                raise ValueError("P3_DUAL40_PAPER_MIN_ENTRY_ASK must be between 0.01 and 0.40")
             if self.dual40_market_age_sec < self.dual40_lookback_sec:
                 raise ValueError("DUAL40 market age must cover lookback")
             if self.dual40_min_tte_sec <= self.dual40_cancel_tte_sec:
