@@ -121,11 +121,14 @@
   };
 
   const fillEvidenceLabel = (cycle, side) => {
+    const key = String(side).toLowerCase();
     const details = cycle.details || {};
-    const evidence = details[`paper_${String(side).toLowerCase()}_fill_evidence`] || {};
+    const evidence = details[`paper_${key}_fill_evidence`] || {};
+    const fillPrice = cycle[`${key}_fill_price`] ?? evidence.best_ask;
     const atMs = evidence.touch_ts_ms || evidence.observed_at_ms;
-    if (evidence.best_ask == null || timestampMs(atMs) === null) return "";
-    return `${Math.round(Number(evidence.best_ask) * 100)}¢ dokunuş ${localTime(atMs)}`;
+    if (fillPrice == null) return "";
+    const time = timestampMs(atMs) === null ? "" : ` · ${localTime(atMs)}`;
+    return `${Math.round(Number(fillPrice) * 100)}¢ dolum${time}`;
   };
 
   const REASON_LABELS = {
@@ -284,7 +287,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> Fiyat-geçmişi rejim kontrolleri girişe engel değildir. Ask 40¢ ya da altındaysa o taraf tam dolu sayılır; market sonunda eşleşmeyen 40¢ maliyeti zarar yazılır.";
+        : "<b>DRY / PAPER.</b> Fiyat-geçmişi rejim kontrolleri girişe engel değildir. Ask 40¢ ya da altındaysa o taraf kayıtlı ask fiyatından tam dolu sayılır; tek bacak resmi market sonucuyla kapatılır.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }

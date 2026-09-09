@@ -8,8 +8,8 @@ cancellation, balance-reconciliation, merge, collateral or hard-stop behaviour:
   ``recv_ts_ms``;
 * PAPER counts entry-time marketable limits and replays post-entry books so brief
   40-cent touches are not lost;
-* PAPER books unmatched virtual exposure directly at market expiry and never waits
-  for an official market result;
+* PAPER waits for the official result when only one virtual leg fills and settles
+  from the recorded fill price;
 * the paper diagnostic reads the configured 41-cent near-touch threshold.
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
         side: str,
         now_ms: int,
     ) -> dict[str, Any] | None:  # noqa: ANN001
-        """Find the lowest recorded post-entry ask without replaying old rows."""
+        """Find the first executable post-entry ask without replaying old rows."""
         side_value = str(side).upper()
         details = cycle.get("details") if isinstance(cycle.get("details"), dict) else {}
         cursor = int(details.get(f"paper_last_scanned_{side_value.lower()}_book_id") or 0)
@@ -107,13 +107,21 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
 
         last_scanned = max(int(row["id"]) for row in rows)
         best_view: dict[str, Any] | None = None
+        first_executable: dict[str, Any] | None = None
+        maker_price = float(cycle["maker_price"])
         for row in rows:
             view = _book_view(row)
             if view is None:
                 continue
             if best_view is None or float(view["best_ask"]) < float(best_view["best_ask"]):
                 best_view = view
-        if best_view is None:
+            if (
+                first_executable is None
+                and float(view["best_ask"]) <= maker_price + 1e-12
+            ):
+                first_executable = view
+        selected = first_executable or best_view
+        if selected is None:
             return {
                 "last_scanned_book_id": last_scanned,
                 "book_id": None,
@@ -125,14 +133,14 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             }
         return {
             "last_scanned_book_id": last_scanned,
-            "book_id": int(best_view["id"]),
-            "best_ask": float(best_view["best_ask"]),
-            "observed_at_ms": int(best_view["recv_ts_ms"]),
+            "book_id": int(selected["id"]),
+            "best_ask": float(selected["best_ask"]),
+            "observed_at_ms": int(selected["recv_ts_ms"]),
             "touch_ts_ms": (
-                int(best_view["source_ts_ms"])
-                if int(best_view["source_ts_ms"]) >= opened_ms
-                else int(best_view["recv_ts_ms"])
+                int(selected["source_ts_ms"])
+                if int(selected["source_ts_ms"]) >= opened_ms
+                else int(selected["recv_ts_ms"])
             ),
-            "source_ts_ms": int(best_view["source_ts_ms"]),
-            "recv_ts_ms": int(best_view["recv_ts_ms"]),
+            "source_ts_ms": int(selected["source_ts_ms"]),
+            "recv_ts_ms": int(selected["recv_ts_ms"]),
         }

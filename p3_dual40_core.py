@@ -520,6 +520,8 @@ def realized_cycle_pnl(
     down_filled: float,
     official_result: str,
     maker_fees_usdc: float = 0.0,
+    up_fill_price: float | None = None,
+    down_fill_price: float | None = None,
 ) -> float:
     """Return settlement PnL from actual filled shares, including partial imbalance."""
     side = str(official_result or "").strip().upper()
@@ -527,38 +529,25 @@ def realized_cycle_pnl(
         raise ValueError("official_result must be UP or DOWN")
     up = max(0.0, float(up_filled))
     down = max(0.0, float(down_filled))
-    cost = float(price) * (up + down) + max(0.0, float(maker_fees_usdc))
+    up_price = float(price if up_fill_price is None else up_fill_price)
+    down_price = float(price if down_fill_price is None else down_fill_price)
+    cost = (up_price * up) + (down_price * down) + max(0.0, float(maker_fees_usdc))
     payout = up if side == "UP" else down
     return payout - cost
 
 
-def matched_pair_pnl(*, price: float, matched_shares: float, maker_fees_usdc: float = 0.0) -> float:
-    matched = max(0.0, float(matched_shares))
-    return matched * (1.0 - 2.0 * float(price)) - max(0.0, float(maker_fees_usdc))
-
-
-def paper_expiry_pnl(
+def matched_pair_pnl(
     *,
     price: float,
-    up_filled: float,
-    down_filled: float,
+    matched_shares: float,
     maker_fees_usdc: float = 0.0,
+    up_fill_price: float | None = None,
+    down_fill_price: float | None = None,
 ) -> float:
-    """Settle PAPER fills without depending on the eventual market winner.
-
-    Equal UP/DOWN shares are a guaranteed pair. Any unmatched shares are charged
-    at their full simulated entry cost, which makes a full single-leg 5-share fill
-    at 40 cents an immediate -$2 loss at market expiry.
-    """
-    up = max(0.0, float(up_filled))
-    down = max(0.0, float(down_filled))
-    matched = min(up, down)
-    unmatched = abs(up - down)
-    return (
-        matched_pair_pnl(price=price, matched_shares=matched)
-        - float(price) * unmatched
-        - max(0.0, float(maker_fees_usdc))
-    )
+    matched = max(0.0, float(matched_shares))
+    up_price = float(price if up_fill_price is None else up_fill_price)
+    down_price = float(price if down_fill_price is None else down_fill_price)
+    return matched * (1.0 - up_price - down_price) - max(0.0, float(maker_fees_usdc))
 
 
 def next_ladder_state(

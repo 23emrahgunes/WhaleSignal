@@ -502,6 +502,8 @@ def test_paper_marketable_limit_fills_entry_side_immediately(tmp_path):
         assert cycle is not None
         assert cycle["up_filled_shares"] == pytest.approx(0.0)
         assert cycle["down_filled_shares"] == pytest.approx(5.0)
+        assert cycle["up_fill_price"] is None
+        assert cycle["down_fill_price"] == pytest.approx(0.25)
         assert cycle["residual_side"] == "DOWN"
         assert cycle["details"]["post_only"] is False
         assert cycle["details"]["paper_down_fill_evidence"]["best_ask"] == pytest.approx(0.25)

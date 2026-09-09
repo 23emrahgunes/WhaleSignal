@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS p3_dual40_cycles (
     before_down_shares      REAL NOT NULL DEFAULT 0,
     up_filled_shares        REAL NOT NULL DEFAULT 0,
     down_filled_shares      REAL NOT NULL DEFAULT 0,
+    up_fill_price           REAL CHECK(up_fill_price IS NULL OR (up_fill_price > 0 AND up_fill_price < 1)),
+    down_fill_price         REAL CHECK(down_fill_price IS NULL OR (down_fill_price > 0 AND down_fill_price < 1)),
     matched_shares          REAL NOT NULL DEFAULT 0,
     residual_side           TEXT,
     residual_shares         REAL NOT NULL DEFAULT 0,
@@ -223,11 +225,21 @@ def _migrate_cycles_asset(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_cycle_fill_prices(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "p3_dual40_cycles"):
+        return
+    columns = _columns(conn, "p3_dual40_cycles")
+    for name in ("up_fill_price", "down_fill_price"):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE p3_dual40_cycles ADD COLUMN {name} REAL")
+
+
 def ensure_dual40_schema(conn: sqlite3.Connection) -> None:
     ensure_p3_schema(conn)
     _migrate_legacy_state(conn)
     conn.executescript(DUAL40_DDL)
     _migrate_cycles_asset(conn)
+    _migrate_cycle_fill_prices(conn)
     now = int(time.time() * 1000)
     for scope in ("PAPER", "LIVE"):
         for asset in DUAL40_ASSETS:
@@ -556,6 +568,8 @@ def update_cycle(
         "before_down_shares",
         "up_filled_shares",
         "down_filled_shares",
+        "up_fill_price",
+        "down_fill_price",
         "matched_shares",
         "residual_side",
         "residual_shares",

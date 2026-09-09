@@ -134,3 +134,26 @@ def test_partial_fill_pnl_uses_actual_fills_and_official_result():
         down_filled=18,
         official_result="DOWN",
     ) == pytest.approx(-1.2)
+
+
+def test_paper_pnl_uses_recorded_side_fill_prices():
+    assert realized_cycle_pnl(
+        price=0.40,
+        up_filled=5,
+        down_filled=0,
+        official_result="UP",
+        up_fill_price=0.25,
+    ) == pytest.approx(3.75)
+    assert realized_cycle_pnl(
+        price=0.40,
+        up_filled=5,
+        down_filled=0,
+        official_result="DOWN",
+        up_fill_price=0.25,
+    ) == pytest.approx(-1.25)
+    assert matched_pair_pnl(
+        price=0.40,
+        matched_shares=5,
+        up_fill_price=0.25,
+        down_fill_price=0.35,
+    ) == pytest.approx(2.0)

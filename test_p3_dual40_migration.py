@@ -96,6 +96,8 @@ def test_legacy_global_schema_migration_is_idempotent(tmp_path):
             for row in reopened.execute("PRAGMA table_info(p3_dual40_cycles)")
         }
         assert "asset" in columns
+        assert "up_fill_price" in columns
+        assert "down_fill_price" in columns
         assert reopened.execute(
             "SELECT asset FROM p3_dual40_cycles WHERE condition_id='cond-btc'"
         ).fetchone()["asset"] == "BTC"

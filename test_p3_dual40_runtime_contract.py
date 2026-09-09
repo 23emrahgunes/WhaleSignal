@@ -122,10 +122,15 @@ def _insert_touch_pair(
     observed_ms: int,
     source_ms: int | None = None,
     ask_size: float = 0.01,
+    up_ask: float = 0.40,
+    down_ask: float = 0.40,
 ) -> None:
     store = BookSnapshotStore(path)
     try:
-        for side, token in (("UP", "up-token"), ("DOWN", "down-token")):
+        for side, token, ask in (
+            ("UP", "up-token", up_ask),
+            ("DOWN", "down-token", down_ask),
+        ):
             store.insert(
                 condition_id="paper-condition",
                 combo_key="XRP:5m",
@@ -133,8 +138,8 @@ def _insert_touch_pair(
                 snapshot=OrderBookSnapshot.from_levels(
                     token_id=token,
                     ts_ms=source_ms or observed_ms,
-                    bids=[(0.39, 10.0)],
-                    asks=[(0.40, ask_size)],
+                    bids=[(max(0.01, ask - 0.01), 10.0)],
+                    asks=[(ask, ask_size)],
                 ),
                 recv_ts_ms=observed_ms,
             )
@@ -156,7 +161,12 @@ def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
         cycle = active_cycle(conn, scope="PAPER", asset="XRP")
         assert cycle is not None
         observed_ms = int(cycle["created_at_ms"]) + 100
-        _insert_touch_pair(settings.p26_db_path, observed_ms=observed_ms)
+        _insert_touch_pair(
+            settings.p26_db_path,
+            observed_ms=observed_ms,
+            up_ask=0.25,
+            down_ask=0.35,
+        )
 
         p26 = sqlite3.connect(settings.p26_db_path)
         p26.row_factory = sqlite3.Row
@@ -175,11 +185,64 @@ def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
         assert settled is not None
         assert settled["up_filled_shares"] == pytest.approx(5.0)
         assert settled["down_filled_shares"] == pytest.approx(5.0)
-        assert settled["realized_pnl_usdc"] == pytest.approx(1.0)
+        assert settled["up_fill_price"] == pytest.approx(0.25)
+        assert settled["down_fill_price"] == pytest.approx(0.35)
+        assert settled["realized_pnl_usdc"] == pytest.approx(2.0)
         assert settled["details"]["paper_fill_rule"] == (
             "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
         )
         assert settled["details"]["paper_up_fill_evidence"]["touch_ts_ms"] == observed_ms
+    finally:
+        conn.close()
+
+
+def test_paper_fill_price_is_first_recorded_executable_ask(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(conn, now_ms=now_ms)
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        opened_ms = int(cycle["created_at_ms"])
+        store = BookSnapshotStore(settings.p26_db_path)
+        try:
+            for offset_ms, ask in ((100, 0.35), (200, 0.20)):
+                observed_ms = opened_ms + offset_ms
+                store.insert(
+                    condition_id="paper-condition",
+                    combo_key="XRP:5m",
+                    side="UP",
+                    snapshot=OrderBookSnapshot.from_levels(
+                        token_id="up-token",
+                        ts_ms=observed_ms,
+                        bids=[(ask - 0.01, 10.0)],
+                        asks=[(ask, 5.0)],
+                    ),
+                    recv_ts_ms=observed_ms,
+                )
+        finally:
+            store.close()
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, opened_ms + 300)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_WAIT_BOOK"
+        waiting = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert waiting is not None
+        assert waiting["up_fill_price"] == pytest.approx(0.35)
+        assert waiting["details"]["paper_up_fill_evidence"]["best_ask"] == pytest.approx(
+            0.35
+        )
     finally:
         conn.close()
 
@@ -230,7 +293,7 @@ def test_paper_counts_delayed_touch_sourced_before_market_close(tmp_path):
         conn.close()
 
 
-def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path):
+def test_paper_expiry_waits_for_official_result_when_one_leg_filled(tmp_path):
     settings = _settings(tmp_path)
     engine = ProductionDual40MakerEngine(
         settings,
@@ -251,6 +314,7 @@ def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path)
             conn,
             cycle_id,
             up_filled_shares=5.0,
+            up_fill_price=0.25,
             residual_side="UP",
             residual_shares=5.0,
         )
@@ -264,24 +328,21 @@ def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path)
         finally:
             p26.close()
 
-        assert result["status"] == "PAPER_SINGLE_LEG_LOSS"
-        refreshed = active_cycle(conn, scope="PAPER", asset="XRP")
-        assert refreshed is None
-        settled = cycle_for_condition(
+        assert result["status"] == "WAIT_RESOLUTION"
+        waiting = cycle_for_condition(
             conn,
             scope="PAPER",
             asset="XRP",
             condition_id="paper-condition",
         )
-        assert settled is not None
-        assert settled["status"] == "PAPER_SINGLE_LEG_LOSS"
-        assert settled["official_result"] is None
-        assert settled["realized_pnl_usdc"] == pytest.approx(-2.0)
-        assert settled["details"]["paper_waits_for_official_result"] is False
+        assert waiting is not None
+        assert waiting["status"] == "WAIT_RESOLUTION"
+        assert waiting["official_result"] is None
+        assert waiting["realized_pnl_usdc"] is None
+        assert waiting["details"]["paper_waits_for_official_result"] is True
         recovery = ladder_state(conn, "PAPER", "XRP")
-        assert recovery["level_index"] == 1
-        assert engine.policy.ladder[recovery["level_index"]] == pytest.approx(10.0)
-        assert recovery["loss_pool_usdc"] == pytest.approx(2.0)
+        assert recovery["level_index"] == 0
+        assert recovery["loss_pool_usdc"] == pytest.approx(0.0)
     finally:
         conn.close()
 
@@ -319,7 +380,7 @@ def test_paper_keeps_virtual_limit_open_inside_legacy_cancel_window(tmp_path):
         conn.close()
 
 
-def test_legacy_paper_wait_resolution_settles_without_official_result(
+def test_paper_wait_resolution_settles_winning_leg_at_recorded_price(
     tmp_path,
     monkeypatch,
 ):
@@ -344,6 +405,7 @@ def test_legacy_paper_wait_resolution_settles_without_official_result(
             conn,
             cycle_id,
             down_filled_shares=5.0,
+            down_fill_price=0.25,
             residual_side="DOWN",
             residual_shares=5.0,
         )
@@ -352,7 +414,7 @@ def test_legacy_paper_wait_resolution_settles_without_official_result(
         monkeypatch.setattr(
             engine,
             "_fetch_official_result",
-            lambda _cycle: pytest.fail("PAPER must not fetch an official result"),
+            lambda _cycle: ("DOWN", "TEST_OFFICIAL"),
         )
 
         p26 = sqlite3.connect(settings.p26_db_path)
@@ -362,9 +424,74 @@ def test_legacy_paper_wait_resolution_settles_without_official_result(
         finally:
             p26.close()
 
-        assert result["status"] == "PAPER_SINGLE_LEG_LOSS"
-        assert result["pnl_usdc"] == pytest.approx(-2.0)
+        assert result["status"] == "RESOLVED_DOWN"
+        assert result["pnl_usdc"] == pytest.approx(3.75)
         assert active_cycle(conn, scope="PAPER", asset="XRP") is None
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["official_result"] == "DOWN"
+        assert settled["details"]["paper_settlement_rule"] == (
+            "OFFICIAL_RESULT_ACTUAL_FILL_PRICE"
+        )
+        assert ladder_state(conn, "PAPER", "XRP")["loss_pool_usdc"] == 0.0
+    finally:
+        conn.close()
+
+
+def test_paper_wait_resolution_advances_ladder_only_after_actual_loss(
+    tmp_path,
+    monkeypatch,
+):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            up_filled_shares=5.0,
+            up_fill_price=0.25,
+            residual_side="UP",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        monkeypatch.setattr(
+            engine,
+            "_fetch_official_result",
+            lambda _cycle: ("DOWN", "TEST_OFFICIAL"),
+        )
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._resolution_tick(conn, cycle, now_ms, p26=p26)
+        finally:
+            p26.close()
+
+        assert result["status"] == "RESOLVED_DOWN"
+        assert result["pnl_usdc"] == pytest.approx(-1.25)
+        recovery = ladder_state(conn, "PAPER", "XRP")
+        assert recovery["level_index"] == 1
+        assert recovery["loss_pool_usdc"] == pytest.approx(1.25)
     finally:
         conn.close()
 

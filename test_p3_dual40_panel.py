@@ -46,11 +46,11 @@ def test_panel_contains_asset_lane_state():
     assert "ladderStepLabel" in script
     assert "fillStatusLabel" in script
     assert "fillEvidenceLabel" in script
-    assert "dokunuş ${localTime(atMs)}" in script
+    assert "¢ dolum${time}" in script
     assert "Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}" in script
     assert "Ask ${number(upAsk)} / ${number(downAsk)}" in script
     assert "Fiyat-geçmişi rejim kontrolleri girişe engel değildir" in script
-    assert "market sonunda eşleşmeyen 40¢ maliyeti zarar yazılır" in script
+    assert "tek bacak resmi market sonucuyla kapatılır" in script
     assert "PAPER_SINGLE_LEG_LOSS" in script
     assert '? "Gerekmez"' in script
     assert "Son değerlendirme" in script
