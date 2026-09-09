@@ -92,6 +92,7 @@
     WAIT_RESOLUTION: "Market sonucu bekleniyor",
     PAPER_MATCHED: "İki taraf doldu",
     PAPER_MATCHED_FILLED: "İki taraf doldu",
+    PAPER_SINGLE_LEG_LOSS: "Tek bacak doldu · zarar yazıldı",
     MATCHED_FILLED: "İki taraf doldu",
     LIVE_MATCHED_MERGED: "İki taraf doldu ve birleştirildi",
     NO_FILL: "Dolum olmadı",
@@ -282,7 +283,7 @@
     if (notice) {
       notice.innerHTML = mode === "LIVE_ARMED"
         ? "<b>CANLI MOD ARM EDİLDİ.</b> Uygun ilk stabil lane gerçek 40¢ POST-ONLY GTC emir gönderebilir; LIVE paralellik 1'dir."
-        : "<b>DRY / PAPER.</b> 44–56 bandı, 5 sn teyit ve post-only cross reddi kapalıdır. Giriş anında veya sonrasında ask 40¢ ya da altındaysa o taraf tam dolu sayılır.";
+        : "<b>DRY / PAPER.</b> Ask 40¢ ya da altındaysa o taraf tam dolu sayılır. Market sonunda karşı bacak dolmamışsa resmi sonuç beklenmeden 40¢ maliyeti zarar yazılır ve recovery ilerler.";
       if (dual.migration_review) {
         notice.innerHTML += " <b>Legacy havuz incelemesi gerekli:</b> Eski global zarar hiçbir asset'e dağıtılmadı.";
       }

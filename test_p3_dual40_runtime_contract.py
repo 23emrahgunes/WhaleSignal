@@ -14,6 +14,7 @@ from p3_dual40_store import (
     connect_dual40,
     create_cycle,
     cycle_for_condition,
+    ladder_state,
     update_cycle,
 )
 from p3_live_state import LiveState
@@ -244,7 +245,7 @@ def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path)
         cycle_id = _create_paper_cycle(
             conn,
             now_ms=now_ms,
-            market_end_ts_ms=now_ms - 1_000,
+            market_end_ts_ms=now_ms - 3_000,
         )
         update_cycle(
             conn,
@@ -263,10 +264,107 @@ def test_paper_expiry_advances_partial_cycle_even_when_books_disappear(tmp_path)
         finally:
             p26.close()
 
-        assert result["status"] == "WAIT_RESOLUTION"
+        assert result["status"] == "PAPER_SINGLE_LEG_LOSS"
         refreshed = active_cycle(conn, scope="PAPER", asset="XRP")
-        assert refreshed is not None
-        assert refreshed["status"] == "WAIT_RESOLUTION"
+        assert refreshed is None
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["status"] == "PAPER_SINGLE_LEG_LOSS"
+        assert settled["official_result"] is None
+        assert settled["realized_pnl_usdc"] == pytest.approx(-2.0)
+        assert settled["details"]["paper_waits_for_official_result"] is False
+        recovery = ladder_state(conn, "PAPER", "XRP")
+        assert recovery["level_index"] == 1
+        assert engine.policy.ladder[recovery["level_index"]] == pytest.approx(10.0)
+        assert recovery["loss_pool_usdc"] == pytest.approx(2.0)
+    finally:
+        conn.close()
+
+
+def test_paper_keeps_virtual_limit_open_inside_legacy_cancel_window(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            market_end_ts_ms=now_ms + 20_000,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._paper_tick(conn, p26, cycle, now_ms)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_WAIT_BOOK"
+        assert active_cycle(conn, scope="PAPER", asset="XRP") is not None
+    finally:
+        conn.close()
+
+
+def test_legacy_paper_wait_resolution_settles_without_official_result(
+    tmp_path,
+    monkeypatch,
+):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            down_filled_shares=5.0,
+            residual_side="DOWN",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+        monkeypatch.setattr(
+            engine,
+            "_fetch_official_result",
+            lambda _cycle: pytest.fail("PAPER must not fetch an official result"),
+        )
+
+        p26 = sqlite3.connect(settings.p26_db_path)
+        p26.row_factory = sqlite3.Row
+        try:
+            result = engine._resolution_tick(conn, cycle, now_ms, p26=p26)
+        finally:
+            p26.close()
+
+        assert result["status"] == "PAPER_SINGLE_LEG_LOSS"
+        assert result["pnl_usdc"] == pytest.approx(-2.0)
+        assert active_cycle(conn, scope="PAPER", asset="XRP") is None
     finally:
         conn.close()
 

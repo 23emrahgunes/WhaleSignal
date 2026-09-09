@@ -1,10 +1,11 @@
 """Pure strategy math for the DUAL40 maker-recovery cohort.
 
-PAPER simulates ordinary equal-share 40-cent BUY limits with relaxed entry controls;
-LIVE retains balanced, confirmed, post-only entry. The strategy uses asset-scoped
-recovery ladders (5 -> 10 -> 30 shares) and permanently hard-stops only the affected
-asset when its realized loss pool can no longer be recovered by a fully matched
-30-share pair.
+PAPER simulates ordinary equal-share 40-cent BUY limits with relaxed entry controls
+and settles unmatched exposure conservatively at market expiry without waiting for
+the official outcome. LIVE retains balanced, confirmed, post-only entry. The
+strategy uses asset-scoped recovery ladders (5 -> 10 -> 30 shares) and permanently
+hard-stops only the affected asset when its realized loss pool can no longer be
+recovered by a fully matched 30-share pair.
 
 This module performs no I/O, signing or order submission.  It is intentionally pure
 so regime gates, partial-fill PnL and ladder transitions are deterministic and easy
@@ -534,6 +535,30 @@ def realized_cycle_pnl(
 def matched_pair_pnl(*, price: float, matched_shares: float, maker_fees_usdc: float = 0.0) -> float:
     matched = max(0.0, float(matched_shares))
     return matched * (1.0 - 2.0 * float(price)) - max(0.0, float(maker_fees_usdc))
+
+
+def paper_expiry_pnl(
+    *,
+    price: float,
+    up_filled: float,
+    down_filled: float,
+    maker_fees_usdc: float = 0.0,
+) -> float:
+    """Settle PAPER fills without depending on the eventual market winner.
+
+    Equal UP/DOWN shares are a guaranteed pair. Any unmatched shares are charged
+    at their full simulated entry cost, which makes a full single-leg 5-share fill
+    at 40 cents an immediate -$2 loss at market expiry.
+    """
+    up = max(0.0, float(up_filled))
+    down = max(0.0, float(down_filled))
+    matched = min(up, down)
+    unmatched = abs(up - down)
+    return (
+        matched_pair_pnl(price=price, matched_shares=matched)
+        - float(price) * unmatched
+        - max(0.0, float(maker_fees_usdc))
+    )
 
 
 def next_ladder_state(

@@ -4,6 +4,8 @@ PAPER lanes are independent for BTC/ETH/SOL/XRP and simulate ordinary 40-cent
 limits without the balanced-mid, confirmation or post-only-cross entry controls.
 Opening-window and read-only forecast gates remain observable in SHADOW. LIVE keeps
 balanced, confirmed, post-only semantics and defaults to one concurrent asset.
+At PAPER market expiry, unmatched virtual exposure is booked directly as a loss;
+the official outcome is never required for PAPER settlement.
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ from p3_dual40_core import (
     evaluate_opening_stability,
     matched_pair_pnl,
     next_ladder_state,
+    paper_expiry_pnl,
     realized_cycle_pnl,
 )
 from p3_dual40_gateway import Dual40Gateway
@@ -58,6 +61,7 @@ log = logging.getLogger("direction_engine.p3.dual40")
 TERMINAL_STATUSES = {
     "PAPER_MATCHED",
     "PAPER_MATCHED_FILLED",
+    "PAPER_SINGLE_LEG_LOSS",
     "MATCHED_FILLED",
     "LIVE_MATCHED_MERGED",
     "NO_FILL",
@@ -1382,13 +1386,17 @@ class Dual40MakerEngine:
             return self._apply_ladder_and_finalize(
                 conn,
                 cycle=cycle,
-                status="PAPER_MATCHED",
+                status="PAPER_MATCHED_FILLED",
                 pnl=pnl,
-                details={"paper_pair_complete_before_cancel": True},
+                official_result=None,
+                details={
+                    "paper_settlement_rule": "PAIR_COMPLETE",
+                    "paper_waits_for_official_result": False,
+                },
             )
 
         tte = (int(cycle["market_end_ts_ms"]) - int(now_ms)) / 1000.0
-        if tte > self.policy.cancel_tte_sec:
+        if int(now_ms) < int(cycle["market_end_ts_ms"]) + 2_000:
             return {
                 "status": "PAPER_RESTING",
                 "cycle_id": cycle["id"],
@@ -1402,15 +1410,28 @@ class Dual40MakerEngine:
                 cycle=cycle,
                 status="NO_FILL",
                 pnl=0.0,
-                details={"paper_cancel_tte_sec": self.policy.cancel_tte_sec},
+                details={
+                    "paper_settlement_rule": "NO_FILL_AT_MARKET_EXPIRY",
+                    "paper_waits_for_official_result": False,
+                },
             )
-        update_cycle(
+        return self._apply_ladder_and_finalize(
             conn,
-            int(cycle["id"]),
-            status="WAIT_RESOLUTION",
-            orders_cancelled_at_ms=int(now_ms),
+            cycle=cycle,
+            status="PAPER_SINGLE_LEG_LOSS",
+            pnl=paper_expiry_pnl(
+                price=maker_price,
+                up_filled=up_filled,
+                down_filled=down_filled,
+            ),
+            official_result=None,
+            details={
+                "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
+                "paper_waits_for_official_result": False,
+                "paper_expiry_up_filled": up_filled,
+                "paper_expiry_down_filled": down_filled,
+            },
         )
-        return {"status": "WAIT_RESOLUTION", "cycle_id": cycle["id"]}
 
     def _balance_fill(self, gateway: Any, cycle: dict[str, Any]) -> tuple[float, float, dict[str, float]]:
         balances = gateway.pair_balances(
@@ -1674,6 +1695,61 @@ class Dual40MakerEngine:
         p26=None,
     ) -> dict[str, Any]:  # noqa: ANN001
         del p26
+        if str(cycle.get("scope")) == "PAPER":
+            if int(now_ms) < int(cycle["market_end_ts_ms"]) + 2_000:
+                return {"status": "WAIT_RESOLUTION", "cycle_id": cycle["id"]}
+            up_filled = float(cycle["up_filled_shares"])
+            down_filled = float(cycle["down_filled_shares"])
+            quantity = float(cycle["target_shares"])
+            epsilon = float(self.settings.dual40_fill_epsilon)
+            if (
+                up_filled + epsilon >= quantity
+                and down_filled + epsilon >= quantity
+            ):
+                return self._apply_ladder_and_finalize(
+                    conn,
+                    cycle=cycle,
+                    status="PAPER_MATCHED_FILLED",
+                    pnl=matched_pair_pnl(
+                        price=float(cycle["maker_price"]),
+                        matched_shares=quantity,
+                    ),
+                    official_result=None,
+                    details={
+                        "paper_settlement_rule": "PAIR_COMPLETE_AT_MARKET_EXPIRY",
+                        "paper_waits_for_official_result": False,
+                    },
+                )
+            if up_filled <= epsilon and down_filled <= epsilon:
+                return self._apply_ladder_and_finalize(
+                    conn,
+                    cycle=cycle,
+                    status="NO_FILL",
+                    pnl=0.0,
+                    official_result=None,
+                    details={
+                        "paper_settlement_rule": "NO_FILL_AT_MARKET_EXPIRY",
+                        "paper_waits_for_official_result": False,
+                    },
+                )
+            return self._apply_ladder_and_finalize(
+                conn,
+                cycle=cycle,
+                status="PAPER_SINGLE_LEG_LOSS",
+                pnl=paper_expiry_pnl(
+                    price=float(cycle["maker_price"]),
+                    up_filled=up_filled,
+                    down_filled=down_filled,
+                ),
+                official_result=None,
+                details={
+                    "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
+                    "paper_waits_for_official_result": False,
+                    "paper_settlement_grace_ms": 2000,
+                    "paper_expiry_up_filled": up_filled,
+                    "paper_expiry_down_filled": down_filled,
+                },
+            )
         if int(now_ms) < int(cycle["market_end_ts_ms"]) + 2_000:
             return {"status": "WAIT_RESOLUTION", "cycle_id": cycle["id"]}
         last = self._last_resolution_poll_ms.get(int(cycle["id"]), 0)
@@ -1831,6 +1907,9 @@ class Dual40MakerEngine:
                     "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
                     "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
                     "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
+                    "paper_waits_for_official_result": False,
+                    "paper_settlement_grace_ms": 2000,
                     "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
                     "near_touch_41_diagnostic_only": True,
                     "entry": "PAPER_RELAXED_LIMIT",
@@ -1849,6 +1928,8 @@ class Dual40MakerEngine:
                         self.settings.dual40_max_recovery_exposure_usdc
                     ),
                     "cancel_tte_sec": self.policy.cancel_tte_sec,
+                    "live_cancel_tte_sec": self.policy.cancel_tte_sec,
+                    "paper_cancel_tte_sec": None,
                 },
                 "runtime": self._last_status,
             }

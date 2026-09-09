@@ -8,7 +8,7 @@ from typing import Any
 
 from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_capital import required_live_collateral
-from p3_dual40_core import matched_pair_pnl
+from p3_dual40_core import matched_pair_pnl, paper_expiry_pnl
 from p3_dual40_engine import Dual40MakerEngine, _book_view, _levels
 from p3_dual40_paper import visible_ask_capacity
 from p3_dual40_preflight import run_dual40_preflight
@@ -223,10 +223,14 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                 status="PAPER_MATCHED_FILLED",
                 pnl=matched_pair_pnl(price=maker_price, matched_shares=quantity),
                 official_result=None,
+                details={
+                    "paper_settlement_rule": "PAIR_COMPLETE",
+                    "paper_waits_for_official_result": False,
+                },
             )
 
         tte = (int(cycle["market_end_ts_ms"]) - int(now_ms)) / 1000.0
-        if tte <= self.policy.cancel_tte_sec:
+        if int(now_ms) >= int(cycle["market_end_ts_ms"]) + 2_000:
             if up_filled <= epsilon and down_filled <= epsilon:
                 return self._apply_ladder_and_finalize(
                     conn,
@@ -234,20 +238,29 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     status="NO_FILL",
                     pnl=0.0,
                     official_result=None,
+                    details={
+                        "paper_settlement_rule": "NO_FILL_AT_MARKET_EXPIRY",
+                        "paper_waits_for_official_result": False,
+                    },
                 )
-            update_cycle(
+            return self._apply_ladder_and_finalize(
                 conn,
-                int(cycle["id"]),
-                status="WAIT_RESOLUTION",
-                orders_cancelled_at_ms=int(now_ms),
-                details_merge={"cancel_reason": "CANCEL_TTE_REACHED"},
+                cycle=cycle,
+                status="PAPER_SINGLE_LEG_LOSS",
+                pnl=paper_expiry_pnl(
+                    price=maker_price,
+                    up_filled=up_filled,
+                    down_filled=down_filled,
+                ),
+                official_result=None,
+                details={
+                    "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
+                    "paper_waits_for_official_result": False,
+                    "paper_settlement_grace_ms": 2000,
+                    "paper_expiry_up_filled": up_filled,
+                    "paper_expiry_down_filled": down_filled,
+                },
             )
-            return {
-                "status": "WAIT_RESOLUTION",
-                "cycle_id": cycle["id"],
-                "up_filled": up_filled,
-                "down_filled": down_filled,
-            }
 
         if up is None or down is None:
             return {
@@ -274,23 +287,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         p26=None,
     ) -> dict[str, Any]:  # noqa: ANN001
         if str(cycle.get("scope")) == "PAPER" and p26 is not None:
-            fills = self._reconcile_paper_touch_fills(conn, p26, cycle, int(now_ms))
-            quantity = float(cycle["target_shares"])
-            epsilon = float(self.settings.dual40_fill_epsilon)
-            if (
-                float(fills["up_filled"]) + epsilon >= quantity
-                and float(fills["down_filled"]) + epsilon >= quantity
-            ):
-                return self._apply_ladder_and_finalize(
-                    conn,
-                    cycle=cycle,
-                    status="PAPER_MATCHED_FILLED",
-                    pnl=matched_pair_pnl(
-                        price=float(cycle["maker_price"]),
-                        matched_shares=quantity,
-                    ),
-                    official_result=None,
-                )
+            self._reconcile_paper_touch_fills(conn, p26, cycle, int(now_ms))
         return super()._resolution_tick(conn, cycle, now_ms, p26=p26)
 
     def _cancel_and_classify(
@@ -741,6 +738,9 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                         self.settings.dual40_live_max_concurrent_assets
                     ),
                     "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_settlement_rule": "UNMATCHED_COST_DIRECT_LOSS_AT_MARKET_EXPIRY",
+                    "paper_waits_for_official_result": False,
+                    "paper_settlement_grace_ms": 2000,
                     "paper_entry_profile": "RELAXED_LIMIT_NO_BALANCE_NO_CONFIRM_NO_CROSS_REJECT",
                     "paper_repeated_snapshot_reuse": False,
                     "near_touch_41_diagnostic_only": True,
@@ -768,6 +768,8 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                         self.policy.balanced_mid_high,
                     ],
                     "cancel_tte_sec": self.policy.cancel_tte_sec,
+                    "live_cancel_tte_sec": self.policy.cancel_tte_sec,
+                    "paper_cancel_tte_sec": None,
                 },
                 "runtime": self._last_status,
                 "generated_at_ms": int(time.time() * 1000),

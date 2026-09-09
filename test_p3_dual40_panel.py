@@ -42,14 +42,15 @@ def test_panel_contains_asset_lane_state():
     assert "Emir açılışı" in script
     assert "Market bitişi" in script
     assert "marketWindowLabel(candidate)" in script
-    assert "ask 40¢ ya da altındaysa" in script
+    assert "Ask 40¢ ya da altındaysa" in script
     assert "ladderStepLabel" in script
     assert "fillStatusLabel" in script
     assert "fillEvidenceLabel" in script
     assert "dokunuş ${localTime(atMs)}" in script
     assert "Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}" in script
     assert "Ask ${number(upAsk)} / ${number(downAsk)}" in script
-    assert "44–56 bandı, 5 sn teyit ve post-only cross reddi kapalıdır" in script
+    assert "resmi sonuç beklenmeden 40¢ maliyeti zarar yazılır" in script
+    assert "PAPER_SINGLE_LEG_LOSS" in script
     assert '? "Gerekmez"' in script
     assert "Son değerlendirme" in script
     assert "girişi ${forecastMode === \"ENFORCE\" ? \"etkiler\" : \"engellemez\"}" in script

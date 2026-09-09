@@ -504,9 +504,9 @@ def test_deterministic_local_simulation_asset_scoped_recovery(tmp_path):
     try:
         scenarios = {
             "BTC": {"up": 5.0, "down": 5.0, "pnl": 1.0, "status": "PAPER_MATCHED_FILLED", "official": None},
-            "ETH": {"up": 5.0, "down": 0.0, "pnl": -2.0, "status": "RESOLVED_DOWN", "official": "DOWN"},
+            "ETH": {"up": 5.0, "down": 0.0, "pnl": -2.0, "status": "PAPER_SINGLE_LEG_LOSS", "official": None},
             "SOL": {"up": 0.0, "down": 0.0, "pnl": 0.0, "status": "NO_FILL", "official": None},
-            "XRP": {"up": 3.0, "down": 1.0, "pnl": -0.6, "status": "RESOLVED_DOWN", "official": "DOWN"},
+            "XRP": {"up": 3.0, "down": 1.0, "pnl": -0.6, "status": "PAPER_SINGLE_LEG_LOSS", "official": None},
         }
         for asset, scenario in scenarios.items():
             cycle_id = create_cycle(

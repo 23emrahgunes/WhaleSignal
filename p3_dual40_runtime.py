@@ -8,6 +8,8 @@ cancellation, balance-reconciliation, merge, collateral or hard-stop behaviour:
   ``recv_ts_ms``;
 * PAPER counts entry-time marketable limits and replays post-entry books so brief
   40-cent touches are not lost;
+* PAPER books unmatched virtual exposure directly at market expiry and never waits
+  for an official market result;
 * the paper diagnostic reads the configured 41-cent near-touch threshold.
 """
 from __future__ import annotations
