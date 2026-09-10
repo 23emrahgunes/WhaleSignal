@@ -131,6 +131,14 @@
     return `${Math.round(Number(fillPrice) * 100)}¢ dolum${time}`;
   };
 
+  const entryAskLabel = (cycle) => {
+    const gate = cycle.gate || {};
+    const upAsk = gate.up_book && gate.up_book.best_ask;
+    const downAsk = gate.down_book && gate.down_book.best_ask;
+    if (upAsk == null && downAsk == null) return "";
+    return `Giriş ask · UP ${number(upAsk)} / DOWN ${number(downAsk)}`;
+  };
+
   const resolutionInfoLabel = (cycle) => {
     if (String(cycle.status || "") !== "WAIT_RESOLUTION") return "";
     const details = cycle.details || {};
@@ -424,6 +432,7 @@
       const conditionId = String(cycle.condition_id || "");
       const upEvidence = fillEvidenceLabel(cycle, "UP");
       const downEvidence = fillEvidenceLabel(cycle, "DOWN");
+      const entryAsk = entryAskLabel(cycle);
       const resolutionInfo = resolutionInfoLabel(cycle);
       return (
         `<div class="active-row">` +
@@ -434,6 +443,7 @@
         `${resolutionInfo ? `<span class="warn">${escapeHtml(resolutionInfo)}</span>` : ""}` +
         `<span class="active-market" title="Condition: ${escapeHtml(conditionId)}">${escapeHtml(marketWindowLabel(cycle))}</span>` +
         `<span>${orderKind} emir çifti · UP ${target} @ ${limit} · DOWN ${target} @ ${limit}</span>` +
+        `${entryAsk ? `<span>${escapeHtml(entryAsk)}</span>` : ""}` +
         `<span class="active-time" title="${escapeHtml(fullLocalDateTime(openedAtMs))}">` +
         `Emir açılışı ${escapeHtml(localTime(openedAtMs))} · Market bitişi ${escapeHtml(localTime(cycle.market_end_ts_ms))} · ` +
         `ID ${escapeHtml(shortIdentifier(conditionId))}</span>` +
@@ -555,8 +565,8 @@
         `<td><span class="cell-main">${escapeHtml(reasonLabel(candidate.reason))}</span><span class="cell-code" title="${escapeHtml(candidate.reason || "")}">${escapeHtml(candidate.reason || "—")}</span></td>` +
         `<td class="mobile-optional">${escapeHtml(candidate.target_shares ?? "—")}</td>` +
         `<td class="mobile-optional">${number(candidate.tte_sec, 1)} sn</td>` +
-        `<td class="price-pair"><span class="cell-main">Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}</span>` +
-        `<span class="cell-code">Ask ${number(upAsk)} / ${number(downAsk)}</span></td>` +
+        `<td class="price-pair"><span class="cell-main">UP Mid ${number(candidate.up_mid)} / DN Mid ${number(candidate.down_mid)}</span>` +
+        `<span class="cell-code">UP Ask ${number(upAsk)} / DN Ask ${number(downAsk)}</span></td>` +
         `<td class="mobile-optional">${stable}</td>` +
         `<td class="desktop-optional" title="${escapeHtml(opening.reason || "")}">${escapeHtml(openingText)}</td>` +
         `<td class="desktop-optional" title="${escapeHtml(forecastTitle)}">${escapeHtml(forecastText)}<span class="cell-code">${escapeHtml(forecastMode)} · girişi ${forecastMode === "ENFORCE" ? "etkiler" : "engellemez"}</span></td>` +

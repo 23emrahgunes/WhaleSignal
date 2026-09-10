@@ -46,9 +46,11 @@ def test_panel_contains_asset_lane_state():
     assert "ladderStepLabel" in script
     assert "fillStatusLabel" in script
     assert "fillEvidenceLabel" in script
+    assert "entryAskLabel" in script
+    assert "Giriş ask · UP" in script
     assert "¢ dolum${time}" in script
-    assert "Mid ${number(candidate.up_mid)} / ${number(candidate.down_mid)}" in script
-    assert "Ask ${number(upAsk)} / ${number(downAsk)}" in script
+    assert "UP Mid ${number(candidate.up_mid)} / DN Mid ${number(candidate.down_mid)}" in script
+    assert "UP Ask ${number(upAsk)} / DN Ask ${number(downAsk)}" in script
     assert "Fiyat-geçmişi rejim kontrolleri girişe engel değildir" in script
     assert "tek bacak resmi market sonucuyla kapatılır" in script
     assert "PAPER_SINGLE_LEG_LOSS" in script
