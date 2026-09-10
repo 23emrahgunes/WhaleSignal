@@ -40,7 +40,6 @@ def _settings(tmp_path, **overrides) -> P3Settings:
         "dual40_opening_gate_mode": "OFF",
         "dual40_forecast_gate_mode": "OFF",
         "dual40_global_risk_mode": "OFF",
-        "dual40_paper_entry_window_sec": 300.0,
         "live_feature_enabled": False,
         "live_auto_execute_enabled": False,
     }
@@ -511,12 +510,11 @@ def test_paper_waits_when_entry_ask_is_far_below_ptb(tmp_path):
         conn.close()
 
 
-def test_paper_only_enters_inside_opening_window(tmp_path):
+def test_paper_can_enter_after_opening_window_when_ptb_returns(tmp_path):
     settings = _settings(
         tmp_path,
         dual40_assets_csv="BTC",
         dual40_paper_max_concurrent_assets=1,
-        dual40_paper_entry_window_sec=5.0,
         dual40_paper_min_entry_ask=0.10,
     )
     now_ms = int(time.time() * 1000)
@@ -529,14 +527,13 @@ def test_paper_only_enters_inside_opening_window(tmp_path):
 
     result = engine.tick()
 
-    assert result["assets"]["BTC"]["status"] != "PAPER_OPENED"
+    assert result["assets"]["BTC"]["status"] == "PAPER_OPENED"
     conn = connect_dual40(settings.p3_db_path)
     try:
-        assert active_cycles(conn, scope="PAPER") == []
+        assert len(active_cycles(conn, scope="PAPER")) == 1
         decisions = market_decisions(conn, scope="PAPER")
         assert len(decisions) == 1
-        assert decisions[0]["reason"] == "PAPER_ENTRY_WINDOW_EXPIRED"
-        assert decisions[0]["final_gate"]["base_gate"]["paper_entry_window_sec"] == 5.0
+        assert decisions[0]["reason"] == "PAPER_RELAXED_LIMIT_READY"
     finally:
         conn.close()
 

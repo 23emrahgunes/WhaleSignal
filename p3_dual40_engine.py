@@ -701,10 +701,7 @@ class Dual40MakerEngine:
         gate_payload = gate.to_dict()
         if str(scope).upper() == "PAPER":
             base["research_regime_gate"] = gate_payload
-            if market_age - 1e-9 > float(self.settings.dual40_paper_entry_window_sec):
-                paper_ready = False
-                paper_reason = "PAPER_ENTRY_WINDOW_EXPIRED"
-            elif min(float(up["best_ask"]), float(down["best_ask"])) + 1e-12 < float(
+            if min(float(up["best_ask"]), float(down["best_ask"])) + 1e-12 < float(
                 self.settings.dual40_paper_min_entry_ask
             ):
                 paper_ready = False
@@ -719,7 +716,6 @@ class Dual40MakerEngine:
                 "up_mid": gate_payload.get("up_mid") or float(up["mid"]),
                 "down_mid": gate_payload.get("down_mid") or float(down["mid"]),
                 "paper_min_entry_ask": float(self.settings.dual40_paper_min_entry_ask),
-                "paper_entry_window_sec": float(self.settings.dual40_paper_entry_window_sec),
                 "research_eligible": bool(gate.eligible),
                 "research_reason": str(gate.reason),
             }
