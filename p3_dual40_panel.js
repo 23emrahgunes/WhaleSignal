@@ -131,6 +131,17 @@
     return `${Math.round(Number(fillPrice) * 100)}¢ dolum${time}`;
   };
 
+  const sideBookTraceLabel = (cycle, side) => {
+    const filled = Number(cycle[`${String(side).toLowerCase()}_filled_shares`] || 0);
+    const evidence = fillEvidenceLabel(cycle, side);
+    if (evidence) return evidence;
+    const details = cycle.details || {};
+    const key = String(side).toLowerCase();
+    const lowest = details[`paper_lowest_${key}_best_ask`];
+    if (lowest != null) return `En düşük ask ${number(lowest)}`;
+    return filled > 0 ? "Dolum kanıtı yok" : "40¢ dokunuş yok";
+  };
+
   const entryAskLabel = (cycle) => {
     const gate = cycle.gate || {};
     const upAsk = gate.up_book && gate.up_book.best_ask;
@@ -622,8 +633,8 @@
       `<td>${escapeHtml(ladderStepLabel(cycle.level_index, cycle.target_shares))}</td>` +
       `<td>${number(cycle.target_shares, 1)}</td>` +
       `<td>${Math.round(Number(cycle.maker_price ?? 0.40) * 100)}¢</td>` +
-      `<td><span class="cell-main">${number(cycle.up_filled_shares)}</span><span class="cell-code">${escapeHtml(fillEvidenceLabel(cycle, "UP") || "Kanıt saati yok")}</span></td>` +
-      `<td><span class="cell-main">${number(cycle.down_filled_shares)}</span><span class="cell-code">${escapeHtml(fillEvidenceLabel(cycle, "DOWN") || "Kanıt saati yok")}</span></td>` +
+      `<td><span class="cell-main">${number(cycle.up_filled_shares)}</span><span class="cell-code">${escapeHtml(sideBookTraceLabel(cycle, "UP"))}</span></td>` +
+      `<td><span class="cell-main">${number(cycle.down_filled_shares)}</span><span class="cell-code">${escapeHtml(sideBookTraceLabel(cycle, "DOWN"))}</span></td>` +
       `<td>${number(cycle.matched_shares)}</td>` +
       `<td>${escapeHtml(cycle.residual_side || "—")} ${number(cycle.residual_shares)}</td>` +
       `<td>${escapeHtml(cycle.official_result || "—")}</td>` +

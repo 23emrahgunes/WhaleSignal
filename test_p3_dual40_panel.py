@@ -46,6 +46,9 @@ def test_panel_contains_asset_lane_state():
     assert "ladderStepLabel" in script
     assert "fillStatusLabel" in script
     assert "fillEvidenceLabel" in script
+    assert "sideBookTraceLabel" in script
+    assert "En düşük ask" in script
+    assert "40¢ dokunuş yok" in script
     assert "entryAskLabel" in script
     assert "Giriş ask · UP" in script
     assert "¢ dolum${time}" in script
