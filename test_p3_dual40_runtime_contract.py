@@ -776,6 +776,82 @@ def test_official_result_uses_p26_slug_when_condition_filter_lags(
         conn.close()
 
 
+def test_official_result_uses_p25_market_record_when_p26_label_lags(
+    tmp_path,
+    monkeypatch,
+):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    p25_path = tmp_path / "p25.sqlite"
+    p25 = sqlite3.connect(p25_path)
+    try:
+        p25.execute(
+            """
+            CREATE TABLE markets(
+              condition_id TEXT PRIMARY KEY,market_id TEXT,slug TEXT,
+              official_result TEXT,official_result_source TEXT,
+              official_resolved_at REAL
+            )
+            """
+        )
+        p25.execute(
+            "INSERT INTO markets VALUES(?,?,?,?,?,?)",
+            (
+                "paper-condition",
+                "789",
+                "btc-updown-5m-test",
+                "UP",
+                "unit-test",
+                1_800_000_000.0,
+            ),
+        )
+        p25.commit()
+    finally:
+        p25.close()
+    monkeypatch.setattr(engine, "_p25_db_path", lambda: str(p25_path))
+
+    store = BookSnapshotStore(settings.p26_db_path)
+    store.close()
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        cycle_id = _create_paper_cycle(
+            conn,
+            now_ms=now_ms,
+            status="WAIT_RESOLUTION",
+            market_end_ts_ms=now_ms - 3_000,
+        )
+        update_cycle(
+            conn,
+            cycle_id,
+            up_filled_shares=5.0,
+            up_fill_price=0.25,
+            residual_side="UP",
+            residual_shares=5.0,
+        )
+        cycle = active_cycle(conn, scope="PAPER", asset="XRP")
+        assert cycle is not None
+
+        result = engine._resolution_tick(conn, cycle, now_ms)
+
+        assert result["status"] == "RESOLVED_UP"
+        settled = cycle_for_condition(
+            conn,
+            scope="PAPER",
+            asset="XRP",
+            condition_id="paper-condition",
+        )
+        assert settled is not None
+        assert settled["official_result"] == "UP"
+        assert settled["details"]["official_result_source"] == "P25:unit-test"
+    finally:
+        conn.close()
+
+
 def test_finalize_uses_current_loss_pool_when_cycle_was_opened_from_stale_state(
     tmp_path,
 ):

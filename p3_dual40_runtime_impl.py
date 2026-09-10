@@ -7,9 +7,11 @@ import sqlite3
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from p25_discovery import authoritative_official_result
+from p26_config import get_p26_settings
 from p3_dual40_analytics import build_dual40_summary, p26_paper_decision_summary
 from p3_dual40_capital import required_live_collateral
 from p3_dual40_core import matched_pair_pnl
@@ -707,6 +709,7 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
         condition_id = str(cycle["condition_id"])
         row = None
         meta = None
+        p25_meta = None
         p26 = open_p26_read_only(self.settings.p26_db_path)
         try:
             row = p26.execute(
@@ -734,8 +737,17 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             side = "UP" if int(row["official_label"]) == 1 else "DOWN"
             source = str(row["official_result_source"] or "P26_OFFICIAL_LABEL")
             return side, f"P26:{source}"
+        p25_meta = self._p25_market_meta(condition_id)
+        if p25_meta is not None:
+            side = str(p25_meta.get("official_result") or "").strip().upper()
+            if side in {"UP", "DOWN"}:
+                source = str(p25_meta.get("official_result_source") or "P25_OFFICIAL_RESULT")
+                return side, f"P25:{source}"
 
-        for market, fetch_source in self._official_result_markets(condition_id, meta):
+        for market, fetch_source in self._official_result_markets(
+            condition_id,
+            self._resolution_meta(meta, p25_meta),
+        ):
             result, source = authoritative_official_result(
                 market,
                 str(cycle["up_token_id"]),
@@ -744,6 +756,51 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             if result is not None:
                 return result.value, f"{fetch_source}:{source}"
         return super()._fetch_official_result(cycle)
+
+    def _p25_db_path(self) -> str:
+        configured = str(getattr(self.settings, "p25_db_path", "") or "").strip()
+        if configured:
+            return configured
+        try:
+            return str(get_p26_settings().p25_db_path)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _p25_market_meta(self, condition_id: str) -> dict[str, Any] | None:
+        path = self._p25_db_path()
+        if not path:
+            return None
+        try:
+            resolved = Path(path).resolve()
+            conn = sqlite3.connect(f"file:{resolved}?mode=ro", uri=True, timeout=6.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            row = conn.execute(
+                """
+                SELECT condition_id,market_id,slug,official_result,
+                       official_result_source,official_resolved_at
+                FROM markets WHERE condition_id=?
+                """,
+                (str(condition_id),),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        finally:
+            try:
+                conn.close()  # type: ignore[name-defined]
+            except Exception:  # noqa: BLE001
+                pass
+        return dict(row) if row is not None else None
+
+    @staticmethod
+    def _resolution_meta(meta, p25_meta: dict[str, Any] | None):  # noqa: ANN001
+        if p25_meta is None:
+            return meta
+        values = dict(p25_meta)
+        if meta is not None:
+            values["market_id"] = values.get("market_id") or meta["market_id"]
+            values["slug"] = values.get("slug") or meta["slug"]
+        return values
 
     def _official_result_markets(
         self,
