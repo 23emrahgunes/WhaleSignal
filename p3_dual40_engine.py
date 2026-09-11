@@ -584,7 +584,7 @@ class Dual40MakerEngine:
         start_ms = end_ms - 300_000
         market_age = max(0.0, (int(now_ms) - start_ms) / 1000.0)
         tte = max(0.0, (end_ms - int(now_ms)) / 1000.0)
-        level_index = int(state_row["level_index"])
+        level_index = 0 if str(scope).upper() == "PAPER" else int(state_row["level_index"])
         profile = self._opening_profile(level_index)
         up = self._latest_book(p26, condition, "UP")
         down = self._latest_book(p26, condition, "DOWN")
@@ -600,8 +600,16 @@ class Dual40MakerEngine:
             "down_token_id": str(market["down_token_id"]),
             "level_index": level_index,
             "target_shares": float(self.policy.ladder[level_index]),
-            "recovery_pending": level_index > 0 or float(state_row["loss_pool_usdc"]) > 1e-9,
-            "recovery_debt_usdc": float(state_row["loss_pool_usdc"]),
+            "recovery_pending": (
+                False
+                if str(scope).upper() == "PAPER"
+                else level_index > 0 or float(state_row["loss_pool_usdc"]) > 1e-9
+            ),
+            "recovery_debt_usdc": (
+                0.0
+                if str(scope).upper() == "PAPER"
+                else float(state_row["loss_pool_usdc"])
+            ),
             "entry_profile": (
                 "PAPER_RELAXED_LIMIT"
                 if str(scope).upper() == "PAPER"
@@ -759,11 +767,35 @@ class Dual40MakerEngine:
             profile=profile,
         )
 
+    @staticmethod
+    def _paper_alternate_market_skip_due(
+        conn,
+        *,
+        asset: str,
+        market_end_ts_ms: int,
+    ) -> bool:  # noqa: ANN001
+        row = conn.execute(
+            """
+            SELECT decision
+            FROM p3_dual40_market_decisions
+            WHERE scope='PAPER'
+              AND asset=?
+              AND market_end_ts_ms<?
+              AND decision IN ('OPENED','PAPER_ALTERNATE_MARKET_SKIP')
+            ORDER BY market_end_ts_ms DESC,updated_at_ms DESC,id DESC
+            LIMIT 1
+            """,
+            (str(asset), int(market_end_ts_ms)),
+        ).fetchone()
+        return row is not None and str(row["decision"]) == "OPENED"
+
     def _decision_for_candidate(self, candidate: dict[str, Any], *, active: bool, hard_stop: bool) -> str:
         if hard_stop:
             return "SKIPPED_HARD_STOP"
         if active:
             return "SKIPPED_ASSET_ACTIVE"
+        if str(candidate.get("reason") or "") == "PAPER_ALTERNATE_MARKET_SKIP":
+            return "PAPER_ALTERNATE_MARKET_SKIP"
         if candidate.get("eligible"):
             stable = float(candidate.get("stable_for_sec") or 0.0)
             required = float(
@@ -837,9 +869,25 @@ class Dual40MakerEngine:
                     state_row=state_by_asset[asset],
                 )
                 candidates.append(item)
-                reasons[str(item.get("reason") or "UNKNOWN")] += 1
                 asset = str(item["asset"])
                 condition = str(item["condition_id"])
+                active = asset in active_by_asset
+                hard_stop = bool((state_by_asset.get(asset) or {}).get("hard_stopped"))
+                if (
+                    str(scope).upper() == "PAPER"
+                    and bool(item.get("eligible"))
+                    and not active
+                    and not hard_stop
+                    and self._paper_alternate_market_skip_due(
+                        conn,
+                        asset=asset,
+                        market_end_ts_ms=int(item["market_end_ts_ms"]),
+                    )
+                ):
+                    item["eligible"] = False
+                    item["reason"] = "PAPER_ALTERNATE_MARKET_SKIP"
+                    item["paper_alternate_market_skip"] = True
+                reasons[str(item.get("reason") or "UNKNOWN")] += 1
                 gate_key = f"{scope}:{asset}:{condition}"
                 if item.get("eligible"):
                     self._gate_since.setdefault(gate_key, time.monotonic())
@@ -850,8 +898,6 @@ class Dual40MakerEngine:
                 else:
                     self._gate_since.pop(gate_key, None)
                     item["stable_for_sec"] = 0.0
-                active = asset in active_by_asset
-                hard_stop = bool((state_by_asset.get(asset) or {}).get("hard_stopped"))
                 decision = self._decision_for_candidate(item, active=active, hard_stop=hard_stop)
                 item["lane_status"] = "ACTIVE" if active else ("HARD_STOP" if hard_stop else "AVAILABLE")
                 item["decision"] = decision
@@ -1000,7 +1046,7 @@ class Dual40MakerEngine:
 
     def _open_paper(self, conn, candidate: dict[str, Any], state_row: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN001
         asset = str(candidate.get("asset") or asset_from_combo_key(str(candidate["combo_key"])))
-        level = int(state_row["level_index"])
+        level = 0
         quantity = float(self.policy.ladder[level])
         opened_at_ms = int(time.time() * 1000)
         immediate_fills: dict[str, dict[str, Any]] = {}
@@ -1045,10 +1091,11 @@ class Dual40MakerEngine:
             gate=opened_gate,
             up_token_id=str(candidate["up_token_id"]),
             down_token_id=str(candidate["down_token_id"]),
-            loss_pool_before_usdc=float(state_row["loss_pool_usdc"]),
+            loss_pool_before_usdc=0.0,
             details={
                 "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
                 "near_touch_41_is_diagnostic_only": True,
+                "paper_strategy_variant": "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE",
                 "post_only": False,
                 "order_type": "GTC_SIMULATED_LIMIT",
                 "entry_cross_policy": "MARKETABLE_LIMIT_FULL_SIDE",
@@ -1298,16 +1345,18 @@ class Dual40MakerEngine:
         state_hard_stopped = transition.hard_stopped
         state_hard_stop_reason = transition.reason if transition.hard_stopped else None
         settlement_extra: dict[str, Any] = {}
-        if scope == "PAPER" and transition.hard_stopped:
+        if scope == "PAPER":
             state_level_index = 0
             state_loss_pool = 0.0
             state_hard_stopped = False
             state_hard_stop_reason = None
             settlement_extra = {
-                "paper_hard_stop_action": "RESET_TO_BASE_NEXT_SERIES",
+                "paper_ladder_action": "RESET_TO_BASE_NO_MARTINGALE",
+                "paper_strategy_variant": "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE",
                 "paper_unrecovered_loss_pool_usdc": round(transition.loss_pool, 6),
-                "paper_hard_stop_reason": transition.reason,
             }
+            if transition.hard_stopped:
+                settlement_extra["paper_hard_stop_reason"] = transition.reason
         terminal_decision = "NO_FILL" if status == "NO_FILL" else "SETTLED"
         prior_gate = cycle.get("gate") if isinstance(cycle.get("gate"), dict) else {}
         settled_gate = {
@@ -1930,7 +1979,11 @@ class Dual40MakerEngine:
             state_by_asset = {asset: ladder_state(conn, scope, asset) for asset in configured_assets}
             if scope == "PAPER":
                 for asset, state_row in list(state_by_asset.items()):
-                    if bool(state_row["hard_stopped"]):
+                    if (
+                        bool(state_row["hard_stopped"])
+                        or int(state_row["level_index"]) != 0
+                        or abs(float(state_row["loss_pool_usdc"])) > 1e-9
+                    ):
                         set_ladder_state(
                             conn,
                             scope=scope,
@@ -2039,10 +2092,11 @@ class Dual40MakerEngine:
                     "paper_settlement_rule": "OFFICIAL_RESULT_ACTUAL_FILL_PRICE",
                     "paper_waits_for_official_result": True,
                     "paper_settlement_grace_ms": 2000,
-                    "paper_entry_profile": "RELAXED_LIMIT_NO_PRICE_REGIME_NO_CONFIRM_NO_CROSS_REJECT",
+                    "paper_strategy_variant": "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE",
+                    "paper_entry_profile": "OPEN_IMMEDIATE_ALTERNATE_MARKETS",
                     "near_touch_41_diagnostic_only": True,
                     "entry": "PAPER_RELAXED_LIMIT",
-                    "paper_entry": "RELAXED_LIMIT",
+                    "paper_entry": "ALTERNATE_MARKET_LIMIT",
                     "live_entry": "BALANCED_STABLE_POST_ONLY",
                     "opening_gate_mode": self.settings.dual40_opening_mode(),
                     "forecast_gate_mode": self.settings.dual40_forecast_mode(),

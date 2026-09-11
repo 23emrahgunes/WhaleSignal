@@ -180,6 +180,7 @@
     MARKET_WARMUP: "Market başlangıç verisi birikiyor",
     PAPER_ENTRY_ASK_TOO_LOW: "Fiyat PTB'den uzak, bekleniyor",
     PAPER_PTB_TOO_FAR: "Fiyat PTB'den uzak, bekleniyor",
+    PAPER_ALTERNATE_MARKET_SKIP: "Sıra gereği bu market pas",
     REGIME_HISTORY_INSUFFICIENT: "Rejim geçmişi yetersiz",
     WAITING_OPENING_WINDOW: "Açılış penceresi bekleniyor",
     OPENING_HISTORY_INSUFFICIENT: "Açılış geçmişi yetersiz",
@@ -344,7 +345,7 @@
       status.innerHTML =
         metric(mode, "Çalışma modu", mode === "LIVE_ARMED" ? "bad" : "ok") +
         metric(`${price} + ${price}`, "Emir çifti") +
-        metric(ladder.join(" → "), "Recovery merdiveni") +
+        metric("5 sabit · bir gir bir pas", "PAPER sıra modu") +
         metric(gateModes, "Opening / forecast") +
         metric(`${policy.paper_max_concurrent_assets ?? 4} / ${policy.live_max_concurrent_assets ?? 1}`, "PAPER / LIVE paralellik") +
         metric(dbValue, "Veritabanı", data.db_integrity === "ok" ? "ok" : dbChecking ? "warn" : "bad");
@@ -356,14 +357,14 @@
         const assetSummary = byAsset[asset] || {};
         const paper = (assetSummary.state || {}).PAPER || paperStates[asset] || {};
         const level = paper.level_index == null ? 0 : Number(paper.level_index);
-        const target = ladder[level] ?? "—";
+        const target = ladder[0] ?? "—";
         const debt = Number(paper.recovery_debt_usdc ?? paper.loss_pool_usdc ?? 0);
         const active = paper.active_cycle;
         const paperDecisions = (assetSummary.decisions || {}).PAPER || {};
         const latestEvaluation = paperDecisions.latest_evaluation || paperDecisions.latest_skip;
         const hardStopped = Boolean(paper.hard_stopped);
-        const laneClass = hardStopped ? "bad-lane" : debt > 0 ? "warn-lane" : "";
-        const badge = hardStopped ? "HARD STOP" : debt > 0 ? "RECOVERY" : "HAZIR";
+        const laneClass = hardStopped ? "bad-lane" : "";
+        const badge = hardStopped ? "HARD STOP" : "HAZIR";
         const activeText = active
           ? `#${active.id} · ${marketWindowLabel(active)} · ` +
             `${Math.round(Number(active.maker_price ?? policy.price ?? 0.40) * 100)}¢ + ` +
@@ -377,8 +378,8 @@
           `<article class="lane ${laneClass}">` +
           `<div class="lane-head"><span class="lane-asset">${asset}</span><span class="lane-badge">${badge}</span></div>` +
           `<div class="lane-values">` +
-          `<div class="lane-value"><b>${escapeHtml(target)}</b><span>${escapeHtml(ladderStepLabel(level, target))}</span></div>` +
-          `<div class="lane-value"><b class="${debt > 0 ? "warn" : "ok"}">$${number(debt)}</b><span>Recovery borcu</span></div>` +
+          `<div class="lane-value"><b>${escapeHtml(target)}</b><span>5 share sabit</span></div>` +
+          `<div class="lane-value"><b class="ok">$${number(debt)}</b><span>Recovery kapalı</span></div>` +
           `<div class="lane-value"><b>${escapeHtml(paper.markets_skipped ?? 0)}</b><span>Atlanan market</span></div>` +
           `</div><div class="lane-foot" title="${escapeHtml(activeText)}">${escapeHtml(activeText)}</div>` +
           `</article>`

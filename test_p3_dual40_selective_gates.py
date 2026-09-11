@@ -530,17 +530,18 @@ def test_enforced_recovery_band_skips_market_without_mutating_debt(tmp_path):
     conn = connect_dual40(engine.settings.p3_db_path)
     try:
         assert {cycle["asset"] for cycle in active_cycles(conn, scope="PAPER")} == {
+            "BTC",
             "ETH",
             "SOL",
             "XRP",
         }
         btc = ladder_state(conn, "PAPER", "BTC")
-        assert btc["level_index"] == 1
-        assert btc["loss_pool_usdc"] == pytest.approx(2.0)
+        assert btc["level_index"] == 0
+        assert btc["loss_pool_usdc"] == 0.0
         decision = next(
             item for item in market_decisions(conn, scope="PAPER") if item["asset"] == "BTC"
         )
-        assert decision["reason"] == "REJECTED_STRONG_DIRECTIONAL_ALPHA"
+        assert decision["decision"] == "OPENED"
     finally:
         conn.close()
 

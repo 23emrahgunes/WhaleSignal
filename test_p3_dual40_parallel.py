@@ -263,7 +263,8 @@ def test_recovery_state_is_asset_scoped(tmp_path):
             pnl=-2.0,
             official_result="DOWN",
         )
-        assert ladder_state(conn, "PAPER", "ETH")["level_index"] == 1
+        assert ladder_state(conn, "PAPER", "ETH")["level_index"] == 0
+        assert ladder_state(conn, "PAPER", "ETH")["loss_pool_usdc"] == 0.0
         decision = next(
             item
             for item in market_decisions(conn, scope="PAPER")
@@ -770,12 +771,12 @@ def test_deterministic_local_simulation_asset_scoped_recovery(tmp_path):
 
         assert ladder_state(conn, "PAPER", "BTC")["level_index"] == 0
         assert ladder_state(conn, "PAPER", "BTC")["loss_pool_usdc"] == 0.0
-        assert ladder_state(conn, "PAPER", "ETH")["level_index"] == 1
-        assert ladder_state(conn, "PAPER", "ETH")["loss_pool_usdc"] == pytest.approx(2.0)
+        assert ladder_state(conn, "PAPER", "ETH")["level_index"] == 0
+        assert ladder_state(conn, "PAPER", "ETH")["loss_pool_usdc"] == 0.0
         assert ladder_state(conn, "PAPER", "SOL")["level_index"] == 0
         assert ladder_state(conn, "PAPER", "SOL")["loss_pool_usdc"] == 0.0
         assert ladder_state(conn, "PAPER", "XRP")["level_index"] == 0
-        assert ladder_state(conn, "PAPER", "XRP")["loss_pool_usdc"] == pytest.approx(0.6)
+        assert ladder_state(conn, "PAPER", "XRP")["loss_pool_usdc"] == 0.0
         assert {item["asset"] for item in market_decisions(conn, scope="PAPER", limit=20) if item["condition_id"].startswith("sim-")} == set(ASSETS)
     finally:
         conn.close()

@@ -18,6 +18,7 @@ from p3_dual40_store import (
     ladder_state,
     set_ladder_state,
     update_cycle,
+    upsert_market_decision,
 )
 from p3_live_state import LiveState
 
@@ -561,8 +562,8 @@ def test_paper_wait_resolution_advances_ladder_only_after_actual_loss(
         assert result["status"] == "RESOLVED_DOWN"
         assert result["pnl_usdc"] == pytest.approx(-1.25)
         recovery = ladder_state(conn, "PAPER", "XRP")
-        assert recovery["level_index"] == 1
-        assert recovery["loss_pool_usdc"] == pytest.approx(1.25)
+        assert recovery["level_index"] == 0
+        assert recovery["loss_pool_usdc"] == 0.0
     finally:
         conn.close()
 
@@ -898,8 +899,8 @@ def test_finalize_uses_current_loss_pool_when_cycle_was_opened_from_stale_state(
 
         assert result["status"] == "RESOLVED_UP"
         recovery = ladder_state(conn, "PAPER", "XRP")
-        assert recovery["loss_pool_usdc"] == pytest.approx(1.45)
-        assert recovery["level_index"] == 1
+        assert recovery["loss_pool_usdc"] == 0.0
+        assert recovery["level_index"] == 0
         settled = cycle_for_condition(
             conn,
             scope="PAPER",
@@ -907,7 +908,7 @@ def test_finalize_uses_current_loss_pool_when_cycle_was_opened_from_stale_state(
             condition_id="paper-condition",
         )
         assert settled is not None
-        assert settled["loss_pool_after_usdc"] == pytest.approx(1.45)
+        assert settled["loss_pool_after_usdc"] == pytest.approx(0.0)
     finally:
         conn.close()
 
@@ -959,10 +960,57 @@ def test_paper_hard_stop_terminal_loss_starts_new_base_series(tmp_path):
         )
         assert settled is not None
         assert settled["loss_pool_after_usdc"] == pytest.approx(0.0)
-        assert settled["details"]["paper_hard_stop_action"] == (
-            "RESET_TO_BASE_NEXT_SERIES"
-        )
+        assert settled["details"]["paper_ladder_action"] == "RESET_TO_BASE_NO_MARTINGALE"
         assert settled["details"]["paper_unrecovered_loss_pool_usdc"] > 0
+    finally:
+        conn.close()
+
+
+def test_paper_alternate_market_skip_toggles_after_opened_market(tmp_path):
+    settings = _settings(tmp_path)
+    engine = ProductionDual40MakerEngine(
+        settings,
+        LiveState(live_feature_enabled=True, auto_execute_enabled=True),
+        gateway_factory=lambda _: object(),
+    )
+    conn = connect_dual40(settings.p3_db_path)
+    try:
+        now_ms = int(time.time() * 1000)
+        upsert_market_decision(
+            conn,
+            scope="PAPER",
+            asset="BTC",
+            combo_key="BTC:5m",
+            condition_id="opened-market",
+            market_start_ts_ms=now_ms - 300_000,
+            market_end_ts_ms=now_ms,
+            decision="OPENED",
+            reason="PAPER_RELAXED_LIMIT_READY",
+            eligible=True,
+        )
+        assert engine._paper_alternate_market_skip_due(
+            conn,
+            asset="BTC",
+            market_end_ts_ms=now_ms + 300_000,
+        )
+
+        upsert_market_decision(
+            conn,
+            scope="PAPER",
+            asset="BTC",
+            combo_key="BTC:5m",
+            condition_id="skipped-market",
+            market_start_ts_ms=now_ms,
+            market_end_ts_ms=now_ms + 300_000,
+            decision="PAPER_ALTERNATE_MARKET_SKIP",
+            reason="PAPER_ALTERNATE_MARKET_SKIP",
+            eligible=False,
+        )
+        assert not engine._paper_alternate_market_skip_due(
+            conn,
+            asset="BTC",
+            market_end_ts_ms=now_ms + 600_000,
+        )
     finally:
         conn.close()
 
