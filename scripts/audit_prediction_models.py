@@ -15,14 +15,18 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-def _connect_ro(path: str) -> sqlite3.Connection | None:
+def _connect_ro(path: str, *, timeout_sec: float) -> sqlite3.Connection | None:
     resolved = Path(path).resolve()
     if not resolved.exists():
         return None
-    conn = sqlite3.connect(f"file:{resolved}?mode=ro", uri=True, timeout=30.0)
+    conn = sqlite3.connect(
+        f"file:{resolved}?mode=ro",
+        uri=True,
+        timeout=float(timeout_sec),
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
-    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute(f"PRAGMA busy_timeout={int(float(timeout_sec) * 1000)}")
     return conn
 
 
@@ -190,26 +194,41 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--p25-db", default="data/direction_engine.sqlite")
     parser.add_argument("--p26-db", default="data/p26_research.sqlite")
+    parser.add_argument("--sqlite-timeout-sec", type=float, default=3.0)
     args = parser.parse_args()
 
     output: dict[str, Any] = {}
-    p25 = _connect_ro(args.p25_db)
-    if p25 is None:
-        output["p25"] = {"status": "DB_NOT_FOUND", "path": args.p25_db}
-    else:
-        try:
-            output["p25"] = audit_p25(p25)
-        finally:
-            p25.close()
+    try:
+        p25 = _connect_ro(args.p25_db, timeout_sec=args.sqlite_timeout_sec)
+        if p25 is None:
+            output["p25"] = {"status": "DB_NOT_FOUND", "path": args.p25_db}
+        else:
+            try:
+                output["p25"] = audit_p25(p25)
+            finally:
+                p25.close()
+    except sqlite3.OperationalError as exc:
+        output["p25"] = {
+            "status": "SQLITE_OPERATIONAL_ERROR",
+            "path": args.p25_db,
+            "error": str(exc),
+        }
 
-    p26 = _connect_ro(args.p26_db)
-    if p26 is None:
-        output["p26"] = {"status": "DB_NOT_FOUND", "path": args.p26_db}
-    else:
-        try:
-            output["p26"] = audit_p26(p26)
-        finally:
-            p26.close()
+    try:
+        p26 = _connect_ro(args.p26_db, timeout_sec=args.sqlite_timeout_sec)
+        if p26 is None:
+            output["p26"] = {"status": "DB_NOT_FOUND", "path": args.p26_db}
+        else:
+            try:
+                output["p26"] = audit_p26(p26)
+            finally:
+                p26.close()
+    except sqlite3.OperationalError as exc:
+        output["p26"] = {
+            "status": "SQLITE_OPERATIONAL_ERROR",
+            "path": args.p26_db,
+            "error": str(exc),
+        }
 
     print(json.dumps(output, indent=2, sort_keys=True))
     return 0
