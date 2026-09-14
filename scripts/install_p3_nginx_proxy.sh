@@ -57,6 +57,6 @@ $SUDO systemctl enable nginx >/dev/null 2>&1 || true
 $SUDO systemctl reload nginx || $SUDO systemctl restart nginx
 
 echo "=== PROXY HEALTH ==="
-curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1/health
+curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${SERVER_NAME}" http://127.0.0.1/health
 echo
-echo "P3_NGINX_PROXY_PASS | public=http://SERVER_IP/ | upstream=${UPSTREAM}"
+echo "P3_NGINX_PROXY_PASS | public=http://${SERVER_NAME}/ | upstream=${UPSTREAM}"
