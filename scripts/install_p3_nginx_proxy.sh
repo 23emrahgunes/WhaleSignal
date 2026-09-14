@@ -6,6 +6,7 @@ UPSTREAM="${P3_PROXY_UPSTREAM:-http://127.0.0.1:8093}"
 SITE_NAME="${P3_PROXY_SITE_NAME:-direction-engine-p3}"
 SITE_AVAILABLE="/etc/nginx/sites-available/${SITE_NAME}"
 SITE_ENABLED="/etc/nginx/sites-enabled/${SITE_NAME}"
+DISABLED_DIR="/etc/nginx/sites-disabled-by-direction-engine"
 
 if [[ "$EUID" -eq 0 ]]; then
   SUDO=""
@@ -51,11 +52,12 @@ server {
 }
 EOF
 
+$SUDO mkdir -p "$DISABLED_DIR"
 for enabled in /etc/nginx/sites-enabled/*; do
   [[ -e "$enabled" ]] || continue
   [[ "$enabled" == "$SITE_ENABLED" ]] && continue
   if $SUDO grep -Eq 'listen[[:space:]]+(\[::\]:)?80([^;]*[[:space:]])default_server' "$enabled" 2>/dev/null; then
-    backup="${enabled}.disabled-by-direction-engine.$(date +%Y%m%d%H%M%S)"
+    backup="${DISABLED_DIR}/$(basename "$enabled").$(date +%Y%m%d%H%M%S)"
     echo "disabling_conflicting_default=${enabled} backup=${backup}"
     $SUDO mv "$enabled" "$backup"
   fi
