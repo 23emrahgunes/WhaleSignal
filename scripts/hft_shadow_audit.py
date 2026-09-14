@@ -187,6 +187,79 @@ def _load_recent_rows(
     ).fetchall()
 
 
+def _ms_age(now_ms: int, value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round((now_ms - int(value)) / 1000, 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _diagnostics(
+    conn: sqlite3.Connection,
+    *,
+    now_ms: int,
+    since_ms: int,
+    combo_like: str | None,
+) -> dict[str, Any]:
+    summary = conn.execute(
+        """
+        SELECT count(*) AS rows,
+               min(recv_ts_ms) AS min_recv_ts_ms,
+               max(recv_ts_ms) AS max_recv_ts_ms,
+               count(DISTINCT combo_key) AS combos,
+               count(DISTINCT condition_id) AS conditions
+        FROM p26_clob_books
+        """
+    ).fetchone()
+    recent_count = conn.execute(
+        "SELECT count(*) FROM p26_clob_books WHERE recv_ts_ms>=?",
+        (int(since_ms),),
+    ).fetchone()[0]
+    filtered_count = None
+    if combo_like:
+        filtered_count = conn.execute(
+            """
+            SELECT count(*)
+            FROM p26_clob_books
+            WHERE recv_ts_ms>=? AND combo_key LIKE ?
+            """,
+            (int(since_ms), str(combo_like)),
+        ).fetchone()[0]
+    combos = conn.execute(
+        """
+        SELECT combo_key,
+               count(*) AS rows,
+               max(recv_ts_ms) AS max_recv_ts_ms
+        FROM p26_clob_books
+        GROUP BY combo_key
+        ORDER BY max_recv_ts_ms DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    return {
+        "table_rows": int(summary["rows"] or 0),
+        "table_conditions": int(summary["conditions"] or 0),
+        "table_combos": int(summary["combos"] or 0),
+        "min_recv_ts_ms": summary["min_recv_ts_ms"],
+        "max_recv_ts_ms": summary["max_recv_ts_ms"],
+        "last_book_age_sec": _ms_age(now_ms, summary["max_recv_ts_ms"]),
+        "recent_rows_before_combo_filter": int(recent_count or 0),
+        "recent_rows_after_combo_filter": (
+            int(filtered_count) if filtered_count is not None else None
+        ),
+        "sample_recent_combos": [
+            {
+                "combo_key": row["combo_key"],
+                "rows": int(row["rows"] or 0),
+                "last_age_sec": _ms_age(now_ms, row["max_recv_ts_ms"]),
+            }
+            for row in combos
+        ],
+    }
+
+
 def build_report(
     conn: sqlite3.Connection,
     *,
@@ -204,6 +277,12 @@ def build_report(
         conn,
         since_ms=since_ms,
         limit=limit,
+        combo_like=combo_like,
+    )
+    diagnostics = _diagnostics(
+        conn,
+        now_ms=now_ms,
+        since_ms=since_ms,
         combo_like=combo_like,
     )
     overall = GroupAudit()
@@ -245,6 +324,7 @@ def build_report(
         "status": "OK",
         "created_at_ms": now_ms,
         "db_rows_scanned": len(rows),
+        "diagnostics": diagnostics,
         "lookback_minutes": lookback_minutes,
         "maker_price": maker_price,
         "stale_after_ms": stale_after_ms,
