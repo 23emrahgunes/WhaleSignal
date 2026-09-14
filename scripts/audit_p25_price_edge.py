@@ -13,6 +13,7 @@ import argparse
 import json
 import sqlite3
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,51 @@ def _source_probability(row: sqlite3.Row, columns: set[str], source: str) -> flo
     return None
 
 
+@dataclass
+class Bucket:
+    n: int = 0
+    wins: int = 0
+    pnl: float = 0.0
+    price_sum: float = 0.0
+    sides: Counter[str] = field(default_factory=Counter)
+    combo_n: Counter[str] = field(default_factory=Counter)
+    combo_wins: Counter[str] = field(default_factory=Counter)
+    combo_pnl: defaultdict[str, float] = field(default_factory=lambda: defaultdict(float))
+
+    def add(self, trade: dict[str, Any]) -> None:
+        combo = str(trade["combo_key"])
+        self.n += 1
+        self.wins += int(bool(trade["correct"]))
+        self.pnl += float(trade["pnl"])
+        self.price_sum += float(trade["price"])
+        self.sides[str(trade["side"])] += 1
+        self.combo_n[combo] += 1
+        self.combo_wins[combo] += int(bool(trade["correct"]))
+        self.combo_pnl[combo] += float(trade["pnl"])
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.n == 0:
+            return {"n": 0}
+        return {
+            "n": self.n,
+            "wins": self.wins,
+            "losses": self.n - self.wins,
+            "hit_rate": round(self.wins / self.n, 4),
+            "pnl_per_1usdc_stake": round(self.pnl, 6),
+            "roi": round(self.pnl / self.n, 6),
+            "avg_entry_price": round(self.price_sum / self.n, 6),
+            "sides": dict(self.sides),
+            "per_combo": {
+                combo: {
+                    "n": n,
+                    "hit_rate": round(self.combo_wins[combo] / n, 4),
+                    "roi": round(self.combo_pnl[combo] / n, 6),
+                }
+                for combo, n in sorted(self.combo_n.items())
+            },
+        }
+
+
 def _trade(row: sqlite3.Row, p_up: float, min_edge: float) -> dict[str, Any] | None:
     market_up = row["p_up_market"]
     if market_up is None:
@@ -85,8 +131,7 @@ def _trade(row: sqlite3.Row, p_up: float, min_edge: float) -> dict[str, Any] | N
         return None
 
     correct = side == result
-    shares = 1.0 / price
-    pnl = shares - 1.0 if correct else -1.0
+    pnl = (1.0 / price) - 1.0 if correct else -1.0
     return {
         "side": side,
         "price": price,
@@ -95,40 +140,6 @@ def _trade(row: sqlite3.Row, p_up: float, min_edge: float) -> dict[str, Any] | N
         "pnl": pnl,
         "combo_key": str(row["combo_key"] or "UNKNOWN"),
     }
-
-
-def _summarize(trades: list[dict[str, Any]]) -> dict[str, Any]:
-    if not trades:
-        return {"n": 0}
-    wins = sum(1 for item in trades if item["correct"])
-    pnl = sum(float(item["pnl"]) for item in trades)
-    avg_price = sum(float(item["price"]) for item in trades) / len(trades)
-    sides = Counter(str(item["side"]) for item in trades)
-    per_combo: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in trades:
-        per_combo[str(item["combo_key"])].append(item)
-    return {
-        "n": len(trades),
-        "wins": wins,
-        "losses": len(trades) - wins,
-        "hit_rate": round(wins / len(trades), 4),
-        "pnl_per_1usdc_stake": round(pnl, 6),
-        "roi": round(pnl / len(trades), 6),
-        "avg_entry_price": round(avg_price, 6),
-        "sides": dict(sides),
-        "per_combo": {
-            combo: {
-                "n": len(items),
-                "hit_rate": round(
-                    sum(1 for item in items if item["correct"]) / len(items),
-                    4,
-                ),
-                "roi": round(sum(float(item["pnl"]) for item in items) / len(items), 6),
-            }
-            for combo, items in sorted(per_combo.items())
-        },
-    }
-
 
 def build_report(conn: sqlite3.Connection, thresholds: list[float]) -> dict[str, Any]:
     if "forecasts" not in _tables(conn):
@@ -143,38 +154,45 @@ def build_report(conn: sqlite3.Connection, thresholds: list[float]) -> dict[str,
         (required | {"decision"} | {col for cols in SOURCES.values() for col in cols})
         & columns
     )
-    rows = conn.execute(
+    cursor = conn.execute(
         f"""
         SELECT {', '.join(select_columns)}
         FROM forecasts
         WHERE official_result IN ('UP','DOWN') AND p_up_market IS NOT NULL
         """
-    ).fetchall()
+    )
+    buckets: dict[str, dict[str, Bucket]] = {
+        source: {f"{threshold:.3f}": Bucket() for threshold in thresholds}
+        for source in SOURCES
+        if any(column in columns for column in SOURCES[source])
+    }
+    usable: Counter[str] = Counter()
+    settled_with_market_price = 0
+    for row in cursor:
+        settled_with_market_price += 1
+        for source in buckets:
+            p_up = _source_probability(row, columns, source)
+            if p_up is None:
+                continue
+            usable[source] += 1
+            for threshold in thresholds:
+                trade = _trade(row, p_up, threshold)
+                if trade is not None:
+                    buckets[source][f"{threshold:.3f}"].add(trade)
 
     report: dict[str, Any] = {
         "status": "OK",
-        "settled_with_market_price": len(rows),
+        "settled_with_market_price": settled_with_market_price,
         "thresholds": thresholds,
         "sources": {},
     }
-    for source in SOURCES:
-        if not any(column in columns for column in SOURCES[source]):
-            continue
-        source_rows = [
-            row for row in rows if _source_probability(row, columns, source) is not None
-        ]
-        by_threshold = {}
-        for threshold in thresholds:
-            trades = [
-                trade
-                for row in source_rows
-                for trade in [_trade(row, _source_probability(row, columns, source), threshold)]
-                if trade is not None
-            ]
-            by_threshold[f"{threshold:.3f}"] = _summarize(trades)
+    for source, source_buckets in buckets.items():
         report["sources"][source] = {
-            "usable": len(source_rows),
-            "thresholds": by_threshold,
+            "usable": int(usable[source]),
+            "thresholds": {
+                threshold: bucket.to_dict()
+                for threshold, bucket in source_buckets.items()
+            },
         }
     return report
 
