@@ -23,8 +23,8 @@ from p3_dual40_store import (
 from p3_live_state import LiveState
 
 
-def _settings(tmp_path) -> P3Settings:
-    return P3Settings(
+def _settings(tmp_path, **overrides) -> P3Settings:
+    values = dict(
         _env_file=None,
         strategy_mode=DUAL40_MODE,
         p26_db_path=str(tmp_path / "p26.sqlite"),
@@ -35,6 +35,8 @@ def _settings(tmp_path) -> P3Settings:
         dual40_min_collateral_to_arm_usdc=35.0,
         dual40_near_touch_price=0.41,
     )
+    values.update(overrides)
+    return P3Settings(**values)
 
 
 def test_production_runtime_reads_real_p26_book_schema_and_near_touch(tmp_path):
@@ -124,7 +126,7 @@ def _insert_touch_pair(
     *,
     observed_ms: int,
     source_ms: int | None = None,
-    ask_size: float = 0.01,
+    ask_size: float = 5.0,
     up_ask: float = 0.40,
     down_ask: float = 0.40,
 ) -> None:
@@ -192,7 +194,7 @@ def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
         assert settled["down_fill_price"] == pytest.approx(0.35)
         assert settled["realized_pnl_usdc"] == pytest.approx(2.0)
         assert settled["details"]["paper_fill_rule"] == (
-            "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+            "PAIRED_TOUCH_BOTH_SIDES_SAME_TICK"
         )
         assert settled["details"]["paper_up_fill_evidence"]["touch_ts_ms"] == observed_ms
     finally:
@@ -200,7 +202,7 @@ def test_paper_any_recorded_40c_touch_fills_full_virtual_pair(tmp_path):
 
 
 def test_paper_fill_price_is_first_recorded_executable_ask(tmp_path):
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, dual40_paper_entry_mode="RELAXED_SINGLE_LEG")
     engine = ProductionDual40MakerEngine(
         settings,
         LiveState(live_feature_enabled=True, auto_execute_enabled=True),
@@ -251,7 +253,7 @@ def test_paper_fill_price_is_first_recorded_executable_ask(tmp_path):
 
 
 def test_paper_rechecks_existing_book_rows_when_recv_time_advances(tmp_path):
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, dual40_paper_entry_mode="RELAXED_SINGLE_LEG")
     engine = ProductionDual40MakerEngine(
         settings,
         LiveState(live_feature_enabled=True, auto_execute_enabled=True),

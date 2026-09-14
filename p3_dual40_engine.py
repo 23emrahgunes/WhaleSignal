@@ -126,6 +126,7 @@ def _book_view(row: Any) -> dict[str, Any] | None:
         "spread": best_ask - best_bid,
         "bid_at_40": sum(size for price, size in bids if abs(price - 0.40) <= 1e-9),
         "ask_at_40": sum(size for price, size in asks if abs(price - 0.40) <= 1e-9),
+        "ask_depth_lte_40": sum(size for price, size in asks if price <= 0.40 + 1e-12),
         "near_ask_depth": sum(size for price, size in asks if price <= near_ask_limit + 1e-12),
         "near_bid_depth": sum(size for price, size in bids if price + 1e-12 >= near_bid_limit),
     }
@@ -438,6 +439,21 @@ class Dual40MakerEngine:
             "max_recovery_exposure_usdc": float(self.settings.dual40_max_recovery_exposure_usdc),
         }
 
+    def _paper_entry_mode(self) -> str:
+        return str(self.settings.dual40_paper_entry_mode).strip().upper()
+
+    def _paper_visible_capacity(self, book: dict[str, Any]) -> float:
+        if book.get("visible_ask_capacity_at_maker") is not None:
+            return float(book["visible_ask_capacity_at_maker"])
+        return float(book.get("ask_depth_lte_40") or 0.0)
+
+    def _paper_side_limit_ready(self, book: dict[str, Any], quantity: float) -> bool:
+        return (
+            float(book.get("best_ask") or 1.0) <= self.policy.price + 1e-12
+            and self._paper_visible_capacity(book) + float(self.settings.dual40_fill_epsilon)
+            >= float(quantity)
+        )
+
     @staticmethod
     def _maker_fee_ready(p26, condition_id: str, tokens: tuple[str, str]) -> tuple[bool, str]:  # noqa: ANN001
         rows = p26.execute(
@@ -709,14 +725,31 @@ class Dual40MakerEngine:
         gate_payload = gate.to_dict()
         if str(scope).upper() == "PAPER":
             base["research_regime_gate"] = gate_payload
+            target_shares = float(self.policy.ladder[level_index])
+            up_limit_ready = self._paper_side_limit_ready(up, target_shares)
+            down_limit_ready = self._paper_side_limit_ready(down, target_shares)
+            paired_touch_ready = up_limit_ready and down_limit_ready
+            base["paper_entry_mode"] = self._paper_entry_mode()
+            base["paper_up_ask_depth_at_40"] = self._paper_visible_capacity(up)
+            base["paper_down_ask_depth_at_40"] = self._paper_visible_capacity(down)
+            base["paper_up_limit_ready"] = up_limit_ready
+            base["paper_down_limit_ready"] = down_limit_ready
+            base["paper_pair_limit_ready"] = paired_touch_ready
             if min(float(up["best_ask"]), float(down["best_ask"])) + 1e-12 < float(
                 self.settings.dual40_paper_min_entry_ask
             ):
                 paper_ready = False
                 paper_reason = "PAPER_PTB_TOO_FAR"
+            elif self._paper_entry_mode() == "PAIRED_TOUCH" and not paired_touch_ready:
+                paper_ready = False
+                paper_reason = "PAPER_PAIR_NOT_EXECUTABLE_AT_LIMIT"
             else:
                 paper_ready = True
-                paper_reason = "PAPER_RELAXED_LIMIT_READY"
+                paper_reason = (
+                    "PAPER_PAIR_EXECUTABLE_AT_LIMIT"
+                    if self._paper_entry_mode() == "PAIRED_TOUCH"
+                    else "PAPER_RELAXED_LIMIT_READY"
+                )
             gate_payload = {
                 **gate_payload,
                 "eligible": paper_ready,
@@ -724,6 +757,10 @@ class Dual40MakerEngine:
                 "up_mid": gate_payload.get("up_mid") or float(up["mid"]),
                 "down_mid": gate_payload.get("down_mid") or float(down["mid"]),
                 "paper_min_entry_ask": float(self.settings.dual40_paper_min_entry_ask),
+                "paper_entry_mode": self._paper_entry_mode(),
+                "paper_up_ask_depth_at_40": self._paper_visible_capacity(up),
+                "paper_down_ask_depth_at_40": self._paper_visible_capacity(down),
+                "paper_pair_limit_ready": paired_touch_ready,
                 "research_eligible": bool(gate.eligible),
                 "research_reason": str(gate.reason),
             }
@@ -808,6 +845,7 @@ class Dual40MakerEngine:
             "MARKET_WARMUP",
             "PAPER_ENTRY_ASK_TOO_LOW",
             "PAPER_PTB_TOO_FAR",
+            "PAPER_PAIR_NOT_EXECUTABLE_AT_LIMIT",
             "WAITING_OPENING_WINDOW",
             "OPENING_HISTORY_INSUFFICIENT",
         }:
@@ -1055,7 +1093,14 @@ class Dual40MakerEngine:
             if not isinstance(book, dict) or book.get("best_ask") is None:
                 continue
             best_ask = float(book["best_ask"])
-            if best_ask <= self.policy.price + 1e-12:
+            if (
+                best_ask <= self.policy.price + 1e-12
+                and (
+                    self._paper_entry_mode() != "PAIRED_TOUCH"
+                    or self._paper_visible_capacity(book) + float(self.settings.dual40_fill_epsilon)
+                    >= quantity
+                )
+            ):
                 immediate_fills[side] = {
                     "book_id": int(book["id"]),
                     "best_ask": best_ask,
@@ -1065,6 +1110,8 @@ class Dual40MakerEngine:
                     "recv_ts_ms": int(book.get("recv_ts_ms") or 0),
                     "fill_kind": "ENTRY_MARKETABLE_LIMIT",
                 }
+        if self._paper_entry_mode() == "PAIRED_TOUCH" and set(immediate_fills) != {"UP", "DOWN"}:
+            immediate_fills = {}
         opened_gate = {
             **candidate,
             "stages": [
@@ -1093,12 +1140,24 @@ class Dual40MakerEngine:
             down_token_id=str(candidate["down_token_id"]),
             loss_pool_before_usdc=0.0,
             details={
-                "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                "paper_fill_rule": (
+                    "PAIRED_TOUCH_BOTH_SIDES_SAME_TICK"
+                    if self._paper_entry_mode() == "PAIRED_TOUCH"
+                    else "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+                ),
                 "near_touch_41_is_diagnostic_only": True,
-                "paper_strategy_variant": "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE",
+                "paper_strategy_variant": (
+                    "PAIRED_TOUCH_5_SHARE_NO_SINGLE_LEG"
+                    if self._paper_entry_mode() == "PAIRED_TOUCH"
+                    else "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE"
+                ),
                 "post_only": False,
                 "order_type": "GTC_SIMULATED_LIMIT",
-                "entry_cross_policy": "MARKETABLE_LIMIT_FULL_SIDE",
+                "entry_cross_policy": (
+                    "BOTH_SIDES_MARKETABLE_LIMIT_OR_NO_FILL"
+                    if self._paper_entry_mode() == "PAIRED_TOUCH"
+                    else "MARKETABLE_LIMIT_FULL_SIDE"
+                ),
             },
         )
         up_filled = quantity if "UP" in immediate_fills else 0.0
@@ -1471,7 +1530,7 @@ class Dual40MakerEngine:
         if up is not None:
             if float(up["best_ask"]) <= float(self.settings.dual40_near_touch_price) + 1e-12:
                 near_up = 1
-            if (
+            if self._paper_entry_mode() != "PAIRED_TOUCH" and (
                 up_filled + float(self.settings.dual40_fill_epsilon) < quantity
                 and float(up["best_ask"]) <= maker_price + 1e-12
             ):
@@ -1480,12 +1539,25 @@ class Dual40MakerEngine:
         if down is not None:
             if float(down["best_ask"]) <= float(self.settings.dual40_near_touch_price) + 1e-12:
                 near_down = 1
-            if (
+            if self._paper_entry_mode() != "PAIRED_TOUCH" and (
                 down_filled + float(self.settings.dual40_fill_epsilon) < quantity
                 and float(down["best_ask"]) <= maker_price + 1e-12
             ):
                 down_filled = quantity
                 down_fill_price = float(down["best_ask"])
+        if (
+            self._paper_entry_mode() == "PAIRED_TOUCH"
+            and up is not None
+            and down is not None
+            and up_filled + float(self.settings.dual40_fill_epsilon) < quantity
+            and down_filled + float(self.settings.dual40_fill_epsilon) < quantity
+            and self._paper_side_limit_ready(up, quantity)
+            and self._paper_side_limit_ready(down, quantity)
+        ):
+            up_filled = quantity
+            down_filled = quantity
+            up_fill_price = float(up["best_ask"])
+            down_fill_price = float(down["best_ask"])
 
         matched = min(up_filled, down_filled)
         residual = abs(up_filled - down_filled)
@@ -2088,15 +2160,36 @@ class Dual40MakerEngine:
                     "one_global_market_only": False,
                     "paper_max_concurrent_assets": int(self.settings.dual40_paper_max_concurrent_assets),
                     "live_max_concurrent_assets": int(self.settings.dual40_live_max_concurrent_assets),
-                    "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+                    "paper_fill_rule": (
+                        "PAIRED_TOUCH_BOTH_SIDES_SAME_TICK"
+                        if self._paper_entry_mode() == "PAIRED_TOUCH"
+                        else "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+                    ),
                     "paper_settlement_rule": "OFFICIAL_RESULT_ACTUAL_FILL_PRICE",
                     "paper_waits_for_official_result": True,
                     "paper_settlement_grace_ms": 2000,
-                    "paper_strategy_variant": "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE",
-                    "paper_entry_profile": "OPEN_IMMEDIATE_ALTERNATE_MARKETS",
+                    "paper_strategy_variant": (
+                        "PAIRED_TOUCH_5_SHARE_NO_SINGLE_LEG"
+                        if self._paper_entry_mode() == "PAIRED_TOUCH"
+                        else "BASE_5_SHARE_ALTERNATE_MARKETS_NO_MARTINGALE"
+                    ),
+                    "paper_entry_profile": (
+                        "PAIRED_TOUCH_SAME_TICK"
+                        if self._paper_entry_mode() == "PAIRED_TOUCH"
+                        else "OPEN_IMMEDIATE_ALTERNATE_MARKETS"
+                    ),
                     "near_touch_41_diagnostic_only": True,
-                    "entry": "PAPER_RELAXED_LIMIT",
-                    "paper_entry": "ALTERNATE_MARKET_LIMIT",
+                    "entry": (
+                        "PAPER_PAIRED_TOUCH_LIMIT"
+                        if self._paper_entry_mode() == "PAIRED_TOUCH"
+                        else "PAPER_RELAXED_LIMIT"
+                    ),
+                    "paper_entry": (
+                        "BOTH_LEGS_AT_LIMIT_OR_PASS"
+                        if self._paper_entry_mode() == "PAIRED_TOUCH"
+                        else "ALTERNATE_MARKET_LIMIT"
+                    ),
+                    "paper_entry_mode": self._paper_entry_mode(),
                     "live_entry": "BALANCED_STABLE_POST_ONLY",
                     "opening_gate_mode": self.settings.dual40_opening_mode(),
                     "forecast_gate_mode": self.settings.dual40_forecast_mode(),

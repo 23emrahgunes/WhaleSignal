@@ -147,8 +147,12 @@ def _seed_p26(
 
 
 def _engine(tmp_path, **settings_overrides) -> Dual40MakerEngine:
+    seed_overrides = settings_overrides.pop(
+        "_seed_overrides",
+        {"up_ask": 0.35, "down_ask": 0.35},
+    )
     settings = _settings(tmp_path, **settings_overrides)
-    _seed_p26(settings.p26_db_path)
+    _seed_p26(settings.p26_db_path, **seed_overrides)
     state = LiveState(
         live_feature_enabled=settings.live_feature_enabled,
         auto_execute_enabled=settings.live_auto_execute_enabled,
@@ -182,7 +186,7 @@ class _FakeGateway:
 
 
 def test_paper_opens_four_eligible_assets_in_same_tick(tmp_path):
-    engine = _engine(tmp_path)
+    engine = _engine(tmp_path, _seed_overrides={"up_ask": 0.35, "down_ask": 0.35})
     result = engine.tick()
 
     assert result["status"] == "MULTI_ASSET_TICK"
@@ -359,7 +363,7 @@ def test_live_hard_stop_remains_locked(tmp_path):
 
 
 def test_no_duplicate_active_cycle_per_asset(tmp_path):
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, dual40_paper_entry_mode="RELAXED_SINGLE_LEG")
     conn = connect_dual40(settings.p3_db_path)
     try:
         kwargs = dict(
@@ -461,14 +465,14 @@ def test_paper_price_history_rejections_are_diagnostic_only(
     conn = connect_dual40(engine.settings.p3_db_path)
     try:
         decisions = market_decisions(conn, scope="PAPER")
-        assert all(item["reason"] == "PAPER_RELAXED_LIMIT_READY" for item in decisions)
+        assert all(item["reason"] == "PAPER_PAIR_EXECUTABLE_AT_LIMIT" for item in decisions)
         assert all(
             item["final_gate"]["base_gate"]["research_reason"] == research_reason
             for item in decisions
         )
         assert all(
             item["final_gate"]["base_gate"]["reason"]
-            == "PAPER_RELAXED_LIMIT_READY"
+            == "PAPER_PAIR_EXECUTABLE_AT_LIMIT"
             for item in decisions
         )
     finally:
@@ -519,7 +523,7 @@ def test_paper_can_enter_after_opening_window_when_ptb_returns(tmp_path):
         dual40_paper_min_entry_ask=0.10,
     )
     now_ms = int(time.time() * 1000)
-    _seed_p26(settings.p26_db_path, assets=("BTC",), now_ms=now_ms)
+    _seed_p26(settings.p26_db_path, assets=("BTC",), now_ms=now_ms, up_ask=0.35, down_ask=0.35)
     state = LiveState(
         live_feature_enabled=settings.live_feature_enabled,
         auto_execute_enabled=settings.live_auto_execute_enabled,
@@ -534,7 +538,7 @@ def test_paper_can_enter_after_opening_window_when_ptb_returns(tmp_path):
         assert len(active_cycles(conn, scope="PAPER")) == 1
         decisions = market_decisions(conn, scope="PAPER")
         assert len(decisions) == 1
-        assert decisions[0]["reason"] == "PAPER_RELAXED_LIMIT_READY"
+        assert decisions[0]["reason"] == "PAPER_PAIR_EXECUTABLE_AT_LIMIT"
     finally:
         conn.close()
 
@@ -586,7 +590,7 @@ def test_live_keeps_price_history_regime_rejections(tmp_path, monkeypatch):
 
 
 def test_paper_marketable_limit_fills_entry_side_immediately(tmp_path):
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, dual40_paper_entry_mode="RELAXED_SINGLE_LEG")
     engine = Dual40MakerEngine(
         settings,
         LiveState(live_feature_enabled=False, auto_execute_enabled=False),

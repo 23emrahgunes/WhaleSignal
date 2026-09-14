@@ -118,8 +118,8 @@ if s.dual40_active:
     dual=connect_dual40(s.p3_db_path); dual.close()
     print("paper_order=GTC_SIMULATED_LIMIT live_order=POST_ONLY_GTC price=40c each_side")
     print("ladder=5,10,30 hard_stop_after_30=true")
-    print("entry=PAPER_RELAXED_LIMIT_NO_PRICE_REGIME LIVE_BALANCED_STABLE_POST_ONLY paper_parallel_assets=4 live_parallel_assets=1")
-    print("paper_fill=ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE near_touch_41=diagnostic_only")
+    print(f"entry=PAPER_{s.dual40_paper_entry_mode.strip().upper()} LIVE_BALANCED_STABLE_POST_ONLY paper_parallel_assets=4 live_parallel_assets=1")
+    print("paper_fill=PAIRED_TOUCH_BOTH_SIDES_SAME_TICK near_touch_41=diagnostic_only")
     print("paper_settlement=OFFICIAL_RESULT_ACTUAL_FILL_PRICE official_result_wait=true")
     print("minimum_live_collateral_usdc=", s.dual40_min_collateral_to_arm_usdc)
 else:

@@ -110,11 +110,22 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             view = _book_view(row)
             if view is None:
                 continue
+            asks = _levels(row["asks_json"])
+            view["visible_ask_capacity_at_maker"] = visible_ask_capacity(
+                asks,
+                max_price=self.policy.price,
+            )
             if best_view is None or float(view["best_ask"]) < float(best_view["best_ask"]):
                 best_view = view
             if (
                 first_executable is None
                 and float(view["best_ask"]) <= maker_price + 1e-12
+                and (
+                    self._paper_entry_mode() != "PAIRED_TOUCH"
+                    or float(view.get("visible_ask_capacity_at_maker") or 0.0)
+                    + float(self.settings.dual40_fill_epsilon)
+                    >= float(cycle["target_shares"])
+                )
             ):
                 first_executable = view
         selected = first_executable or best_view
@@ -140,4 +151,7 @@ class ProductionDual40MakerEngine(_ProductionDual40MakerEngine):
             ),
             "source_ts_ms": int(selected["source_ts_ms"]),
             "recv_ts_ms": int(selected["recv_ts_ms"]),
+            "visible_ask_capacity_at_maker": float(
+                selected.get("visible_ask_capacity_at_maker") or selected.get("ask_depth_lte_40") or 0.0
+            ),
         }

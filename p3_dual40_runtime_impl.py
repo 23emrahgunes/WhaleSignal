@@ -112,6 +112,9 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             "touch_ts_ms": observed_ms,
             "source_ts_ms": int(book.get("source_ts_ms") or 0),
             "recv_ts_ms": int(book.get("recv_ts_ms") or 0),
+            "visible_ask_capacity_at_maker": float(
+                book.get("visible_ask_capacity_at_maker") or book.get("ask_depth_lte_40") or 0.0
+            ),
         }
 
     def _reconcile_paper_touch_fills(
@@ -136,14 +139,20 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
             else {}
         )
         details: dict[str, Any] = {
-            "paper_fill_rule": "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE",
+            "paper_fill_rule": (
+                "PAIRED_TOUCH_BOTH_SIDES_SAME_TICK"
+                if self._paper_entry_mode() == "PAIRED_TOUCH"
+                else "ENTRY_OR_RECORDED_BEST_ASK_LE_MAKER_FULL_SIDE"
+            ),
             "near_touch_41_is_diagnostic_only": True,
         }
 
         evidence_by_side: dict[str, dict[str, Any] | None] = {}
+        ready_by_side: dict[str, bool] = {}
         for side in ("UP", "DOWN"):
             evidence = self._paper_touch_evidence(p26, cycle, side, int(now_ms))
             evidence_by_side[side] = evidence
+            ready_by_side[side] = False
             if evidence is None:
                 continue
             key = side.lower()
@@ -163,17 +172,39 @@ class ProductionDual40MakerEngine(Dual40MakerEngine):
                     near_up = 1
                 else:
                     near_down = 1
+            ready_by_side[side] = float(best_ask) <= maker_price + 1e-12
+            if self._paper_entry_mode() == "PAIRED_TOUCH":
+                ready_by_side[side] = (
+                    ready_by_side[side]
+                    and float(evidence.get("visible_ask_capacity_at_maker") or 0.0)
+                    + float(self.settings.dual40_fill_epsilon)
+                    >= quantity
+                )
+
+        paired_touch = ready_by_side.get("UP", False) and ready_by_side.get("DOWN", False)
+        for side in ("UP", "DOWN"):
+            evidence = evidence_by_side.get(side)
+            if evidence is None:
+                continue
+            key = side.lower()
             current_filled = up_filled if side == "UP" else down_filled
-            if (
+            can_fill = (
                 current_filled + float(self.settings.dual40_fill_epsilon) < quantity
-                and float(best_ask) <= maker_price + 1e-12
-            ):
+                and ready_by_side.get(side, False)
+            )
+            if self._paper_entry_mode() == "PAIRED_TOUCH":
+                other_filled = down_filled if side == "UP" else up_filled
+                can_fill = can_fill and (
+                    paired_touch
+                    or other_filled + float(self.settings.dual40_fill_epsilon) >= quantity
+                )
+            if can_fill:
                 if side == "UP":
                     up_filled = quantity
-                    up_fill_price = float(best_ask)
+                    up_fill_price = float(evidence["best_ask"])
                 else:
                     down_filled = quantity
-                    down_fill_price = float(best_ask)
+                    down_fill_price = float(evidence["best_ask"])
                 details[f"paper_{key}_fill_evidence"] = {
                     field: value
                     for field, value in evidence.items()
