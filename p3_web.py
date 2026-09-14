@@ -395,6 +395,7 @@ def build_web_app(
         web.get("/login", login_get),
         web.post("/login", login_post),
         web.get("/", index),
+        web.get("/paper-trades", index),
         web.get("/health", health),
         web.get("/api/summary", summary),
         web.get("/api/opportunities", opportunities),

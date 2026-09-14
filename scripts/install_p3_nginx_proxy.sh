@@ -30,8 +30,8 @@ fi
 
 $SUDO tee "$SITE_AVAILABLE" >/dev/null <<EOF
 server {
-    listen 80;
-    listen [::]:80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name ${SERVER_NAME};
 
     client_max_body_size 2m;
@@ -50,6 +50,16 @@ server {
     }
 }
 EOF
+
+for enabled in /etc/nginx/sites-enabled/*; do
+  [[ -e "$enabled" ]] || continue
+  [[ "$enabled" == "$SITE_ENABLED" ]] && continue
+  if $SUDO grep -Eq 'listen[[:space:]]+(\[::\]:)?80([^;]*[[:space:]])default_server' "$enabled" 2>/dev/null; then
+    backup="${enabled}.disabled-by-direction-engine.$(date +%Y%m%d%H%M%S)"
+    echo "disabling_conflicting_default=${enabled} backup=${backup}"
+    $SUDO mv "$enabled" "$backup"
+  fi
+done
 
 $SUDO ln -sfn "$SITE_AVAILABLE" "$SITE_ENABLED"
 $SUDO nginx -t
