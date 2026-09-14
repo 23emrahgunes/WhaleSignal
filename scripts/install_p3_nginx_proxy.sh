@@ -30,8 +30,8 @@ fi
 
 $SUDO tee "$SITE_AVAILABLE" >/dev/null <<EOF
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen 80;
+    listen [::]:80;
     server_name ${SERVER_NAME};
 
     client_max_body_size 2m;
@@ -50,10 +50,6 @@ server {
     }
 }
 EOF
-
-if [[ -e /etc/nginx/sites-enabled/default && ! -L /etc/nginx/sites-enabled/default.disabled-by-direction-engine ]]; then
-  $SUDO mv /etc/nginx/sites-enabled/default "/etc/nginx/sites-enabled/default.disabled-by-direction-engine.$(date +%Y%m%d%H%M%S)" || true
-fi
 
 $SUDO ln -sfn "$SITE_AVAILABLE" "$SITE_ENABLED"
 $SUDO nginx -t
